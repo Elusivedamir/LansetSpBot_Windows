@@ -1,0 +1,42 @@
+# Build and tooling artifacts. None of these belong in the delivered tree:
+# the release archive must contain no caches, no build output and above all
+# no user data.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.json
+htmlcov/
+build/lib/
+dist/
+*.egg-info/
+
+# Windows source launcher and packaging output.
+.venv-windows-x64/
+.venv/
+venv/
+
+# User profile data. A Telegram session, the encrypted database or the local
+# secret store must never be committed, even accidentally.
+*.session
+*.session-journal
+*.session-wal
+*.session-shm
+marlen.db
+marlen.db-*
+.secrets.json
+.master-key.dpapi
+.env
+.env.*
+logs/
+*.log
+
+# Release archives are produced by the build script, never tracked.
+*.zip
+
+# Editor/OS noise.
+.idea/
+.vscode/
+Thumbs.db
