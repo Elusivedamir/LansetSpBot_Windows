@@ -1,0 +1,3 @@
+# Official OpenAI Python SDK used by LansetSpBot.
+# Kept separate because the original platform-specific hash locks predate this integration.
+openai==2.48.0

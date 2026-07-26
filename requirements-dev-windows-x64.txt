@@ -1,0 +1,2 @@
+# Compatibility entry point. The authoritative Windows dev environment is hash-pinned.
+-r requirements-dev-windows-x64.lock

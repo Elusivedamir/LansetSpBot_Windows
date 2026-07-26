@@ -1,0 +1,12 @@
+[run]
+branch = True
+source = core,services,storage,workers,gui
+relative_files = True
+
+[report]
+omit =
+    tests/*
+    build/*
+show_missing = True
+skip_covered = False
+fail_under = 60

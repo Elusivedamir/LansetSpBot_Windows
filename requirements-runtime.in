@@ -1,0 +1,7 @@
+cryptography==46.0.4
+sqlcipher3==0.6.2
+PySide6==6.11.1
+Telethon==1.44.0
+PySocks==1.7.1
+tzdata==2026.3
+openai==2.48.0

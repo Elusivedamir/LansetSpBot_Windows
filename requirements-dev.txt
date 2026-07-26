@@ -1,0 +1,3 @@
+# Convenience install file. Canonical Windows dependencies are hash-locked.
+-r requirements-runtime.lock
+-r requirements-dev-windows-x64.lock
