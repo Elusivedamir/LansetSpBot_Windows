@@ -307,3 +307,67 @@ def test_production_code_does_not_use_assert_for_runtime_checks() -> None:
         "assert is stripped by python -O and must not guard production "
         f"invariants: {offenders}"
     )
+
+
+# --------------------------------------------------------------------------
+# HIGH (supply chain): the pinned cryptography 46.0.4 carried six known
+# advisories, including a statically linked OpenSSL inside the published
+# wheels that ships straight into the packaged Windows application.
+# --------------------------------------------------------------------------
+
+
+def _pinned_version(text: str, package: str) -> str:
+    match = re.search(rf"(?mi)^{re.escape(package)}==([0-9][^\s\\]*)", text)
+    assert match is not None, f"{package} is not pinned"
+    return match.group(1)
+
+
+def test_cryptography_is_pinned_above_the_known_advisories() -> None:
+    """46.0.4 is vulnerable; 48.0.1 is the first release fixing all six."""
+
+    from packaging.version import Version
+
+    declared = _pinned_version(
+        (ROOT / "requirements-runtime.in").read_text(encoding="utf-8"), "cryptography"
+    )
+    locked = _pinned_version(
+        (ROOT / "requirements-runtime.lock").read_text(encoding="utf-8"), "cryptography"
+    )
+    assert declared == locked, "the .in file and the lock disagree on cryptography"
+    assert Version(declared) >= Version("48.0.1"), (
+        f"cryptography {declared} is affected by PYSEC-2026-35/36, PYSEC-2026-2141 "
+        "and GHSA-537c-gmf6-5ccf (bundled OpenSSL)"
+    )
+
+
+def test_every_runtime_requirement_is_pinned_and_hash_locked() -> None:
+    """requirements-runtime.in must describe exactly what the lock enforces."""
+
+    lock = (ROOT / "requirements-runtime.lock").read_text(encoding="utf-8")
+    declared = (ROOT / "requirements-runtime.in").read_text(encoding="utf-8")
+    for line in declared.splitlines():
+        entry = line.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        name = re.split(r"[=<>!~\[]", entry, maxsplit=1)[0].strip()
+        assert re.search(rf"(?mi)^{re.escape(name)}==", lock), (
+            f"{name} is declared in requirements-runtime.in but is missing from "
+            "the hash-locked graph; either lock it or move it to its own file"
+        )
+    for block in re.findall(r"(?m)^[A-Za-z].*?==.*?(?=\n[A-Za-z]|\Z)", lock, re.S):
+        head = block.splitlines()[0]
+        assert "--hash=sha256:" in block, f"{head} has no pinned artifact hash"
+
+
+def test_the_unhashed_openai_graph_is_declared_separately_and_flagged() -> None:
+    """The one knowingly unpinned dependency must stay visible, not silent."""
+
+    runtime_in = (ROOT / "requirements-runtime.in").read_text(encoding="utf-8")
+    openai_txt = (ROOT / "requirements-openai.txt").read_text(encoding="utf-8")
+    lock = (ROOT / "requirements-runtime.lock").read_text(encoding="utf-8")
+
+    assert not re.search(r"(?mi)^openai==", runtime_in)
+    assert not re.search(r"(?mi)^openai==", lock)
+    assert re.search(r"(?mi)^openai==", openai_txt)
+    # The trade-off must remain documented where a maintainer will see it.
+    assert "NOT hash-locked" in openai_txt
