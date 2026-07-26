@@ -96,7 +96,6 @@ class TelegramSettings:
     proxy_password: str | None = None
     proxy_secret: str | None = None
     expected_account_id: int | None = None
-    session_backup_enabled: bool = False
 
     @property
     def configured(self) -> bool:

@@ -229,7 +229,6 @@ class TelegramTransportMixin(_MixinHost):
                 )
             self._connected = True
             self._last_authorization_check = time.monotonic()
-            self.backup_session()
             log.info("Connected to Telegram using an authorized session")
         except asyncio.TimeoutError as exc:
             self._connected = False

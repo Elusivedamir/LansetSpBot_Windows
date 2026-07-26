@@ -104,9 +104,6 @@ class ApplicationContainer:
             or None,
             expected_account_id=self._as_int(saved.get("telegram.account_id"), 0)
             or None,
-            session_backup_enabled=self._as_bool(
-                saved.get("telegram.session_backup_enabled")
-            ),
         )
 
     def _create_worker_handlers(self):

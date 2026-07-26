@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import closing
 import logging
 import os
 import shutil
@@ -8,11 +7,9 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from core.local_security import (
     LocalFileSecurityError,
-    ensure_private_directory,
     harden_private_file,
     validate_private_regular_file,
 )
@@ -21,13 +18,17 @@ log = logging.getLogger(__name__)
 
 
 class TelegramSessionMixin:
-    """Verified backup and recovery for Telethon's SQLite session file.
+    """Integrity checks and revocation for Telethon's SQLite session file.
+
+    The session is never copied anywhere: a copy carries the same Telegram
+    authorization key as the original, and the product no longer keeps one.
+    What remains is verification, quarantine of a corrupt file and removal of
+    authorization material on logout - including any backups left behind by an
+    older version.
 
     The mixin deliberately has no dependency on ``TelegramService``.  Its host
     only needs a ``client`` attribute whose session exposes ``filename``.
     """
-
-    SESSION_BACKUP_LIMIT = 5
 
     @staticmethod
     def _session_is_healthy(path: Path) -> bool:
@@ -227,7 +228,13 @@ class TelegramSessionMixin:
 
     @classmethod
     def _prepare_session_file(cls, source: Path) -> None:
-        """Restore a valid backup or quarantine corruption before Telethon opens it."""
+        """Quarantine a corrupt session before Telethon opens it.
+
+        Nothing is ever restored: session backups were removed from the product,
+        so a corrupt session means reauthorization. A known-broken database is
+        never left at the path Telethon opens.
+        """
+
         try:
             exists = source.exists() or source.is_symlink()
         except OSError as exc:
@@ -240,76 +247,16 @@ class TelegramSessionMixin:
         if cls._session_is_healthy(source):
             return
 
-        backup_dir = cls._backup_directory(source)
-        ensure_private_directory(backup_dir)
-        candidate = next(
-            (
-                item
-                for item in sorted(
-                    backup_dir.glob(f"{source.name}.*.bak"), reverse=True
-                )
-                if cls._session_is_healthy(item)
-            ),
-            None,
-        )
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         # A stale WAL/journal can belong to the corrupt database and must not be
-        # replayed against a clean or restored main session file.
+        # replayed against a clean session file.
         cls._quarantine_session_sidecars(source, timestamp)
-
-        if candidate is None:
-            quarantine = cls._quarantine_corrupt_session(source, timestamp)
-            log.error(
-                "Telegram session was corrupt and no valid backup was available; "
-                "quarantined as %s. Reauthorization is required.",
-                quarantine,
-            )
-            return
-
-        # Keep a diagnostic copy even when a verified backup is available.
-        diagnostic = source.with_name(f"{source.name}.corrupt.{timestamp}")
-        try:
-            shutil.copyfile(source, diagnostic)
-            cls._harden_or_remove_private_artifact(
-                diagnostic,
-                description="diagnostic Telegram session copy",
-                required=False,
-            )
-        except OSError as exc:
-            log.warning("Could not preserve corrupt Telegram session copy: %s", exc)
-
-        temporary = source.with_name(f".{source.name}.restore.{timestamp}.tmp")
-        try:
-            shutil.copyfile(candidate, temporary)
-            if not cls._session_is_healthy(temporary):
-                raise sqlite3.DatabaseError("restored session quick_check failed")
-
-            replaced = cls._replace_with_windows_retry(temporary, source)
-            if not replaced and not cls._overwrite_file_with_retry(temporary, source):
-                raise PermissionError("session file is busy")
-
-            if not cls._session_is_healthy(source):
-                raise sqlite3.DatabaseError("restored session quick_check failed")
-            if not harden_private_file(source):
-                raise PermissionError(
-                    f"Could not restrict restored session file {source}"
-                )
-            log.warning("Restored Telegram session from backup %s", candidate)
-        except (OSError, sqlite3.Error) as exc:
-            log.error(
-                "Could not restore Telegram session backup %s: %s", candidate, exc
-            )
-            # Never leave a known-corrupt database at the path Telethon opens.
-            quarantine = cls._quarantine_corrupt_session(source, timestamp)
-            log.error(
-                "Broken Telegram session was quarantined as %s; reauthorization is required",
-                quarantine,
-            )
-        finally:
-            try:
-                temporary.unlink(missing_ok=True)
-            except OSError:
-                pass
+        quarantine = cls._quarantine_corrupt_session(source, timestamp)
+        log.error(
+            "Telegram session was corrupt and was quarantined as %s. "
+            "Reauthorization is required.",
+            quarantine,
+        )
 
     @classmethod
     def purge_session_backups(cls, source: Path) -> None:
@@ -388,63 +335,3 @@ class TelegramSessionMixin:
                     "Could not delete revoked session backup directory %s", revoked_dir
                 )
 
-    def backup_session(self) -> Path | None:
-        """Create a verified backup only after explicit user consent."""
-
-        settings = getattr(self, "settings", None)
-        if not bool(getattr(settings, "session_backup_enabled", False)):
-            log.debug("Telegram session backup is disabled by user policy")
-            return None
-        client: Any = getattr(self, "client", None)
-        filename = getattr(getattr(client, "session", None), "filename", None)
-        if not filename:
-            return None
-        source = Path(filename)
-        if not self._session_is_healthy(source):
-            log.warning("Telegram session backup skipped because quick_check failed")
-            return None
-        self._secure_session_file(source)
-        backup_dir = self._backup_directory(source)
-        ensure_private_directory(backup_dir)
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        backup = backup_dir / f"{source.name}.{timestamp}.bak"
-        temporary = backup.with_suffix(backup.suffix + ".tmp")
-        try:
-            # sqlite3 context managers do not close the handle; explicit closing
-            # is required before rename on Windows.
-            with (
-                closing(sqlite3.connect(str(source), timeout=10)) as src,
-                closing(sqlite3.connect(str(temporary), timeout=10)) as dst,
-            ):
-                src.backup(dst)
-            if not self._session_is_healthy(temporary):
-                raise sqlite3.DatabaseError("backup quick_check failed")
-            if not harden_private_file(temporary):
-                raise PermissionError(
-                    f"Could not restrict temporary Telegram session backup {temporary}"
-                )
-            temporary.replace(backup)
-            if not harden_private_file(backup):
-                backup.unlink(missing_ok=True)
-                raise PermissionError(
-                    f"Could not restrict Telegram session backup {backup}"
-                )
-            backups = sorted(
-                backup_dir.glob(f"{source.name}.*.bak"),
-                key=lambda item: item.stat().st_mtime,
-                reverse=True,
-            )
-            for stale in backups[self.SESSION_BACKUP_LIMIT :]:
-                try:
-                    stale.unlink()
-                except OSError:
-                    log.warning("Could not remove stale session backup %s", stale)
-            log.info("Telegram session backup created: %s", backup)
-            return backup
-        except (OSError, sqlite3.Error) as exc:
-            try:
-                temporary.unlink(missing_ok=True)
-            except OSError:
-                pass
-            log.warning("Could not create session backup: %s", exc)
-            return None

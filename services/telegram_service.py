@@ -47,8 +47,8 @@ class TelegramService(
         settings.session_dir.mkdir(parents=True, exist_ok=True)
         session_base = settings.session_dir / "main"
         session_file = session_base.with_suffix(".session")
-        if not bool(getattr(settings, "session_backup_enabled", False)):
-            self.purge_session_backups(session_file)
+        # Session copies are never kept; remove any left by an older version.
+        self.purge_session_backups(session_file)
         self._prepare_session_file(session_file)
         proxy, connection_type = self.build_transport(settings)
         with warnings.catch_warnings():

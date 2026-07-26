@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
-from pathlib import Path
 
 from PySide6.QtCore import QTime, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -9,7 +7,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
     QFrame,
-    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -41,7 +38,6 @@ from services.proxy_validation import normalize_proxy_config
 class AccountView(QWidget):
     account_changed = Signal()
     factory_reset_requested = Signal()
-    profile_restore_requested = Signal(str)
 
     def __init__(self, adapter, config):
         super().__init__()
@@ -55,7 +51,6 @@ class AccountView(QWidget):
         self._account_blocking_jobs: set[BackgroundCall] = set()
         self._account_state_generation = 0
         self._factory_reset_pending = False
-        self._profile_restore_pending = False
         self._applying_settings = False
         self._dynamic_layout_focus_widget: QWidget | None = None
         self._dynamic_layout_queued_timer = QTimer(self)
@@ -159,16 +154,6 @@ class AccountView(QWidget):
         self._sync_proxy_type_fields(self.proxy_type.currentText())
         form_layout.addRow("", self.proxy_box)
 
-        self.session_backup_enabled = QCheckBox(
-            "Разрешить резервные копии Telegram-сессии"
-        )
-        self.session_backup_enabled.setToolTip(
-            "Копия .session содержит ключ авторизации Telegram и должна храниться "
-            "как пароль. По умолчанию резервирование отключено."
-        )
-        self.session_backup_enabled.toggled.connect(self._session_backup_policy_changed)
-        form_layout.addRow("", self.session_backup_enabled)
-
         self.schedule_enabled = QCheckBox(
             "Не отправлять автоматические комментарии в тихие часы"
         )
@@ -245,37 +230,6 @@ class AccountView(QWidget):
         self.code_card.hide()
         form_layout.addRow(self.code_card)
 
-        self.backup_card = QFrame()
-        self.backup_card.setObjectName("card")
-        backup_layout = QVBoxLayout(self.backup_card)
-        backup_layout.setContentsMargins(20, 18, 20, 18)
-        backup_layout.setSpacing(10)
-        backup_title = QLabel("Резервная копия профиля")
-        backup_title.setObjectName("cardTitle")
-        backup_text = QLabel(
-            "Создаёт проверенный ZIP с зашифрованной SQLCipher-базой. "
-            "Telegram-сессии, API Hash, OpenAI-ключи и пароли прокси в архив "
-            "не включаются. Backup привязан к текущему профилю операционной "
-            "системы: перенос на другой компьютер или к другому пользователю "
-            "без отдельного защищённого экспорта не поддерживается. Restore "
-            "проверяет SHA-256, схему и целостность базы до замены профиля."
-        )
-        backup_text.setObjectName("mutedText")
-        backup_text.setWordWrap(True)
-        backup_actions = QHBoxLayout()
-        self.create_backup_button = QPushButton("Создать backup")
-        self.create_backup_button.setObjectName("secondaryButton")
-        self.create_backup_button.clicked.connect(self.create_profile_backup)
-        self.restore_backup_button = QPushButton("Восстановить backup")
-        self.restore_backup_button.setObjectName("secondaryButton")
-        self.restore_backup_button.clicked.connect(self.restore_profile_backup)
-        backup_actions.addWidget(self.create_backup_button)
-        backup_actions.addWidget(self.restore_backup_button)
-        backup_actions.addStretch(1)
-        backup_layout.addWidget(backup_title)
-        backup_layout.addWidget(backup_text)
-        backup_layout.addLayout(backup_actions)
-
         self.reset_card = QFrame()
         self.reset_card.setObjectName("dangerCard")
         reset_layout = QVBoxLayout(self.reset_card)
@@ -312,7 +266,6 @@ class AccountView(QWidget):
         layout.addWidget(subtitle)
         layout.addWidget(self.status_card)
         layout.addWidget(form_card)
-        layout.addWidget(self.backup_card)
         layout.addWidget(self.reset_card)
         layout.addStretch(1)
         self.load_settings()
@@ -437,15 +390,8 @@ class AccountView(QWidget):
         # Factory reset is independent from account/campaign ownership. It may
         # be requested while authorization or a local save is finishing; the
         # application controller will stop/wait for those jobs before deletion.
-        safe_enabled = (
-            enabled
-            and not self._factory_reset_pending
-            and not self._profile_restore_pending
-        )
+        safe_enabled = enabled and not self._factory_reset_pending
         self.reset_database_button.setEnabled(safe_enabled)
-        self.create_backup_button.setEnabled(safe_enabled)
-        self.restore_backup_button.setEnabled(safe_enabled)
-        self.session_backup_enabled.setEnabled(safe_enabled)
         self.schedule_enabled.setEnabled(safe_enabled)
         schedule_fields_enabled = safe_enabled and self.schedule_enabled.isChecked()
         self.timezone_name.setEnabled(schedule_fields_enabled)
@@ -456,15 +402,6 @@ class AccountView(QWidget):
     def set_factory_reset_pending(self, pending: bool) -> None:
         self._factory_reset_pending = bool(pending)
         if self._factory_reset_pending:
-            self.reset_database_button.setEnabled(False)
-        else:
-            self._restore_account_controls_if_idle()
-
-    def set_profile_restore_pending(self, pending: bool) -> None:
-        self._profile_restore_pending = bool(pending)
-        if self._profile_restore_pending:
-            self.create_backup_button.setEnabled(False)
-            self.restore_backup_button.setEnabled(False)
             self.reset_database_button.setEnabled(False)
         else:
             self._restore_account_controls_if_idle()
@@ -584,10 +521,6 @@ class AccountView(QWidget):
         self._sync_proxy_type_fields(self.proxy_type.currentText())
         self._applying_settings = True
         try:
-            session_backup_enabled = str(
-                values.get("telegram.session_backup_enabled") or "0"
-            ).strip().lower() in {"1", "true", "yes", "on"}
-            self.session_backup_enabled.setChecked(session_backup_enabled)
             schedule_enabled = str(
                 values.get(SCHEDULE_ENABLED_KEY) or "0"
             ).strip().lower() in {"1", "true", "yes", "on"}
@@ -675,9 +608,6 @@ class AccountView(QWidget):
             "telegram.api_id": api_id,
             "telegram.api_hash": api_hash,
             "telegram.phone": phone,
-            "telegram.session_backup_enabled": (
-                "1" if self.session_backup_enabled.isChecked() else "0"
-            ),
             "telegram.proxy_enabled": "1" if self.proxy_enabled.isChecked() else "0",
             "telegram.proxy_type": proxy.proxy_type
             if proxy
@@ -741,137 +671,6 @@ class AccountView(QWidget):
             )
             return False
         return True
-
-    def _set_session_backup_checked(self, checked: bool) -> None:
-        self._applying_settings = True
-        try:
-            self.session_backup_enabled.setChecked(bool(checked))
-        finally:
-            self._applying_settings = False
-
-    def _session_backup_policy_changed(self, enabled: bool) -> None:
-        if self._applying_settings:
-            return
-        if enabled:
-            answer = QMessageBox.question(
-                self,
-                "Telegram-сессия в backup",
-                "Файл .session содержит действующий ключ авторизации Telegram. "
-                "Любой, кто получит backup, сможет получить доступ к аккаунту. "
-                "Разрешить резервирование?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                self._set_session_backup_checked(False)
-                return
-
-        previous = not bool(enabled)
-
-        def failed(message: str) -> None:
-            self._set_session_backup_checked(previous)
-            QMessageBox.warning(
-                self, "Политика session-backup", f"Настройка не сохранена:\n\n{message}"
-            )
-
-        self._run_background(
-            lambda: self.adapter.save_settings(
-                {"telegram.session_backup_enabled": "1" if enabled else "0"}
-            ),
-            on_error=failed,
-        )
-
-    def create_profile_backup(self) -> None:
-        default_name = (
-            f"LansetSpBot-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.marlen-backup.zip"
-        )
-        default_path = str(Path.home() / "Documents" / default_name)
-        destination, _selected_filter = QFileDialog.getSaveFileName(
-            self,
-            "Создать резервную копию LansetSpBot",
-            default_path,
-            "LansetSpBot backup (*.marlen-backup.zip);;ZIP (*.zip)",
-        )
-        if not destination:
-            return
-        answer = QMessageBox.question(
-            self,
-            "Создать backup профиля?",
-            "В backup войдёт только проверенный зашифрованный снимок "
-            "SQLCipher-базы. Telegram-сессии, API Hash, OpenAI-ключи и пароли "
-            "прокси не экспортируются. Архив открывается только в текущем "
-            "профиле операционной системы; для переноса на другой компьютер "
-            "нужен отдельный защищённый экспорт.\n\nПродолжить?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        self._set_account_controls_busy(True)
-
-        def succeeded(result) -> None:
-            path = str((result or {}).get("path") or destination)
-            QMessageBox.information(
-                self,
-                "Backup создан",
-                "Зашифрованная резервная копия базы проверена и сохранена:\n"
-                f"{path}\n\nСекреты и Telegram-сессии в архив не включены. "
-                "Backup привязан к текущему профилю ОС.",
-            )
-
-        self._run_background(
-            lambda: self.adapter.create_profile_backup(
-                destination, include_sessions=False
-            ),
-            on_success=succeeded,
-            on_error=lambda message: QMessageBox.warning(
-                self, "Ошибка backup", message
-            ),
-            blocks_account_change=True,
-        )
-
-    def restore_profile_backup(self) -> None:
-        archive, _selected_filter = QFileDialog.getOpenFileName(
-            self,
-            "Выберите резервную копию LansetSpBot",
-            str(Path.home()),
-            "LansetSpBot backup (*.marlen-backup.zip);;ZIP (*.zip)",
-        )
-        if not archive:
-            return
-        self._set_account_controls_busy(True)
-
-        def validated(info) -> None:
-            info = info or {}
-            sessions = "да" if info.get("contains_sessions") else "нет"
-            answer = QMessageBox.warning(
-                self,
-                "Подтвердите восстановление",
-                "Backup полностью проверен. Текущий локальный профиль будет "
-                "заменён после безопасного закрытия LansetSpBot. При ошибке исходный "
-                "профиль будет возвращён. Активные кампании не возобновляются "
-                "автоматически.\n\n"
-                f"Schema: v{info.get('schema_version')}\n"
-                f"Legacy Telegram-сессии в архиве: {sessions}\n"
-                "Современный backup содержит зашифрованную SQLCipher-базу и "
-                "привязан к текущему профилю ОС. Секреты и sessions из архивов "
-                "не активируются; после legacy restore аккаунт и ключи потребуется "
-                "подключить заново.\n\nПродолжить?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer == QMessageBox.StandardButton.Yes:
-                self.set_profile_restore_pending(True)
-                self.profile_restore_requested.emit(str(archive))
-
-        self._run_background(
-            lambda: self.adapter.inspect_profile_backup(archive),
-            on_success=validated,
-            on_error=lambda message: QMessageBox.warning(
-                self, "Backup отклонён", message
-            ),
-            blocks_account_change=True,
-        )
 
     def reset_database(self) -> None:
         first = QMessageBox.question(

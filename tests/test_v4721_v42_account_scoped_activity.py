@@ -143,7 +143,11 @@ def test_instruction_explains_account_switch_isolation():
         / "instructions_view.py"
     ).read_text(encoding="utf-8")
 
-    assert "Инструкция актуальна для V46" in source
+    # The badge follows the real version instead of a frozen build label, so a
+    # released guide can no longer claim to describe a different version.
+    assert "Инструкция для версии" in source
+    assert "__version__" in source
     assert "Смена Telegram-аккаунта" in source
     assert "Живой журнал» изолированы по Telegram account_id" in source
-    assert "Общий сохранённый список каналов" in source
+    assert "Сохранённый список каналов" in source
+    assert "подтянуть в новый аккаунт" in source

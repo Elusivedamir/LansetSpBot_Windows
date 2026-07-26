@@ -15,9 +15,6 @@ from core.activity_schedule import (
     parse_clock,
     validate_timezone_name,
 )
-from core.profile_backup import create_profile_backup, inspect_profile_backup
-from services.telegram_session import TelegramSessionMixin
-from pathlib import Path
 from typing import Any, cast
 
 
@@ -96,25 +93,6 @@ class SettingsAPIMixin(_MixinHost):
                         "Задайте разное время или отключите расписание."
                     )
 
-        session_backup_policy = public.get("telegram.session_backup_enabled")
-        if session_backup_policy is not None:
-            normalized_policy = str(session_backup_policy).strip().lower()
-            if normalized_policy not in {
-                "0",
-                "1",
-                "false",
-                "true",
-                "no",
-                "yes",
-                "off",
-                "on",
-            }:
-                raise ValueError("Некорректная политика резервирования Telegram-сессии")
-            enabled = normalized_policy in {"1", "true", "yes", "on"}
-            public["telegram.session_backup_enabled"] = "1" if enabled else "0"
-            if not enabled:
-                session_file = self.database.path.parent / "sessions" / "main.session"
-                TelegramSessionMixin.purge_session_backups(session_file)
         secret_updates = {
             key: public.pop(key) for key in self.SECRET_SETTING_KEYS if key in public
         }
@@ -176,40 +154,6 @@ class SettingsAPIMixin(_MixinHost):
                     if secret:
                         values[key] = secret
         return cast(dict[str, Any], values)
-
-    def create_profile_backup(
-        self, destination: str | Path, *, include_sessions: bool = False
-    ) -> dict[str, Any]:
-        """Create a verified profile backup without blocking the GUI thread."""
-
-        # Backup format v2 is intentionally DB-only. Credentials and live
-        # Telegram sessions are never exported to an unencrypted ZIP.
-        result = create_profile_backup(
-            database_path=self.database.path,
-            session_dir=self.database.path.parent / "sessions",
-            secret_snapshot={},
-            destination=Path(destination),
-            include_sessions=False,
-        )
-        return {
-            "path": str(result.path),
-            "schema_version": int(result.schema_version),
-            "file_count": int(result.file_count),
-            "contains_sessions": bool(result.contains_sessions),
-        }
-
-    def inspect_profile_backup(self, archive_path: str | Path) -> dict[str, Any]:
-        """Validate and migrate a disposable copy before scheduling restore."""
-
-        info = inspect_profile_backup(Path(archive_path))
-        return {
-            "path": str(info.path),
-            "schema_version": int(info.schema_version),
-            "created_at": info.created_at,
-            "file_count": int(info.file_count),
-            "contains_sessions": bool(info.contains_sessions),
-            "app_version": info.app_version,
-        }
 
     def save_comment_template(self, comments: list[str]) -> None:
         # Compatibility entry point: current Marlen always stores ten fields.
