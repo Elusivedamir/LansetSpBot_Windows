@@ -66,8 +66,17 @@ Remove-Item -LiteralPath ".pytest_cache", ".mypy_cache", ".ruff_cache", ".covera
 
 if (-not $SkipTests) {
     $env:QT_QPA_PLATFORM = "offscreen"
-    & $BuildPython -m pytest -q
+    # Run under coverage using only locked dev dependencies: the hash-locked
+    # dev graph ships `coverage` and `pytest`, but not `pytest-cov`.
+    & $BuildPython -m coverage run -m pytest -q
     if ($LASTEXITCODE -ne 0) { throw "pytest failed." }
+    # tools/check_critical_coverage.py enforces per-module minimums for the
+    # release-critical code. It was previously shipped but never executed, so a
+    # module could silently lose its test coverage between releases.
+    & $BuildPython -m coverage json -o coverage.json -q
+    if ($LASTEXITCODE -ne 0) { throw "Coverage report generation failed." }
+    & $BuildPython tools\check_critical_coverage.py
+    if ($LASTEXITCODE -ne 0) { throw "Critical coverage gate failed." }
     & $BuildPython -m compileall -q core services storage workers gui main.py tests tools build
     if ($LASTEXITCODE -ne 0) { throw "compileall failed." }
     & $BuildPython -m ruff check core services storage workers gui main.py tests tools build
