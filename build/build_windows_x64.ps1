@@ -85,6 +85,11 @@ if (-not $SkipTests) {
     if ($LASTEXITCODE -ne 0) { throw "Mypy failed." }
     & $BuildPython main.py --self-test
     if ($LASTEXITCODE -ne 0) { throw "Source self-test failed." }
+    # A lock generated on one interpreter installs there and fails the hash
+    # check on the other, which the user sees as a tampering warning. Both
+    # supported interpreters must resolve before a release ships.
+    & $BuildPython tools\check_lock_coverage.py
+    if ($LASTEXITCODE -ne 0) { throw "Runtime lock does not cover every supported Python version." }
 }
 
 & $BuildPython build\generate_windows_version_info.py

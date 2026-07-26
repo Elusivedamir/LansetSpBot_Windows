@@ -1,5 +1,9 @@
 # Exact cross-platform runtime graph for MarlenV4.7.21.
 # Generated with uv --generate-hashes; every accepted artifact is SHA-256 pinned.
+#
+# sqlcipher3 and cffi ship one wheel per CPython version, so this file must
+# carry a hash for every interpreter the launcher accepts (3.13 and 3.14 x64).
+# tools/check_lock_coverage.py verifies that and runs in the release build.
 cryptography==48.0.1 \
     --hash=sha256:3e4a1a3232eef2e6c732827d5722db29a0cc8b27af2a4d865b094cf954be9ca1 \
     --hash=sha256:3752f2dbc8f07a30aad2932c986cea495b03bb554887828225da104f732852b6 \
@@ -8,7 +12,8 @@ cryptography==48.0.1 \
 sqlcipher3==0.6.2 \
     --hash=sha256:8e1ff6079603dfd955d57c26dad5eab14f6baacdc643d8753dd651913ba789cf \
     --hash=sha256:9dc959ff792228c6df836cfd3667c713ae13e6e18dc2905c9d5666558606e832 \
-    --hash=sha256:9fb7109981583b631ac795e7e955d4bf78058f64b54c7f334ccc437adc322d4b
+    --hash=sha256:9fb7109981583b631ac795e7e955d4bf78058f64b54c7f334ccc437adc322d4b \
+    --hash=sha256:7de6133b19aec27b30698267cc2a0ea6e82c21d9a81d349cf0b480439fb549ac
 cffi==2.0.0 \
     --hash=sha256:19f705ada2530c1167abacb171925dd886168931e0a7b78f5bffcae5c6b5be75 \
     --hash=sha256:203a48d1fb583fc7d78a4c6655692963b860a417c0528492a6bc21f1aaefab25 \
