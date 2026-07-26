@@ -8,6 +8,7 @@ from core.activity_schedule import (
     QUIET_END_KEY,
     QUIET_START_KEY,
     SCHEDULE_ENABLED_KEY,
+    SCHEDULE_SETTINGS_PREFIX,
     TIMEZONE_KEY,
     format_clock,
     normalize_bool,
@@ -73,6 +74,27 @@ class SettingsAPIMixin(_MixinHost):
             public[QUIET_END_KEY] = format_clock(
                 parse_clock(public[QUIET_END_KEY], default="07:00")
             )
+
+        # An enabled window whose start equals its end has no active period at
+        # all: every dispatch is deferred by another 24 hours forever, and the
+        # user only ever sees a moving "отложено до ..." time. Reject it at the
+        # settings boundary instead of stalling the campaign silently.
+        if QUIET_START_KEY in public or QUIET_END_KEY in public:
+            stored = self.database.get_settings(SCHEDULE_SETTINGS_PREFIX)
+            enabled_raw = public.get(
+                SCHEDULE_ENABLED_KEY, stored.get(SCHEDULE_ENABLED_KEY)
+            )
+            if normalize_bool(enabled_raw):
+                start_value = public.get(QUIET_START_KEY, stored.get(QUIET_START_KEY))
+                end_value = public.get(QUIET_END_KEY, stored.get(QUIET_END_KEY))
+                start = parse_clock(start_value, default="22:00")
+                end = parse_clock(end_value, default="07:00")
+                if start == end:
+                    raise ValueError(
+                        "Начало и конец тихих часов совпадают: активного окна не "
+                        "останется и отправка никогда не возобновится. "
+                        "Задайте разное время или отключите расписание."
+                    )
 
         session_backup_policy = public.get("telegram.session_backup_enabled")
         if session_backup_policy is not None:

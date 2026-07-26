@@ -281,7 +281,11 @@ class TaskQueueAPIMixin(_MixinHost):
             if blocker is not None:
                 log.warning("Queue start blocked: %s", blocker)
                 return False
-            assert worker is not None
+            if worker is None:
+                # _queue_start_blocker_locked() already reports a missing worker,
+                # so reaching this point means the two checks disagree.
+                log.error("Queue start reached an inconsistent worker state")
+                return False
             self._last_worker_error = None
             if worker.isRunning():
                 # A task may be inserted while the worker is leaving its idle

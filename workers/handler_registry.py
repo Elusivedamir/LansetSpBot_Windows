@@ -639,7 +639,11 @@ def create_worker_handlers(
                     snapshot_total,
                 )
 
-        assert isinstance(checkpoint, dict)
+        if not isinstance(checkpoint, dict):
+            raise NonRetryableTelegramError(
+                "Link task checkpoint is not a mapping",
+                code="invalid_payload",
+            )
 
         def normalized_ids(value: object) -> list[int]:
             result: list[int] = []

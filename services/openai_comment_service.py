@@ -336,7 +336,11 @@ class OpenAICommentService:
                     if asyncio.iscoroutine(result):
                         await result
 
-        assert last_error is not None
+        if last_error is None:
+            raise OpenAICommentError(
+                "OpenAI generation ended without a result and without an error",
+                code="provider_error",
+            )
         raise last_error
 
     async def test_connection(

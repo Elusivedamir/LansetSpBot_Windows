@@ -185,3 +185,125 @@ def test_every_instruction_step_has_an_existing_image() -> None:
 
     for _title, image, _body in InstructionsView.STEPS:
         assert (ROOT / "gui" / "assets" / "instructions" / image).is_file()
+
+
+# --------------------------------------------------------------------------
+# MEDIUM: an enabled quiet-hours window with quiet_start == quiet_end has no
+# active period at all. Every dispatch was deferred by another 24 hours
+# forever and the user only saw a moving "отложено до ..." time, so a campaign
+# stalled permanently without any explanation.
+# --------------------------------------------------------------------------
+
+
+def _schedule_api(tmp_path: Path):
+    from core.secret_store import SecretStore
+    from services.api import ServiceAPI
+    from storage.database import Database
+
+    database = Database(tmp_path / "schedule.db")
+    api = ServiceAPI(database, secret_store=SecretStore(tmp_path / ".secrets.json"))
+    api._campaign_timer.stop()  # noqa: SLF001 - deterministic unit under test
+    return api, database
+
+
+def test_identical_quiet_hours_are_rejected_while_the_schedule_is_enabled(
+    tmp_path: Path,
+) -> None:
+    api, database = _schedule_api(tmp_path)
+    try:
+        with pytest.raises(ValueError, match="совпадают"):
+            api.save_settings(
+                {
+                    "automation.schedule_enabled": "1",
+                    "automation.quiet_start": "09:00",
+                    "automation.quiet_end": "09:00",
+                }
+            )
+    finally:
+        api.prepare_shutdown()
+        database.close_thread_connection()
+
+
+def test_identical_quiet_hours_are_rejected_against_already_stored_values(
+    tmp_path: Path,
+) -> None:
+    """Changing only one field must not be able to close the window either."""
+
+    api, database = _schedule_api(tmp_path)
+    try:
+        api.save_settings(
+            {
+                "automation.schedule_enabled": "1",
+                "automation.quiet_start": "22:00",
+                "automation.quiet_end": "07:00",
+            }
+        )
+        with pytest.raises(ValueError, match="совпадают"):
+            api.save_settings({"automation.quiet_end": "22:00"})
+    finally:
+        api.prepare_shutdown()
+        database.close_thread_connection()
+
+
+def test_identical_quiet_hours_are_allowed_while_the_schedule_is_disabled(
+    tmp_path: Path,
+) -> None:
+    """A disabled schedule never defers anything, so the values are harmless."""
+
+    api, database = _schedule_api(tmp_path)
+    try:
+        api.save_settings(
+            {
+                "automation.schedule_enabled": "0",
+                "automation.quiet_start": "09:00",
+                "automation.quiet_end": "09:00",
+            }
+        )
+        assert database.get_setting("automation.quiet_start") == "09:00"
+    finally:
+        api.prepare_shutdown()
+        database.close_thread_connection()
+
+
+def test_a_normal_overnight_window_is_still_accepted(tmp_path: Path) -> None:
+    api, database = _schedule_api(tmp_path)
+    try:
+        api.save_settings(
+            {
+                "automation.schedule_enabled": "1",
+                "automation.quiet_start": "22:00",
+                "automation.quiet_end": "07:00",
+            }
+        )
+        assert database.get_setting("automation.quiet_end") == "07:00"
+    finally:
+        api.prepare_shutdown()
+        database.close_thread_connection()
+
+
+# --------------------------------------------------------------------------
+# LOW: `assert` was used as a production invariant check in five modules.
+# `python -O` strips assert statements, so a violated invariant degraded into
+# `raise None` (TypeError) or an AttributeError far from the real cause.
+# --------------------------------------------------------------------------
+
+
+PRODUCTION_PACKAGES = ("core", "services", "storage", "workers", "gui")
+
+
+def test_production_code_does_not_use_assert_for_runtime_checks() -> None:
+    offenders: list[str] = []
+    roots = [ROOT / name for name in PRODUCTION_PACKAGES] + [ROOT / "main.py"]
+    for root in roots:
+        files = [root] if root.is_file() else sorted(root.rglob("*.py"))
+        for path in files:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assert):
+                    offenders.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno}"
+                    )
+    assert offenders == [], (
+        "assert is stripped by python -O and must not guard production "
+        f"invariants: {offenders}"
+    )

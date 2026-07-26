@@ -11,6 +11,7 @@ from core.exceptions import DeferredTelegramError
 
 log = logging.getLogger(__name__)
 
+SCHEDULE_SETTINGS_PREFIX = "automation."
 SCHEDULE_ENABLED_KEY = "automation.schedule_enabled"
 TIMEZONE_KEY = "automation.timezone"
 QUIET_START_KEY = "automation.quiet_start"
