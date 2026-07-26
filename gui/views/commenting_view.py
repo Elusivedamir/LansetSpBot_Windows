@@ -204,10 +204,13 @@ class CommentingView(QWidget):
         openai_title = QLabel("OpenAI · автоматическая генерация")
         openai_title.setObjectName("cardTitle")
         openai_note = QLabel(
-            "Для каждого текстового поста OpenAI создаёт комментарий. После локальной "
-            "валидации он автоматически отправляется через существующие Stop, FloodWait, "
-            "account-isolation и финальные dispatch-barriers. При ошибке генерации "
-            "сообщение не отправляется."
+            "Для каждой отправки берётся один вариант из вашего перемешанного набора "
+            "и передаётся в OpenAI вместе с текстом поста. Модель пишет один "
+            "комментарий, который сохраняет смысл и тон вашего варианта и при этом "
+            "относится к содержанию публикации. Ротация без повторов сохраняется. "
+            "После локальной валидации комментарий отправляется автоматически через "
+            "существующие Stop, FloodWait, account-isolation и dispatch-barriers. "
+            "При ошибке генерации сообщение не отправляется."
         )
         openai_note.setObjectName("mutedText")
         openai_note.setWordWrap(True)
@@ -391,15 +394,21 @@ class CommentingView(QWidget):
     def _on_comment_source_changed(self, _index: int = -1) -> None:
         source = self._current_comment_source()
         prepared = source == SOURCE_PREWRITTEN
+        # The variants are used by both sources. In prepared mode one bag item
+        # is sent verbatim; in OpenAI mode the same bag item is handed to the
+        # model as the meaning to preserve. They are therefore always visible
+        # and always required.
         self.comments_title.setText(
-            "Варианты готовых комментариев" if prepared else "Готовые тексты (резервный режим)"
+            "Варианты готовых комментариев"
+            if prepared
+            else "Ваши комментарии · смысл для OpenAI"
         )
-        self.variant_count_label.setVisible(prepared)
+        self.variant_count_label.setVisible(True)
         for row in self.variant_rows:
-            row.setVisible(prepared)
-        self.import_previous_button.setVisible(prepared)
-        self.save_comments_button.setVisible(prepared)
-        self.save_status.setVisible(prepared)
+            row.setVisible(True)
+        self.import_previous_button.setVisible(True)
+        self.save_comments_button.setVisible(True)
+        self.save_status.setVisible(True)
         self.openai_card.setVisible(not prepared)
         if not self._loading_openai_settings:
             try:

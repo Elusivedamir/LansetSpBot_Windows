@@ -55,7 +55,9 @@ class CommentCampaignAPIMixin(_MixinHost):
             seen.add(item)
             normalized.append(item)
         source = normalize_comment_source(comment_source)
-        if source != SOURCE_OPENAI and not normalized:
+        if not normalized:
+            # OpenAI mode also needs the bag: one variant is drawn per send and
+            # handed to the model as the meaning that must survive rewriting.
             raise ValueError("Добавьте хотя бы один комментарий")
         openai_public = dict(self.database.get_settings("openai."))
         openai_settings = CommentGenerationSettings.from_mapping(openai_public)
@@ -107,19 +109,18 @@ class CommentCampaignAPIMixin(_MixinHost):
                 "Новые цели можно запустить отдельной кампанией."
             )
         effective_limit = min(limit, eligible_count)
-        if source != SOURCE_OPENAI:
-            self.save_comment_profile(
-                slots,
-                visible_count=max(1, min(MAX_COMMENT_VARIANTS, len(comments) or 1)),
-                account_id=account_id,
-            )
+        self.save_comment_profile(
+            slots,
+            visible_count=max(1, min(MAX_COMMENT_VARIANTS, len(comments) or 1)),
+            account_id=account_id,
+        )
         campaign = self.database.create_comment_campaign(
             normalized,
             daily_limit=limit,
             slot_count=effective_limit,
             duration_hours=self.campaign_hours,
             continuous=bool(continuous),
-            allow_empty_comments=source == SOURCE_OPENAI,
+            allow_empty_comments=False,
             account_id=account_id,
         )
         campaign_id = int((campaign or {}).get("id") or 0)
@@ -227,7 +228,7 @@ class CommentCampaignAPIMixin(_MixinHost):
         comment_source = normalize_comment_source(source_settings.get("comment_source"))
         if not bool(source.get("continuous")):
             return False
-        if comment_source != SOURCE_OPENAI and not comments:
+        if not comments:
             return False
         limit = int(source.get("daily_limit") or self.max_channels_per_run)
         source_account_id = int(source.get("account_id") or 0)
@@ -245,7 +246,7 @@ class CommentCampaignAPIMixin(_MixinHost):
             slot_count=desired,
             duration_hours=self.campaign_hours,
             continuous=True,
-            allow_empty_comments=comment_source == SOURCE_OPENAI,
+            allow_empty_comments=False,
             account_id=source_account_id,
         )
         successor_id = int((successor or {}).get("id") or 0)

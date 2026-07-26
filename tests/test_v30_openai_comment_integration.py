@@ -82,12 +82,18 @@ class _OpenAIStub:
         self.text = text
         self.callback = callback
         self.calls = 0
+        self.reference_comments: list[str] = []
 
-    async def generate_comment(self, post_text, system_prompt, settings):
+    async def generate_comment(
+        self, post_text, system_prompt, settings, reference_comment=""
+    ):
         self.calls += 1
+        self.reference_comments.append(reference_comment)
         assert "обновили интерфейс" in post_text
         assert system_prompt
         assert settings.manual_approval_required is False
+        # The operator's own variant must reach the model on every send.
+        assert reference_comment, "the bag variant was not handed to OpenAI"
         if self.callback:
             self.callback()
         return GeneratedComment(
@@ -128,14 +134,16 @@ def _make_openai_task(tmp_path):
         ],
         account_id=account_id,
     )
+    # OpenAI mode draws one bag variant per send and hands it to the model as
+    # the meaning to preserve, so a campaign always carries variants now.
     campaign = db.create_comment_campaign(
-        [],
+        ["Полезное обновление, спасибо"],
         daily_limit=1,
         slot_count=1,
         continuous=False,
         start_at=utc_now() - timedelta(hours=1),
         account_id=account_id,
-        allow_empty_comments=True,
+        allow_empty_comments=False,
         rng=random.Random(1),
     )
     db.save_campaign_comment_settings(
