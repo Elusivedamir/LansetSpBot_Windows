@@ -1,17 +1,26 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from storage.sqlcipher_driver import dbapi as sqlite3
 from pathlib import Path
 
 from core.redaction import sanitize_json, sanitize_text
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # ``sqlite3`` is bound to the SQLCipher DBAPI proxy object, not to a
+    # module, so its DBAPI classes are imported from the standard library
+    # for annotations. The two drivers are DBAPI-compatible.
+    from sqlite3 import Connection as SQLiteConnection
 
-def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
+
+
+def _column_names(conn: SQLiteConnection, table: str) -> set[str]:
     return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
 
 
 def _sanitize_text_column(
-    conn: sqlite3.Connection, table: str, id_column: str, value_column: str
+    conn: SQLiteConnection, table: str, id_column: str, value_column: str
 ) -> None:
     columns = _column_names(conn, table)
     if id_column not in columns or value_column not in columns:
@@ -33,7 +42,7 @@ def _sanitize_text_column(
 
 
 def _scrub_legacy_persistent_secrets(
-    conn: sqlite3.Connection, tables: set[str]
+    conn: SQLiteConnection, tables: set[str]
 ) -> None:
     text_columns = (
         ("tasks", "id", "error"),

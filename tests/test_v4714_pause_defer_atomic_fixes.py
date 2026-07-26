@@ -101,6 +101,9 @@ def test_any_length_pause_preserves_all_pending_slots(tmp_path, daily_limit):
 def test_api_resume_after_original_end_does_not_complete_or_miss_slots(tmp_path):
     _app()
     db = Database(tmp_path / "resume-after-end.db")
+    # Campaigns are account-scoped since schema v18; account 0 is the
+    # unauthenticated sentinel and is never returned as an active campaign.
+    db.set_setting("telegram.account_id", 501)
     start = utc_now() - timedelta(days=3)
     campaign = db.create_comment_campaign(
         ["Комментарий"],

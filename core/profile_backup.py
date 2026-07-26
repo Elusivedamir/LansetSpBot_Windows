@@ -19,7 +19,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile, ZipInfo
 
 from core.crypto_vault import OSBoundMasterKeyProvider
@@ -34,6 +34,12 @@ from storage.sqlcipher_driver import (
     derive_database_key,
     verify_encrypted_database,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # ``sqlite3`` is bound to the SQLCipher DBAPI proxy object, not to a
+    # module, so its DBAPI classes are imported from the standard library
+    # for annotations. The two drivers are DBAPI-compatible.
+    from sqlite3 import Connection as SQLiteConnection
 
 BACKUP_FORMAT = "marlen-profile-backup"
 BACKUP_FORMAT_VERSION = 3
@@ -205,7 +211,7 @@ def _quiesce_restored_operations(
 ) -> None:
     """Require an explicit user action before any restored operation can run."""
 
-    connection: sqlite3.Connection | None = None
+    connection: SQLiteConnection | None = None
     try:
         connection = connect_encrypted_database(
             path, timeout=5.0, key_storage_dir=key_storage_dir

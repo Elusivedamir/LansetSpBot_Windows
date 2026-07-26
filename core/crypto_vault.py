@@ -18,7 +18,7 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Final
+from typing import Final, Protocol
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
@@ -44,6 +44,12 @@ class VaultUnavailableError(VaultError):
 
 class VaultIntegrityError(VaultError):
     """An encrypted value is malformed, corrupted, or bound to another key."""
+
+
+class MasterKeyProvider(Protocol):
+    """Structural type for every master-key source used by the codec."""
+
+    def get_or_create(self) -> bytes: ...
 
 
 class StaticMasterKeyProvider:
@@ -242,8 +248,11 @@ class OSBoundMasterKeyProvider:
         class DataBlob(ctypes.Structure):
             _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_ubyte))]
 
-        crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        # ctypes.WinDLL and the Win32 error helpers exist only on Windows,
+        # which is the only platform that reaches this branch.
+        windll_loader = ctypes.WinDLL  # type: ignore[attr-defined]
+        crypt32 = windll_loader("crypt32", use_last_error=True)
+        kernel32 = windll_loader("kernel32", use_last_error=True)
         crypt32.CryptProtectData.argtypes = [
             ctypes.POINTER(DataBlob),
             wintypes.LPCWSTR,
@@ -302,8 +311,10 @@ class OSBoundMasterKeyProvider:
                 ctypes.byref(output_blob),
             )
         if not ok:
+            win_error = ctypes.WinError  # type: ignore[attr-defined]
+            last_error = ctypes.get_last_error  # type: ignore[attr-defined]
             raise VaultUnavailableError(
-                f"Windows DPAPI operation failed: {ctypes.WinError(ctypes.get_last_error())}"
+                f"Windows DPAPI operation failed: {win_error(last_error())}"
             )
         try:
             return ctypes.string_at(output_blob.pbData, output_blob.cbData)
@@ -321,7 +332,7 @@ class EncryptedBlobCodec:
     TAG_BYTES: Final[int] = 16
     HKDF_SALT: Final[bytes] = b"LansetSpBot authenticated local vault v1"
 
-    def __init__(self, provider: object | None = None) -> None:
+    def __init__(self, provider: MasterKeyProvider | None = None) -> None:
         self.provider = provider or OSBoundMasterKeyProvider()
 
     def is_encrypted(self, payload: bytes | bytearray | memoryview) -> bool:

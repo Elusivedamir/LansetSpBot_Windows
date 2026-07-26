@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Any, Final, cast
 
 from telethon.crypto import AuthKey
 from telethon.sessions import SQLiteSession
@@ -51,8 +51,12 @@ class EncryptedSQLiteSession(SQLiteSession):
         self._session_codec = codec or EncryptedBlobCodec(
             OSBoundMasterKeyProvider(storage_dir)
         )
+        # Telethon's SQLiteSession stores the identifier as a plain string and
+        # calls ``str.endswith``/``+=`` on it. Callers legitimately build the
+        # session base from ``pathlib.Path`` (``session_dir / "main"``), so the
+        # value must be normalized here instead of crashing inside Telethon.
         super().__init__(
-            session_id,
+            str(session_id) if session_id else session_id,
             store_tmp_auth_key_on_disk=store_tmp_auth_key_on_disk,
         )
         self._load_and_migrate_authorization_keys()
@@ -61,7 +65,7 @@ class EncryptedSQLiteSession(SQLiteSession):
         if raw in (None, b"", ""):
             return b"", False
         try:
-            payload = bytes(raw)
+            payload = bytes(cast(Any, raw))
         except Exception as exc:  # noqa: BLE001 - normalize SQLite driver types
             raise TelegramSessionEncryptionError(
                 "Telegram session contains an unreadable authorization key"

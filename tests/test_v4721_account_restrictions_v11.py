@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import random
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -14,6 +13,7 @@ from core.account_restriction import (
 )
 from core.campaign_schedule import generate_random_slots
 from storage.database import Database
+from tests.conftest import open_project_database
 from storage.db_common import DatabaseError
 
 
@@ -116,7 +116,8 @@ def test_v10_global_restriction_migrates_to_account_scoped_v19(tmp_path: Path) -
     bootstrap.set_setting("telegram.account_id", 404)
     bootstrap.close()
 
-    conn = sqlite3.connect(path)
+    # Database() produced a real SQLCipher file; reopen it with the keyed driver.
+    conn = open_project_database(path)
     try:
         conn.execute("DROP TABLE account_restrictions")
         conn.execute(

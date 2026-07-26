@@ -1,16 +1,24 @@
 from __future__ import annotations
 
-from storage.sqlcipher_driver import dbapi as sqlite3
+from typing import TYPE_CHECKING
+
 from contextlib import AbstractContextManager
 
 from core.redaction import sanitize_text
 from storage.db_common import DatabaseError
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # ``sqlite3`` is bound to the SQLCipher DBAPI proxy object, not to a
+    # module, so its DBAPI classes are imported from the standard library
+    # for annotations. The two drivers are DBAPI-compatible.
+    from sqlite3 import Connection as SQLiteConnection
+
+
 
 class DirectMessageRepositoryMixin:
     """Durable idempotency ledger for non-repeatable direct messages."""
 
-    def get_connection(self) -> AbstractContextManager[sqlite3.Connection]:
+    def get_connection(self) -> AbstractContextManager[SQLiteConnection]:
         """Provided by the concrete Database facade."""
         raise NotImplementedError
 

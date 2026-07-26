@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import random
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -10,6 +9,7 @@ import pytest
 from core.campaign_schedule import from_db_time
 from storage.database import Database
 from storage.migrations.comment_cadence_v17 import migrate_comment_cadence_v17
+from tests.conftest import open_project_database
 
 UTC = timezone.utc
 
@@ -60,7 +60,7 @@ def test_repeated_redistribution_keeps_original_slider_cadence(tmp_path: Path) -
 
 def test_v16_campaigns_receive_persistent_daily_cadence(tmp_path: Path) -> None:
     path = tmp_path / "v16-cadence.db"
-    conn = sqlite3.connect(path)
+    conn = open_project_database(path)
     try:
         conn.executescript(
             """
@@ -99,7 +99,7 @@ def test_v16_campaigns_receive_persistent_daily_cadence(tmp_path: Path) -> None:
 
     migrate_comment_cadence_v17(path, sqlite_timeout_seconds=5.0, busy_timeout_ms=5_000)
 
-    conn = sqlite3.connect(path)
+    conn = open_project_database(path)
     try:
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(comment_campaigns)")

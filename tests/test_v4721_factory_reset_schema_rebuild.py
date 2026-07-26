@@ -215,6 +215,9 @@ def test_comment_refresh_timer_contains_database_error(monkeypatch):
         next_label=SimpleNamespace(
             setText=lambda value: labels.append(("next", value))
         ),
+        # _handle_refresh_error only rewrites the countdown label while no next
+        # check time is known.
+        _next_check_at=None,
     )
     warnings: list[object] = []
     monkeypatch.setattr(

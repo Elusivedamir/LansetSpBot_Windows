@@ -13,6 +13,7 @@ from core.campaign_schedule import utc_now
 from core.exceptions import DeferredTelegramError, NonRetryableTelegramError
 from services.telegram_service import TelegramService
 from storage.database import Database
+from tests.conftest import open_project_database
 from workers.queue_worker import QueueWorker
 
 
@@ -259,7 +260,9 @@ def test_schema_v12_is_migrated_with_deferred_task_column(tmp_path):
     db = Database(path)
 
     assert db.get_version() == Database.SCHEMA_VERSION
-    with closing(sqlite3.connect(path)) as connection:
+    # Database() has converted the legacy plaintext fixture into SQLCipher, so
+    # the post-migration inspection must use the keyed production driver.
+    with closing(open_project_database(path)) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(tasks)")}
         indexes = {row[1] for row in connection.execute("PRAGMA index_list(tasks)")}
     assert {

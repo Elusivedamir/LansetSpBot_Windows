@@ -93,6 +93,11 @@ def test_join_pause_and_stop_are_disabled_when_campaign_is_not_running():
         join_summary=MagicMock(),
         pause_join_button=MagicMock(),
         stop_join_button=MagicMock(),
+        # The view is account-scoped since v18: _apply_join_state ignores a
+        # snapshot that belongs to another account or to a stale generation.
+        _current_account_id=lambda: 77,
+        _account_generation=0,
+        _join_refresh_pending=False,
     )
 
     ChannelsView._apply_join_state(view, None)
@@ -107,6 +112,11 @@ def test_join_pause_and_stop_are_enabled_only_for_active_campaign():
         join_summary=MagicMock(),
         pause_join_button=MagicMock(),
         stop_join_button=MagicMock(),
+        # The view is account-scoped since v18: _apply_join_state ignores a
+        # snapshot that belongs to another account or to a stale generation.
+        _current_account_id=lambda: 77,
+        _account_generation=0,
+        _join_refresh_pending=False,
     )
 
     ChannelsView._apply_join_state(

@@ -92,7 +92,12 @@ def test_premium_gui_is_resizable_and_has_activity_panel(monkeypatch, tmp_path):
     assert window.minimumHeight() <= 620
     assert window.activity_panel.isVisible()
     assert window.activity_panel.feed.isReadOnly()
-    assert "Журнал готов" in window.activity_panel.feed.toPlainText()
+    # The panel starts with a placeholder and replaces it as soon as the first
+    # background snapshot arrives. Both are valid initial states, and which one
+    # is on screen after processEvents() depends on thread-pool timing, so the
+    # assertion covers the journal being populated with either of them.
+    journal = window.activity_panel.feed.toPlainText()
+    assert "Журнал готов" in journal or "Telegram-аккаунт не подключён" in journal
     assert window.vertical_splitter.count() == 2
     assert window.horizontal_splitter.count() == 2
 

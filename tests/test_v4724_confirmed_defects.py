@@ -18,6 +18,7 @@ from services.api_parts.joins import JoinCampaignAPIMixin
 from services.api_parts.task_queue import TaskQueueAPIMixin
 from storage.database import Database
 from workers.queue_worker import QueueWorker
+from tests.conftest import open_project_database
 
 
 def test_stop_and_dispatch_share_one_linearization_barrier() -> None:
@@ -291,9 +292,8 @@ def test_v23_delivery_routes_collapse_to_one_source_receipt(tmp_path: Path) -> N
     db = Database(path)
     db.close()
 
-    import sqlite3
 
-    conn = sqlite3.connect(path)
+    conn = open_project_database(path)
     try:
         conn.executescript(
             """
@@ -333,7 +333,7 @@ def test_v23_delivery_routes_collapse_to_one_source_receipt(tmp_path: Path) -> N
         conn.close()
 
     migrated = Database(path)
-    assert migrated.get_version() == Database.SCHEMA_VERSION == 29
+    assert migrated.get_version() == Database.SCHEMA_VERSION == 30
     with migrated.get_connection() as active:
         rows = active.execute(
             """SELECT linked_chat_id, status FROM comment_deliveries

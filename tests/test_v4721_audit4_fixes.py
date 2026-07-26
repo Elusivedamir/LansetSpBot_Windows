@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import random
-import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -14,6 +13,7 @@ from storage.database import Database
 from storage.migrations.comment_delivery_context_v21 import (
     migrate_comment_delivery_context_v21,
 )
+from tests.conftest import open_project_database, project_row_factory
 
 
 def _bind_running_slot(
@@ -163,7 +163,7 @@ def test_comment_delivery_key_uses_immutable_campaign_source_post(
 
 def test_v21_delivery_migration_preserves_v20_receipt_context(tmp_path: Path) -> None:
     path = tmp_path / "delivery-v20.db"
-    conn = sqlite3.connect(path)
+    conn = open_project_database(path)
     try:
         conn.executescript(
             """
@@ -208,8 +208,8 @@ def test_v21_delivery_migration_preserves_v20_receipt_context(tmp_path: Path) ->
         path, sqlite_timeout_seconds=5.0, busy_timeout_ms=5_000
     )
 
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
+    conn = open_project_database(path)
+    conn.row_factory = project_row_factory()
     try:
         row = conn.execute(
             "SELECT * FROM comment_deliveries WHERE account_id=702"

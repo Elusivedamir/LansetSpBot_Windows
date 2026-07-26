@@ -15,6 +15,7 @@ from core.redaction import (
 )
 from storage.database import Database
 from workers.queue_worker import QueueWorker
+from tests.conftest import open_project_database
 
 
 @pytest.mark.asyncio
@@ -202,9 +203,8 @@ def test_v26_migrates_existing_cooldown_with_conservative_fallback(tmp_path):
     )
     db.close_thread_connection()
 
-    import sqlite3
 
-    with sqlite3.connect(path) as conn:
+    with open_project_database(path) as conn:
         conn.execute("DELETE FROM migrations WHERE version=26")
         conn.execute("PRAGMA user_version=25")
         # Rebuild the table in its v25 form to exercise the real ALTER migration.

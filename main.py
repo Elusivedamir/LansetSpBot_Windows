@@ -63,7 +63,7 @@ def _resource_path(relative_path: str) -> Path:
 def _set_application_icon(app: QApplication) -> None:
     """Load the shared application/tray icon without making startup fragile."""
 
-    icon_path = _resource_path("build/assets/LansetSpBot-1024.png")
+    icon_path = _resource_path("gui/assets/lansetspbot.png")
     if not icon_path.is_file():
         return
     icon = QIcon(str(icon_path))

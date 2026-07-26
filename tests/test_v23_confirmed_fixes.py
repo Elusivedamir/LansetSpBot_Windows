@@ -138,7 +138,7 @@ def _handler(db: Database, telegram, comments):
         worker_db=db,
         telegram=telegram,
         comments=comments,
-        set_runtime=lambda _task_id, _message: None,
+        set_runtime=lambda _task_id, _message, **_kwargs: None,
     )
 
 

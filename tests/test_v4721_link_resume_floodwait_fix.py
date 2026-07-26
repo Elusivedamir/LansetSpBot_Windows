@@ -161,6 +161,9 @@ def test_links_view_shows_floodwait_countdown():
     app = QApplication.instance() or QApplication([])
     adapter = MagicMock()
     adapter.get_channels.return_value = []
+    # The links view ignores task updates that are not owned by the currently
+    # selected Telegram account (account isolation, schema v18).
+    adapter.get_current_account_id.return_value = 909
     view = LinksView(adapter)
     view.total = 10
 
@@ -168,6 +171,7 @@ def test_links_view_shows_floodwait_countdown():
         {
             "status": "pending",
             "progress": 20,
+            "payload": {"account_id": 909},
             "not_before": to_db_time(utc_now() + timedelta(seconds=65)),
             "error": "flood_wait_deferred: Telegram FloodWait",
         }

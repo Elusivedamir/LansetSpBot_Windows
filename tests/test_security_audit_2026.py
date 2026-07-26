@@ -15,6 +15,7 @@ from core.redaction import sanitize_data, sanitize_log_text, sanitize_text
 from core.secret_store import SecretStore
 from core.paths import AppPaths
 from storage.database import Database
+from tests.conftest import export_plaintext_copy
 
 
 def _paths(root: Path) -> AppPaths:
@@ -147,10 +148,18 @@ def test_legacy_v1_restore_discards_archived_credentials_and_sessions(tmp_path: 
     session_path = tmp_path / "legacy.session"
     session_db = Database(session_path)
     session_db.close_thread_connection()
+    # A real format_version 1 archive predates SQLCipher and therefore holds an
+    # ordinary plaintext SQLite database.
+    legacy_database = export_plaintext_copy(
+        source_paths.database, tmp_path / "legacy-plaintext.db"
+    )
+    legacy_session = export_plaintext_copy(
+        session_path, tmp_path / "legacy-plaintext.session"
+    )
     members = {
-        "profile/marlen.db": source_paths.database.read_bytes(),
+        "profile/marlen.db": legacy_database.read_bytes(),
         "profile/secrets.json": secrets,
-        "profile/sessions/main.session": session_path.read_bytes(),
+        "profile/sessions/main.session": legacy_session.read_bytes(),
     }
     kinds = {
         "profile/marlen.db": "database",

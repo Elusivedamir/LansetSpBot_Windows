@@ -35,10 +35,14 @@ def test_windows_source_launcher_is_complete_and_x64_scoped() -> None:
     assert "$VenvPython $MainScript --self-test" in launcher
     assert "Start-Process -FilePath $VenvPythonw" in launcher
 
-    readme = (ROOT / "WINDOWS_X64_README.txt").read_text(encoding="utf-8")
-    assert "автоматически" in readme
+    # The delivered Windows readme is README.txt; it must still name both
+    # supported interpreters and both documented launch entry points.
+    readme = (ROOT / "README.txt").read_text(encoding="utf-8")
     assert "Python 3.13 x64" in readme
     assert "Python 3.14 x64" in readme
+    assert "1_RUN_LANSETSPBOT_WINDOWS.bat" in readme
+    assert "2_RUN_LANSETSPBOT_DIRECT_PY314.bat" in readme
+    assert "Windows 10 x64, Windows 11 x64" in readme
 
 
 def test_windows_pyinstaller_spec_is_not_a_macos_bundle() -> None:
@@ -49,7 +53,10 @@ def test_windows_pyinstaller_spec_is_not_a_macos_bundle() -> None:
     assert "LansetSpBot.ico" in spec
     assert "windows_version_info.txt" in spec
     assert "name=app_name" in spec
-    assert '"build/assets"' in spec
+    # The runtime window/tray icon and the navigation rail icons are loaded from
+    # gui/assets, so those trees must stay in the packaged data set.
+    assert '"gui/assets"' in spec
+    assert '"gui/assets/icons"' in spec
 
 
 def test_windows_build_pipeline_has_native_self_tests_and_release_zip() -> None:

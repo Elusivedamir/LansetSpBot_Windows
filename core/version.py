@@ -3,7 +3,7 @@
 __version__ = "4.8.0"
 BUILD_ID = "V46-OPENAI-PREMIUM-GUI"
 APP_NAME = "LansetSpBot"
-APP_BUNDLE_NAME = f"{APP_NAME}.app"
+APP_EXECUTABLE_NAME = f"{APP_NAME}.exe"
 APP_BUNDLE_ID = "com.lanset.spbot"
 
 # The existing local storage identifiers intentionally remain legacy-compatible

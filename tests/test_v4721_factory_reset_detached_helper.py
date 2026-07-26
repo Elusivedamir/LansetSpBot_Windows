@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 from gui.app import MarlenApp
+from tests.conftest import open_project_database
 
 
 def test_detached_helper_resets_only_after_parent_is_gone_and_rebuilds_schema(tmp_path):
@@ -53,7 +53,7 @@ def test_detached_helper_resets_only_after_parent_is_gone_and_rebuilds_schema(tm
     assert not (logs / "marlen.log").exists()
     assert not (backups / "old.backup").exists()
 
-    with sqlite3.connect(root / "marlen.db") as connection:
+    with open_project_database(root / "marlen.db") as connection:
         tables = {
             str(row[0])
             for row in connection.execute(

@@ -54,11 +54,19 @@ def test_instruction_slideshow_documents_v12_comment_bag_and_help() -> None:
     app = _app()
     view = InstructionsView()
 
-    assert view.stack.count() == 9
-    assert view.STEPS[3][0] == "Комментарии и суточная нагрузка"
-    assert "от одного до десяти" in view.STEPS[3][2]
-    assert "перемешанный мешок" in view.STEPS[3][2]
-    assert "предыдущего Telegram-аккаунта" in view.STEPS[3][2]
+    assert view.stack.count() == 11
+    # The comment-source page is located by title: the slideshow gained pages
+    # over several releases, so a fixed index is not a stable contract.
+    comments_step = next(
+        step for step in view.STEPS if step[0] == "Комментарии и источник текста"
+    )
+    assert "одного–десяти" in comments_step[2]
+    assert "перемешанный мешок" in comments_step[2]
+    # Per-account isolation is documented on the account-switch page.
+    account_step = next(
+        step for step in view.STEPS if step[0] == "Смена Telegram-аккаунта"
+    )
+    assert "изолированы по Telegram account_id" in account_step[2]
     assert view.STEPS[-1][0] == "Ярлык, данные и поддержка"
     assert "@lansetp" in view.STEPS[-1][2]
 
@@ -66,13 +74,15 @@ def test_instruction_slideshow_documents_v12_comment_bag_and_help() -> None:
     assert help_asset.is_file()
     assert help_asset.stat().st_size > 10_000
 
-    view.stack.setCurrentIndex(8)
+    # On the last page "next" must be disabled, whatever the page count is.
+    last_index = view.stack.count() - 1
+    view.stack.setCurrentIndex(last_index)
     view._update_navigation()
-    assert view.progress_label.text() == "Шаг 9 из 9"
+    assert view.progress_label.text() == f"Шаг {last_index + 1} из {view.stack.count()}"
     assert view.next_button.isEnabled() is False
     view.deleteLater()
     app.processEvents()
 
 
 def test_v13_build_identity_is_visible() -> None:
-    assert BUILD_ID == "V43-SENIOR-AUDIT-ACCOUNT-ISOLATION-FIXES"
+    assert BUILD_ID == "V46-OPENAI-PREMIUM-GUI"

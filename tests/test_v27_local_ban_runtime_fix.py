@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -16,6 +15,7 @@ from core.exceptions import NonRetryableTelegramError
 from services.comment_service import CommentService
 from services.telegram_service import TelegramService
 from storage.database import Database
+from tests.conftest import open_project_database, project_row_factory
 from storage.migrations.local_channel_ban_v27 import migrate_local_channel_ban_v27
 
 
@@ -112,7 +112,9 @@ def _link_handlers(
 
 def test_v26_migration_converts_ambiguous_join_to_persistent_local_ban(tmp_path):
     path = tmp_path / "v26.db"
-    with sqlite3.connect(path) as conn:
+    # Production always runs migrations against an already-encrypted database,
+    # because prepare_encrypted_database() executes before the migration chain.
+    with open_project_database(path) as conn:
         conn.executescript(
             """
             CREATE TABLE channels(
@@ -142,8 +144,8 @@ def test_v26_migration_converts_ambiguous_join_to_persistent_local_ban(tmp_path)
         busy_timeout_ms=5_000,
     )
 
-    with sqlite3.connect(path) as conn:
-        conn.row_factory = sqlite3.Row
+    with open_project_database(path) as conn:
+        conn.row_factory = project_row_factory()
         row = conn.execute("SELECT * FROM channels WHERE channel_id=10").fetchone()
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 27
         assert row["linked_chat_id"] is None

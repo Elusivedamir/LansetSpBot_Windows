@@ -17,6 +17,7 @@ from services.api import ServiceAPI
 from services.comment_service import CommentService
 from storage.database import Database
 from workers.queue_worker import QueueWorker
+from tests.conftest import open_project_database
 
 
 @pytest.mark.asyncio
@@ -126,14 +127,13 @@ def test_v25_disables_legacy_direct_group_work_before_worker_start(tmp_path):
     )
     db.close_thread_connection()
 
-    import sqlite3
 
-    with sqlite3.connect(path) as conn:
+    with open_project_database(path) as conn:
         conn.execute("DELETE FROM migrations WHERE version=25")
         conn.execute("PRAGMA user_version=24")
 
     migrated = Database(path)
-    assert migrated.get_version() == Database.SCHEMA_VERSION == 29
+    assert migrated.get_version() == Database.SCHEMA_VERSION == 30
     channel = migrated.get_channel_by_id(-1009001, account_id=201)
     assert channel["comment_mode"] == "pending"
     assert channel["linked_chat_id"] is None

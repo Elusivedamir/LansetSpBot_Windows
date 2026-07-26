@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
-from typing import TYPE_CHECKING, Any
+from typing import Any, TYPE_CHECKING, cast
 
 from core.openai_settings import (
     DEFAULT_OPENAI_SYSTEM_PROMPT,
@@ -22,7 +22,8 @@ class OpenAICommentAPIMixin(_MixinHost):
     def _strict_openai_key(self) -> str | None:
         getter = getattr(type(self.secret_store), "get_strict_optional", None)
         if callable(getter):
-            return self.secret_store.get_strict_optional(OPENAI_API_KEY_SECRET)
+            value = self.secret_store.get_strict_optional(OPENAI_API_KEY_SECRET)
+            return None if value is None else str(value)
         value = self.secret_store.get(OPENAI_API_KEY_SECRET, "")
         return None if value in (None, "") else str(value)
 
@@ -127,4 +128,4 @@ class OpenAICommentAPIMixin(_MixinHost):
         submit = getattr(worker, "submit_utility", None)
         if not callable(submit):
             raise RuntimeError("Эта сборка не поддерживает фоновые тесты OpenAI")
-        return submit("openai_test", {"post_text": str(post_text or "")})
+        return cast("Future[Any]", submit("openai_test", {"post_text": str(post_text or "")}))

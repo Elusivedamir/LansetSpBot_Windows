@@ -36,10 +36,6 @@ analysis = Analysis(
     binaries=[],
     datas=collect_data_files("tzdata") + collect_data_files("openai") + [
         (
-            str(project_root / "build" / "assets" / "LansetSpBot-1024.png"),
-            "build/assets",
-        ),
-        (
             str(project_root / "gui" / "assets" / "instructions"),
             "gui/assets/instructions",
         ),
