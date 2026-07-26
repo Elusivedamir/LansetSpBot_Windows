@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import traceback
 from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,6 +28,8 @@ from services.encrypted_telethon_session import EncryptedSQLiteSession
 from services.paced_telegram_client import PacedTelegramClient as TelegramClient
 from services.telegram_service import TelegramService
 from services.mtproxy_faketls import ConnectionTcpMTProxyFakeTLS
+
+log = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -77,22 +81,43 @@ class TelegramAuthWorker(QThread):
             # Normal application shutdown or user-requested cancellation.
             return
         except TimeoutError:
+            log.warning("Telegram did not answer in time")
             self.failed.emit("Telegram не ответил вовремя. Проверьте сеть или proxy")
         except PhoneNumberInvalidError:
+            log.warning("Telegram rejected the phone number")
             self.failed.emit("Telegram не принял номер телефона")
         except PhoneCodeInvalidError:
+            log.warning("Telegram rejected the confirmation code")
             self.failed.emit("Неверный код подтверждения")
         except PhoneCodeExpiredError:
+            log.warning("The Telegram confirmation code expired")
             self.failed.emit("Код подтверждения устарел. Запросите новый код")
         except PasswordHashInvalidError:
+            log.warning("The two-factor password was rejected")
             self.failed.emit("Неверный пароль двухэтапной аутентификации")
         except FloodWaitError as exc:
+            log.warning("Telegram FloodWait during authorization: %ss", exc.seconds)
             self.failed.emit(
                 f"Telegram временно ограничил вход. Повторите через {exc.seconds} сек."
             )
         except TemporaryTelegramRequestError as exc:
+            log.warning(
+                "Temporary Telegram authorization failure: %s: %s",
+                type(exc).__name__,
+                sanitize_text(str(exc)),
+            )
             self.temporary_failed.emit(self._safe_error_text(exc))
         except Exception as exc:
+            # An authorization failure the operator can see must also be
+            # reconstructible afterwards. Without this the dialog was the only
+            # record: nothing reached marlen.log, so a report carried the
+            # message and no traceback.
+            log.error(
+                "Telegram authorization failed: %s: %s\n%s",
+                type(exc).__name__,
+                sanitize_text(str(exc)),
+                sanitize_text(traceback.format_exc()),
+            )
             self.failed.emit(f"Ошибка подключения: {self._safe_error_text(exc)}")
 
     def _safe_error_text(self, exc: BaseException) -> str:

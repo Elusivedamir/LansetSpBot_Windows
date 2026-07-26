@@ -55,6 +55,15 @@ class MainWindow(QMainWindow):
         # The old 1040px minimum made the window effectively fixed on smaller
         # laptops. All important content now remains usable from 760px upward.
         self.setMinimumSize(760, 620)
+        # Ordinary window controls, stated explicitly: minimize puts the window
+        # on the taskbar and leaves the application running, which is the only
+        # way to get it off screen now that closing really closes.
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.WindowMinimizeButtonHint
+            | Qt.WindowType.WindowMaximizeButtonHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
         self.setStyleSheet(TELEGRAM_PREMIUM_QSS)
         self.setWindowIcon(QIcon(str(asset_path("lansetspbot.png"))))
 

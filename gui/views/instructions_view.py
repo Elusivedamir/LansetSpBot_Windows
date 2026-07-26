@@ -24,6 +24,8 @@ from ..resources import asset_path
 class InstructionsView(QWidget):
     """Scrollable slide-by-slide operator guide with annotated UI diagrams."""
 
+    IMAGE_SHARE_OF_SLIDE = 0.58
+
     STEPS = (
         (
             "Подключение аккаунта и proxy",
@@ -236,11 +238,14 @@ class InstructionsView(QWidget):
         image = QLabel()
         image.setObjectName("instructionImage")
         image.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        image.setMinimumHeight(260)
-        image.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        image.setMinimumHeight(220)
+        image.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         pixmap = QPixmap(str(self._asset_path(image_name)))
         image.setProperty("sourcePixmap", pixmap)
-        image.setPixmap(pixmap)
+        # The full-size pixmap is never handed to the label: it would set the
+        # label's size hint to the screenshot's own height, push the card past
+        # the visible area and leave the reader scrolling through one image.
+        # _rescale_current_image() fits it to the space that actually exists.
         layout.addWidget(image, 1)
 
         description = QLabel(body)
@@ -257,7 +262,21 @@ class InstructionsView(QWidget):
         super().resizeEvent(event)
         self._rescale_current_image()
 
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().showEvent(event)
+        # The first slide is built before the view has a size, so its image is
+        # scaled here, once the real geometry exists.
+        self._rescale_current_image()
+
     def _rescale_current_image(self) -> None:
+        """Fit the screenshot into the room the slide actually has.
+
+        Sizing from the label itself does not work: the label grows to whatever
+        pixmap it holds, so measuring it feeds the old size straight back in.
+        The budget comes from the slideshow area instead, with a share left for
+        the heading and the description.
+        """
+
         page = self.stack.currentWidget()
         if page is None:
             return
@@ -267,8 +286,11 @@ class InstructionsView(QWidget):
         source = image.property("sourcePixmap")
         if not isinstance(source, QPixmap) or source.isNull():
             return
-        target_width = max(320, image.width() - 12)
-        target_height = max(220, image.height() - 12)
+        available_width = self.stack.width() - 100
+        available_height = int(self.stack.height() * self.IMAGE_SHARE_OF_SLIDE)
+        target_width = max(320, available_width)
+        target_height = max(200, available_height)
+        image.setMaximumHeight(target_height)
         image.setPixmap(
             source.scaled(
                 target_width,
