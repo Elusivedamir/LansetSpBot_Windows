@@ -14,8 +14,8 @@ QFrame#sidebar {
     border-right: 1px solid #292C33;
 }
 QLabel#brandMark {
-    min-width: 44px;
-    max-width: 44px;
+    min-width: 52px;
+    max-width: 52px;
     min-height: 44px;
     max-height: 44px;
     border-radius: 14px;
@@ -27,7 +27,7 @@ QLabel#brandMark {
 }
 QLabel#brandTitle {
     color: #FFFFFF;
-    font-size: 23px;
+    font-size: 20px;
     font-weight: 900;
     letter-spacing: 0.6px;
 }
@@ -142,7 +142,7 @@ QLabel#dangerText {
     color: #CBA7AB;
     font-size: 13px;
 }
-QLineEdit, QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+QLineEdit, QPlainTextEdit, QComboBox, QAbstractSpinBox {
     background: #0F1114;
     border: 1px solid #343942;
     border-radius: 11px;
@@ -151,16 +151,25 @@ QLineEdit, QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {
     selection-background-color: #6E84AD;
     font-size: 14px;
 }
-QLineEdit:hover, QPlainTextEdit:hover, QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover {
+QLineEdit:hover, QPlainTextEdit:hover, QComboBox:hover, QAbstractSpinBox:hover {
     border: 1px solid #4A515D;
 }
-QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {
+QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {
     border: 1px solid #7F93B8;
     background: #101216;
 }
 QComboBox::drop-down {
     border: none;
     width: 28px;
+}
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {
+    background: transparent;
+    border: none;
+    width: 18px;
+}
+QAbstractSpinBox::up-arrow, QAbstractSpinBox::down-arrow {
+    width: 9px;
+    height: 9px;
 }
 QCheckBox {
     spacing: 10px;
