@@ -3,11 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-import platform
 import sqlite3
 import stat
-import subprocess
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -66,11 +63,11 @@ def test_secret_store_rejects_non_string_and_oversized_values(tmp_path):
     target.write_text(
         json.dumps({"telegram.api_hash": {"nested": True}}), encoding="utf-8"
     )
-    with pytest.raises(RuntimeError, match="corrupted or unsafe"):
+    with pytest.raises(RuntimeError, match="corrupted, unavailable, or belongs to another OS profile"):
         SecretStore(target).get_strict_optional("telegram.api_hash")
 
     target.write_bytes(b"{" + b" " * (SecretStore.MAX_STORE_BYTES + 1) + b"}")
-    with pytest.raises(RuntimeError, match="corrupted or unsafe"):
+    with pytest.raises(RuntimeError, match="corrupted, unavailable, or belongs to another OS profile"):
         SecretStore(target).get_strict_optional("telegram.api_hash")
 
 
@@ -87,8 +84,9 @@ def test_secret_store_hardens_existing_world_readable_file(tmp_path):
 
 def test_secret_store_replace_failure_preserves_old_bytes(monkeypatch, tmp_path):
     target = tmp_path / ".secrets.json"
-    target.write_text(json.dumps({"token": "old"}), encoding="utf-8")
-    target.chmod(0o600)
+    # The store is fail-closed and only accepts its own authenticated format,
+    # so the fixture must be written through SecretStore itself.
+    SecretStore(target).set("token", "old")
     original = target.read_bytes()
 
     def fail_replace(_source, _destination):
@@ -265,13 +263,16 @@ def test_links_view_does_not_rebuild_10000_row_table_for_same_progress():
     ]
     adapter = MagicMock()
     adapter.get_channels.return_value = channels
+    # Task updates that do not belong to the selected account are ignored.
+    adapter.get_current_account_id.return_value = 909
     view = LinksView(adapter)
     view.total = len(channels)
     view.load_channels = MagicMock()
 
+    payload = {"account_id": 909}
     for _ in range(20):
-        view._task_changed({"status": "running", "progress": 1})
-    view._task_changed({"status": "running", "progress": 2})
+        view._task_changed({"status": "running", "progress": 1, "payload": payload})
+    view._task_changed({"status": "running", "progress": 2, "payload": payload})
 
     assert view.load_channels.call_count == 2
     view.deleteLater()
@@ -298,7 +299,7 @@ def test_corrupt_secret_file_diagnostics_do_not_echo_secret_values(
     store_path.write_text(json.dumps(payload), encoding="utf-8")
     store_path.chmod(0o600)
 
-    with pytest.raises(RuntimeError, match="corrupted or unsafe"):
+    with pytest.raises(RuntimeError, match="corrupted, unavailable, or belongs to another OS profile"):
         SecretStore(store_path).get_strict_optional("telegram.api_hash")
     logger.error("Safe diagnostic code: local_secret_invalid")
     log_file = paths.logs / "marlen.log"
@@ -366,7 +367,7 @@ def test_secret_store_rejects_hardlink_to_external_file(tmp_path):
     except (OSError, NotImplementedError):
         pytest.skip("hard links are unavailable")
 
-    with pytest.raises(RuntimeError, match="hard-linked|unsafe"):
+    with pytest.raises(RuntimeError, match="corrupted, unavailable, or belongs to another OS profile"):
         SecretStore(inside).get_strict_optional("telegram.api_hash")
     assert outside.read_text(encoding="utf-8") == json.dumps(
         {"telegram.api_hash": "outside-secret"}

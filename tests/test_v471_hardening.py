@@ -84,6 +84,9 @@ async def test_invite_only_already_member_is_not_reported_as_new_join():
 
 def test_campaign_states_use_aggregate_queries(tmp_path, monkeypatch):
     db = Database(tmp_path / "aggregate.db")
+    # Join campaigns are account-scoped; the summary is read for the currently
+    # selected account, so the fixture must name one.
+    db.set_setting("telegram.account_id", 2)
     for index in range(90):
         db.upsert_saved_dialog(
             {

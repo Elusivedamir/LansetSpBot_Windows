@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import random
-import sqlite3
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -16,6 +15,18 @@ from core.openai_settings import (
     SOURCE_OPENAI,
     CommentGenerationSettings,
 )
+from services.openai_comment_service import (
+    GeneratedComment,
+    OpenAICommentError,
+    OpenAICommentService,
+    prepare_post_message,
+    validate_generated_comment,
+)
+from storage.database import Database
+from storage.migrations.openai_comments_v30 import migrate_openai_comments_v30
+from workers.comment_slot.handler import create_comment_slot_handler
+from tests.conftest import open_project_database
+
 import importlib.util
 from pathlib import Path as _Path
 
@@ -27,16 +38,6 @@ assert _spec is not None and _spec.loader is not None
 _api_part = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_api_part)
 OpenAICommentAPIMixin = _api_part.OpenAICommentAPIMixin
-from services.openai_comment_service import (
-    GeneratedComment,
-    OpenAICommentError,
-    OpenAICommentService,
-    prepare_post_message,
-    validate_generated_comment,
-)
-from storage.database import Database
-from storage.migrations.openai_comments_v30 import migrate_openai_comments_v30
-from workers.comment_slot.handler import create_comment_slot_handler
 
 SOURCE_ID = -10051001
 DISCUSSION_ID = -10052002
@@ -263,7 +264,7 @@ def test_generated_comment_validation_rejects_links_and_service_text():
 
 def test_v30_migration_is_transactional_and_has_no_api_key_column(tmp_path):
     path = tmp_path / "v29.db"
-    conn = sqlite3.connect(path)
+    conn = open_project_database(path)
     conn.executescript(
         """
         PRAGMA user_version=29;
@@ -277,7 +278,7 @@ def test_v30_migration_is_transactional_and_has_no_api_key_column(tmp_path):
 
     migrate_openai_comments_v30(path)
 
-    conn = sqlite3.connect(path)
+    conn = open_project_database(path)
     try:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 30
         columns = {

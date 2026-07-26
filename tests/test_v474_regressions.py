@@ -62,6 +62,7 @@ def test_redistribution_keeps_exact_capacity_at_window_start(tmp_path, daily_lim
 
 def test_continuous_campaign_stays_active_after_last_slot(tmp_path):
     db = Database(tmp_path / "continuous-active.db")
+    db.set_setting("telegram.account_id", 505)
     _add_linked_channels(db, 1)
     start = datetime.now(UTC)
     campaign = db.create_comment_campaign(
@@ -342,6 +343,7 @@ def test_reconcile_matches_normal_slot_completion_policy(
 
 def test_resuming_expired_finite_campaign_preserves_slots_without_new_cycle(tmp_path):
     db = Database(tmp_path / "finite-resume.db")
+    db.set_setting("telegram.account_id", 504)
     _add_linked_channels(db, 2)
     campaign = db.create_comment_campaign(
         ["Комментарий"],

@@ -21,6 +21,7 @@ from workers.comment_slot.handler import create_comment_slot_handler
 from workers.handlers.join_slot import create_join_slot_handler
 from workers.handlers.manual_comment import create_manual_comment_handler
 from workers.queue_worker import QueueWorker
+from tests.conftest import open_project_database
 
 
 SOURCE_ID = -1001001
@@ -489,11 +490,15 @@ async def test_link_join_rechecks_restricted_state_at_dispatch(tmp_path):
 
 
 def test_v28_migration_late_failure_rolls_back_all_changes(tmp_path, monkeypatch):
-    import sqlite3
+    # Migrations always run against the encrypted production database, because
+    # prepare_encrypted_database() executes before the migration chain. The
+    # fixture, the injected failure and the verification must therefore all use
+    # the same driver the migration module imports.
+    from storage.sqlcipher_driver import dbapi as sqlite3
     from storage.migrations import safety_invariants_v28 as migration
 
     path = tmp_path / "schema-27-late-failure.db"
-    raw = sqlite3.connect(path)
+    raw = open_project_database(path)
     try:
         raw.executescript(
             """
@@ -522,7 +527,7 @@ def test_v28_migration_late_failure_rolls_back_all_changes(tmp_path, monkeypatch
     finally:
         raw.close()
 
-    real_connect = sqlite3.connect
+    real_connect = open_project_database
 
     class LateFailureConnection:
         def __init__(self, connection):

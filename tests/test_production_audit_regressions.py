@@ -6,7 +6,6 @@ import random
 import time
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 

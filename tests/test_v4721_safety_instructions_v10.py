@@ -98,11 +98,11 @@ def test_flood_wait_buffer_is_random_thirty_to_forty_five_seconds() -> None:
     assert TelegramService.FLOOD_WAIT_BUFFER_MAX_SECONDS == 45
 
 
-def test_instruction_view_is_a_real_nine_step_slideshow() -> None:
+def test_instruction_view_is_a_real_multi_step_slideshow() -> None:
     _app()
     view = InstructionsView()
-    assert view.stack.count() == 9
-    assert view.progress_label.text() == "Шаг 1 из 9"
+    assert view.stack.count() == 11
+    assert view.progress_label.text() == "Шаг 1 из 11"
     first = view.stack.widget(0)
     assert isinstance(first, QScrollArea)
     assert first.widgetResizable() is True
@@ -110,7 +110,7 @@ def test_instruction_view_is_a_real_nine_step_slideshow() -> None:
     assert image is not None
     assert image.pixmap() is not None and not image.pixmap().isNull()
     view.next_step()
-    assert view.progress_label.text() == "Шаг 2 из 9"
+    assert view.progress_label.text() == "Шаг 2 из 11"
     assert view.back_button.isEnabled()
     view.deleteLater()
 

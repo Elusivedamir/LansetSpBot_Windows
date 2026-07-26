@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from storage.sqlcipher_driver import dbapi as sqlite3
 from pathlib import Path
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # ``sqlite3`` is bound to the SQLCipher DBAPI proxy object, not to a
+    # module, so its DBAPI classes are imported from the standard library
+    # for annotations. The two drivers are DBAPI-compatible.
+    from sqlite3 import Connection as SQLiteConnection
 
-def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
+
+
+def _column_names(conn: SQLiteConnection, table: str) -> set[str]:
     return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
 
 

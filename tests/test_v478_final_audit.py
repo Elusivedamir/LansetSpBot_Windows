@@ -13,6 +13,7 @@ from telethon.tl.types import PeerChannel
 from core.exceptions import TelegramOperationError
 from core.version import APP_NAME, __version__
 from services.telegram_service import TelegramService
+from tests.conftest import open_project_database
 
 
 @pytest.mark.asyncio
@@ -329,13 +330,12 @@ def test_finalized_delivery_cannot_be_promoted_from_a_non_reserved_state(tmp_pat
     uncertain could therefore be rewritten as a confirmed success.
     """
 
-    import sqlite3
 
     from storage.database import Database
     from storage.db_common import DatabaseError
 
     database = Database(tmp_path / "ledger.db")
-    connection = sqlite3.connect(str(tmp_path / "ledger.db"))
+    connection = open_project_database(str(tmp_path / "ledger.db"))
     connection.execute(
         "INSERT INTO channels(account_id, channel_id, title) VALUES(1, 100, 'ch')"
     )

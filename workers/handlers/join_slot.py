@@ -35,7 +35,7 @@ def create_join_slot_handler(
     config: Any,
     worker_db: Any,
     telegram: Any,
-    set_runtime: Callable[[int, str], None],
+    set_runtime: Callable[..., None],
 ):
     async def join_saved_slot(task: dict[str, Any]) -> None:
         payload = task.get("payload") or {}

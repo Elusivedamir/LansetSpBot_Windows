@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import random
-import sqlite3
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -15,6 +14,7 @@ from services.api import ServiceAPI
 from services.telegram_service import TelegramService
 from storage.database import Database, DatabaseError
 from workers.queue_worker import QueueWorker
+from tests.conftest import open_project_database
 
 UTC = timezone.utc
 
@@ -99,7 +99,7 @@ def test_bootstrap_forces_wal_for_existing_current_schema_database(tmp_path):
     db.set_setting("wal.fixture", "kept")
     db.close_thread_connection()
 
-    connection = sqlite3.connect(path)
+    connection = open_project_database(path)
     try:
         assert (
             connection.execute("PRAGMA journal_mode=DELETE").fetchone()[0] == "delete"
@@ -151,7 +151,7 @@ def test_realistic_v14_to_v15_migration_preserves_data_and_is_idempotent(tmp_pat
     db.set_setting("migration.fixture", "kept")
     db.close_thread_connection()
 
-    connection = sqlite3.connect(path)
+    connection = open_project_database(path)
     connection.execute("DROP TABLE direct_message_deliveries")
     connection.execute("DROP INDEX IF EXISTS uq_join_campaign_active")
     connection.execute("DROP INDEX IF EXISTS uq_saved_dialog_username_ci")
@@ -179,7 +179,7 @@ def test_realistic_v14_to_v15_migration_preserves_data_and_is_idempotent(tmp_pat
         "settings",
         "comment_deliveries",
     )
-    before_conn = sqlite3.connect(path)
+    before_conn = open_project_database(path)
     before = {
         table: before_conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         for table in tracked_tables

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 from datetime import datetime
 import weakref
 
@@ -656,10 +658,10 @@ class ActivityPanel(QFrame):
         self._apply_snapshot(snapshot)
 
     def _apply_snapshot(self, snapshot: dict[str, object]) -> None:
-        snapshot_account_id = max(0, int(snapshot.get("account_id") or 0))
+        snapshot_account_id = max(0, int(cast(int, snapshot.get("account_id")) or 0))
         try:
             snapshot_generation = int(
-                snapshot.get("generation", self._account_generation)
+                cast(int, snapshot.get("generation", self._account_generation))
             )
         except (TypeError, ValueError, OverflowError):
             snapshot_generation = -1

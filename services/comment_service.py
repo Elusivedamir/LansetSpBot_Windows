@@ -6,7 +6,6 @@ import logging
 from core.exceptions import (
     DeferredTelegramError,
     NonRetryableTelegramError,
-    TelegramOperationError,
 )
 from services.comment_engine import CommentEngine
 from services.linked_chat_service import LinkedChatService

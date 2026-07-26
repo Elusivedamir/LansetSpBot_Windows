@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import random
-import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +9,7 @@ import pytest
 from services.comment_service import CommentService
 from storage.database import Database
 from storage.migrations.comment_variants_v20 import migrate_comment_variants_v20
+from tests.conftest import open_project_database, project_row_factory
 
 
 def _bind_running_slot(
@@ -31,7 +31,7 @@ def test_legacy_profile_is_normalized_to_ten_fields_without_data_loss(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "legacy-v19.db"
-    conn = sqlite3.connect(path)
+    conn = open_project_database(path)
     try:
         conn.executescript(
             """
@@ -83,8 +83,8 @@ def test_legacy_profile_is_normalized_to_ten_fields_without_data_loss(
         busy_timeout_ms=30_000,
     )
 
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
+    conn = open_project_database(path)
+    conn.row_factory = project_row_factory()
     try:
         row = conn.execute(
             "SELECT * FROM account_comment_templates WHERE account_id=777"

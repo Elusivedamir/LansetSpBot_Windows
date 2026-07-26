@@ -57,7 +57,9 @@ class DatabaseEncryptionMigrationError(SQLCipherError):
 
 def _load_driver() -> tuple[ModuleType, bool, BaseException | None]:
     try:
-        from sqlcipher3 import dbapi2 as sqlcipher_dbapi  # type: ignore[import-not-found]
+        # mypy.ini sets ignore_missing_imports, so no inline ignore is needed
+        # here; warn_unused_ignores would reject one when sqlcipher3 is installed.
+        from sqlcipher3 import dbapi2 as sqlcipher_dbapi
 
         return sqlcipher_dbapi, True, None
     except BaseException as exc:  # noqa: BLE001 - retained for a clear startup error

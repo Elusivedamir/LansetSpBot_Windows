@@ -94,6 +94,7 @@ def test_campaign_pause_uses_scope_cancellation_not_global_worker_stop(tmp_path)
 
     app = QApplication.instance() or QApplication([])
     db = Database(tmp_path / "scoped-pause.db")
+    db.set_setting("telegram.account_id", 502)
     db.insert_channel({"channel_id": 1, "linked_chat_id": 2, "title": "A"})
     campaign = db.create_comment_campaign(
         ["hello"], daily_limit=1, slot_count=1, continuous=False

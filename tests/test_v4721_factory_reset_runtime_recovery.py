@@ -29,6 +29,7 @@ def test_prepare_factory_reset_stops_campaign_and_blocks_new_queue_work(
     tmp_path,
 ) -> None:
     database = Database(tmp_path / "factory-reset-campaign.db")
+    database.set_setting("telegram.account_id", 503)
     campaign = database.create_comment_campaign(
         ["comment"],
         daily_limit=1,

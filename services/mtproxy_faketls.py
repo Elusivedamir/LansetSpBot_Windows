@@ -19,7 +19,7 @@ import hmac
 import secrets
 import time
 from collections import OrderedDict
-from typing import Any
+from typing import Any, cast
 
 from telethon.network.connection.tcpmtproxy import (
     ConnectionTcpMTProxyRandomizedIntermediate,
@@ -362,9 +362,13 @@ class ConnectionTcpMTProxyFakeTLS(ConnectionTcpMTProxyRandomizedIntermediate):
                 ),
                 timeout=timeout,
             )
-            writer.write(self._fake_tls_hello.build())
-            await writer.drain()
-            server_hello_awaitable = _read_fake_tls_server_hello(reader)
+            # asyncio.open_connection() always yields both handles; the
+            # Optional annotations exist only for the except/finally cleanup.
+            open_reader = cast(asyncio.StreamReader, reader)
+            open_writer = cast(asyncio.StreamWriter, writer)
+            open_writer.write(self._fake_tls_hello.build())
+            await open_writer.drain()
+            server_hello_awaitable = _read_fake_tls_server_hello(open_reader)
             server_hello = (
                 await asyncio.wait_for(server_hello_awaitable, timeout=timeout)
                 if timeout is not None
@@ -372,8 +376,8 @@ class ConnectionTcpMTProxyFakeTLS(ConnectionTcpMTProxyRandomizedIntermediate):
             )
             self._fake_tls_hello.verify_server_hello(server_hello)
 
-            self._reader = FakeTLSStreamReader(reader)
-            self._writer = FakeTLSStreamWriter(writer)
+            self._reader = FakeTLSStreamReader(open_reader)
+            self._writer = FakeTLSStreamWriter(open_writer)
             self._codec = self.packet_codec(self)
             self._init_conn()
             await self._writer.drain()

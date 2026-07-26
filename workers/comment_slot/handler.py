@@ -4,7 +4,7 @@ import asyncio
 import logging
 import random
 from datetime import timedelta
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from core.campaign_schedule import utc_now
 from core.openai_settings import (
@@ -691,7 +691,10 @@ def create_comment_slot_handler(
                     log.exception("Could not persist OpenAI generation start log")
 
                 try:
-                    generated = await openai_service.generate_comment(
+                    # openai_service is guaranteed here: the handler returns
+                    # early above when the OpenAI source has no service.
+                    generator = cast(Any, openai_service)
+                    generated = await generator.generate_comment(
                         generated_post_text, generation_prompt, generation_settings
                     )
                 except OpenAICommentError as exc:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 import logging
 
 from PySide6.QtCore import QThreadPool, Qt, QTimer
@@ -1137,9 +1139,9 @@ class CommentingView(QWidget):
 
     def _snapshot_is_current(self, snapshot: dict[str, object]) -> bool:
         try:
-            snapshot_account_id = max(0, int(snapshot.get("account_id") or 0))
+            snapshot_account_id = max(0, int(cast(int, snapshot.get("account_id")) or 0))
             snapshot_generation = int(
-                snapshot.get("generation", self._account_generation)
+                cast(int, snapshot.get("generation", self._account_generation))
             )
         except (TypeError, ValueError, OverflowError):
             return False

@@ -4,7 +4,14 @@ import json
 from storage.sqlcipher_driver import dbapi as sqlite3
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # ``sqlite3`` is bound to the SQLCipher DBAPI proxy object, not to a
+    # module, so its DBAPI classes are imported from the standard library
+    # for annotations. The two drivers are DBAPI-compatible.
+    from sqlite3 import Row as SQLiteRow
+
 
 
 def _task_account_id(payload: Any) -> int:
@@ -101,7 +108,7 @@ def migrate_link_state_v22(
                          AND status IN ('pending','running','processing','paused')
                        ORDER BY id ASC"""
                 ).fetchall()
-                grouped: dict[int, list[sqlite3.Row]] = defaultdict(list)
+                grouped: dict[int, list[SQLiteRow]] = defaultdict(list)
                 for row in rows:
                     account_id = _task_account_id(row["payload"])
                     if account_id > 0:

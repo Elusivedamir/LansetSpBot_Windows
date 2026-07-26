@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 import logging
 import threading
 
@@ -153,7 +155,7 @@ class ServiceAPI(
             return
         try:
             result = self.database.recover_stale_deliveries()
-            recovered = int(result.get("total", 0) or 0)
+            recovered = int(cast(int, result.get("total", 0)) or 0)
             if recovered <= 0:
                 return
             message = (

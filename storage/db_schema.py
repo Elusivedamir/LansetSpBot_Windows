@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from storage.sqlcipher_driver import dbapi as sqlite3
 from pathlib import Path
 from typing import ContextManager, TYPE_CHECKING
 
@@ -11,6 +10,12 @@ from storage.schema import (
     SchemaV14MigrationMixin,
     SchemaV15MigrationMixin,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # ``sqlite3`` is bound to the SQLCipher DBAPI proxy object, not to a
+    # module, so its DBAPI classes are imported from the standard library
+    # for annotations. The two drivers are DBAPI-compatible.
+    from sqlite3 import Connection as SQLiteConnection
 
 
 class DatabaseSchemaMixin(
@@ -30,4 +35,4 @@ class DatabaseSchemaMixin(
         sqlite_timeout_seconds: float
         busy_timeout_ms: int
 
-        def get_connection(self) -> ContextManager[sqlite3.Connection]: ...
+        def get_connection(self) -> ContextManager[SQLiteConnection]: ...

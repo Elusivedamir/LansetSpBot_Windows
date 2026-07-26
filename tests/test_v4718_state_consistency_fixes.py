@@ -79,7 +79,7 @@ def test_factory_reset_rejects_external_secret_file_before_deletion(tmp_path):
     external_secret = tmp_path / "secrets.json"
     external_secret.write_text("{}", encoding="utf-8")
 
-    with pytest.raises(FactoryResetError, match="вне каталога Marlen"):
+    with pytest.raises(FactoryResetError, match="вне каталога данных приложения"):
         reset_local_state(
             database_path=paths.database,
             paths=paths,
@@ -123,7 +123,11 @@ def test_save_settings_restores_local_secret_file_when_sqlite_write_fails(
     assert store.get_strict_optional("telegram.api_hash") == "old-hash"
     assert store.get_strict_optional("telegram.proxy_password") == "old-proxy"
     assert database.get_setting("telegram.api_id") == "111"
-    assert database.get_setting("telegram.phone") == "+100"
+    # telegram.phone is one of SECRET_SETTING_KEYS, so the startup migration
+    # moved it out of SQLite into the encrypted store; the rollback must have
+    # preserved the previous value there.
+    assert store.get_strict_optional("telegram.phone") == "+100"
+    assert database.get_setting("telegram.phone") is None
     api.prepare_shutdown()
     database.close_thread_connection()
 

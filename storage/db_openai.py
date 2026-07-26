@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Any
+from contextlib import AbstractContextManager
+from typing import TYPE_CHECKING, Any
 
 from core.openai_settings import (
     SOURCE_PREWRITTEN,
@@ -9,6 +10,12 @@ from core.openai_settings import (
     normalize_comment_source,
 )
 from storage.db_common import DatabaseError
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # ``sqlite3`` is bound to the SQLCipher DBAPI proxy object, not to a
+    # module, so its DBAPI classes are imported from the standard library
+    # for annotations. The two drivers are DBAPI-compatible.
+    from sqlite3 import Connection as SQLiteConnection
 
 _ALLOWED_DRAFT_STATUSES = {
     "generated",
@@ -22,6 +29,10 @@ _ALLOWED_DRAFT_STATUSES = {
 
 
 class OpenAIDraftRepositoryMixin:
+    def get_connection(self) -> AbstractContextManager[SQLiteConnection]:
+        """Provided by the concrete Database facade."""
+        raise NotImplementedError
+
     def save_campaign_comment_settings(
         self,
         *,

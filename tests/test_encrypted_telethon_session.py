@@ -32,7 +32,7 @@ def test_plaintext_telethon_keys_migrate_and_reopen(tmp_path: Path):
     auth = b"A" * 256
     temporary = b"B" * 256
 
-    legacy = SQLiteSession(base, store_tmp_auth_key_on_disk=True)
+    legacy = SQLiteSession(str(base), store_tmp_auth_key_on_disk=True)
     legacy.auth_key = AuthKey(auth)
     legacy.tmp_auth_key = AuthKey(temporary)
     legacy.save()
@@ -45,7 +45,10 @@ def test_plaintext_telethon_keys_migrate_and_reopen(tmp_path: Path):
         base, store_tmp_auth_key_on_disk=True, codec=_codec(3)
     )
     assert encrypted.auth_key.key == auth
-    assert encrypted.tmp_auth_key.key == temporary
+    # Telethon 1.44.0 declares MemorySession.tmp_auth_key's setter with
+    # @auth_key.setter, so the public tmp_auth_key getter returns the auth key.
+    # Assert the real attribute that both Telethon and this subclass persist.
+    assert encrypted._tmp_auth_key.key == temporary
     encrypted.save()
     encrypted.close()
 
@@ -58,7 +61,7 @@ def test_plaintext_telethon_keys_migrate_and_reopen(tmp_path: Path):
         base, store_tmp_auth_key_on_disk=True, codec=_codec(3)
     )
     assert reopened.auth_key.key == auth
-    assert reopened.tmp_auth_key.key == temporary
+    assert reopened._tmp_auth_key.key == temporary
     reopened.set_dc(4, "149.154.167.91", 443)
     reopened.save()
     assert reopened.auth_key.key == auth
@@ -78,7 +81,7 @@ def test_encrypted_telethon_session_rejects_wrong_profile_key(tmp_path: Path):
 
 def test_invalid_legacy_key_is_not_silently_replaced(tmp_path: Path):
     base = tmp_path / "main"
-    legacy = SQLiteSession(base)
+    legacy = SQLiteSession(str(base))
     legacy.auth_key = AuthKey(b"too-short")
     legacy.save()
     legacy.close()

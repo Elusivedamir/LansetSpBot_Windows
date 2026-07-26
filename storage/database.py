@@ -35,6 +35,7 @@ from storage.db_schema import DatabaseSchemaMixin
 from storage.db_tasks import TaskRepositoryMixin
 from storage.sqlcipher_driver import (
     default_database_key_storage_dir,
+    forget_database_key,
     prepare_encrypted_database,
 )
 
@@ -73,10 +74,47 @@ class Database(
         except LocalFileSecurityError as exc:
             raise DatabaseError(f"Unsafe SQLite path: {exc}") from exc
         self.busy_timeout_ms = max(100, int(busy_timeout_ms))
-        self._database_key = prepare_encrypted_database(
-            self.path, key_storage_dir=self.key_storage_dir
-        )
-        self.sqlite_timeout_seconds = self.busy_timeout_ms / 1000.0
+        # Opening a connection creates the file before any header is written.
+        # If this constructor fails afterwards it must not leave a zero-byte
+        # marlen.db behind: prepare_encrypted_database() refuses to initialize
+        # an existing empty file, so such a leftover permanently blocks every
+        # later startup even though it holds no data.
+        try:
+            preexisting = self.path.exists() or self.path.is_symlink()
+        except OSError:
+            preexisting = True
+        try:
+            self._database_key = prepare_encrypted_database(
+                self.path, key_storage_dir=self.key_storage_dir
+            )
+            self.sqlite_timeout_seconds = self.busy_timeout_ms / 1000.0
+            self._init_schema(bootstrap=bootstrap)
+        except BaseException:
+            if not preexisting:
+                self._discard_empty_database_file()
+            raise
+
+    def _discard_empty_database_file(self) -> None:
+        """Remove a zero-byte database file this constructor just created."""
+
+        try:
+            if not self.path.is_file() or self.path.is_symlink():
+                return
+            if self.path.stat().st_size != 0:
+                return
+        except OSError:
+            return
+        try:
+            self.close_thread_connection()
+        except Exception:
+            log.debug("Could not close the connection to an empty database file")
+        try:
+            self.path.unlink()
+        except OSError:
+            log.warning("Could not remove the empty database file %s", self.path)
+        forget_database_key(self.path)
+
+    def _init_schema(self, *, bootstrap: bool) -> None:
         self._thread_connections = threading.local()
         self._artifact_security_lock = threading.RLock()
         self._artifact_security_identities: dict[Path, tuple[int, int, int]] = {}
@@ -525,14 +563,14 @@ class Database(
                     owner = 0
                 note(owner, "direct_message_deliveries")
 
+        comment_deliveries = max(0, int(comment_count or 0))
+        direct_deliveries = max(0, int(direct_count or 0))
         result: dict[str, object] = {
-            "comment_deliveries": max(0, int(comment_count or 0)),
-            "direct_message_deliveries": max(0, int(direct_count or 0)),
+            "comment_deliveries": comment_deliveries,
+            "direct_message_deliveries": direct_deliveries,
             "accounts": per_account,
         }
-        result["total"] = int(result["comment_deliveries"]) + int(
-            result["direct_message_deliveries"]
-        )
+        result["total"] = comment_deliveries + direct_deliveries
         if result["total"]:
             log.warning(
                 "Recovered %s stale delivery reservation(s) as uncertain; manual review required: %s",

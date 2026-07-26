@@ -106,7 +106,8 @@ def create_worker_handlers(
     def openai_api_key_provider() -> str | None:
         active_lock = secret_lock if secret_lock is not None else nullcontext()
         with active_lock:
-            return self._strict_secret_value(OPENAI_API_KEY_SECRET)
+            value = self._strict_secret_value(OPENAI_API_KEY_SECRET)
+            return None if value is None else str(value)
 
     openai_service = OpenAICommentService(
         openai_api_key_provider,

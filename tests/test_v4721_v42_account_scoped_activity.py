@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 from storage.database import Database
 from storage.migrations.activity_log_account_scope_v29 import (
     migrate_activity_log_account_scope_v29,
 )
+from tests.conftest import open_project_database
 
 
 def test_new_database_uses_schema_v29_and_account_scoped_logs(tmp_path):
@@ -42,7 +42,7 @@ def test_activity_logs_do_not_leak_between_accounts(tmp_path):
 
 def test_legacy_activity_rows_become_account_zero_and_stay_hidden(tmp_path):
     path = tmp_path / "legacy-v28.db"
-    conn = sqlite3.connect(path)
+    conn = open_project_database(path)
     try:
         conn.executescript(
             """
@@ -63,7 +63,7 @@ def test_legacy_activity_rows_become_account_zero_and_stay_hidden(tmp_path):
 
     migrate_activity_log_account_scope_v29(path)
 
-    conn = sqlite3.connect(path)
+    conn = open_project_database(path)
     try:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         row = conn.execute(

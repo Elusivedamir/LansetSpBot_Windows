@@ -24,6 +24,72 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def open_project_database(path, **kwargs):
+    """Open a database file exactly the way production opens it.
+
+    A file created by ``Database`` is real SQLCipher whenever the sqlcipher3
+    extension is installed, which is the case in the documented Windows
+    environment (``requirements-runtime.lock`` pins ``sqlcipher3``). Reopening
+    such a file with the standard library ``sqlite3`` module raises
+    ``file is not a database``, so tests that inspect or mutate a database
+    created by production code must go through the keyed driver.
+
+    The helper transparently falls back to the standard library when SQLCipher
+    is absent, so the same test body works in both environments.
+    """
+
+    from storage.sqlcipher_driver import connect_encrypted_database
+
+    return connect_encrypted_database(str(path), **kwargs)
+
+
+def export_plaintext_copy(source, destination):
+    """Write a genuine plaintext SQLite copy of an encrypted database.
+
+    Legacy ``format_version 1`` profile backups were produced by releases that
+    predate SQLCipher, so their archived ``marlen.db`` is ordinary SQLite.
+    Tests that build such an archive must therefore decrypt the fixture first
+    instead of packing the current encrypted file.
+    """
+
+    from pathlib import Path
+
+    from storage.sqlcipher_driver import SQLCIPHER_AVAILABLE
+
+    source = Path(source)
+    destination = Path(destination)
+    if not SQLCIPHER_AVAILABLE:
+        destination.write_bytes(source.read_bytes())
+        return destination
+
+    connection = open_project_database(source)
+    try:
+        connection.execute(
+            "ATTACH DATABASE ? AS plaintext KEY ''", (str(destination),)
+        )
+        try:
+            connection.execute("SELECT sqlcipher_export('plaintext')").fetchone()
+            user_version = connection.execute("PRAGMA user_version").fetchone()[0]
+            connection.execute(f"PRAGMA plaintext.user_version = {int(user_version)}")
+        finally:
+            connection.execute("DETACH DATABASE plaintext")
+    finally:
+        connection.close()
+    return destination
+
+
+def project_row_factory():
+    """Return the ``Row`` class that matches the active database driver.
+
+    ``sqlite3.Row`` cannot wrap a ``sqlcipher3`` cursor, so tests that set a row
+    factory on a connection from :func:`open_project_database` must use this.
+    """
+
+    from storage.sqlcipher_driver import dbapi
+
+    return dbapi.Row
+
+
 def pytest_sessionstart(session):
     """Prevent pytest-asyncio from creating an unowned legacy event loop.
 

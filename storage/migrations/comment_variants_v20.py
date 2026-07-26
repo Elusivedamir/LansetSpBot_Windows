@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import json
 from storage.sqlcipher_driver import dbapi as sqlite3
 from pathlib import Path
 
 from core.config import DEFAULT_COMMENT_VARIANTS, MAX_COMMENT_VARIANTS
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # ``sqlite3`` is bound to the SQLCipher DBAPI proxy object, not to a
+    # module, so its DBAPI classes are imported from the standard library
+    # for annotations. The two drivers are DBAPI-compatible.
+    from sqlite3 import Connection as SQLiteConnection
 
-def _current_account_id(conn: sqlite3.Connection) -> int:
+
+
+def _current_account_id(conn: SQLiteConnection) -> int:
     row = conn.execute(
         "SELECT value FROM settings WHERE key='telegram.account_id'"
     ).fetchone()

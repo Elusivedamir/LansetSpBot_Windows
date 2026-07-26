@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from storage.sqlcipher_driver import dbapi as sqlite3
 from pathlib import Path
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # ``sqlite3`` is bound to the SQLCipher DBAPI proxy object, not to a
+    # module, so its DBAPI classes are imported from the standard library
+    # for annotations. The two drivers are DBAPI-compatible.
+    from sqlite3 import Connection as SQLiteConnection
+
 
 
 _LEGACY_PREFIX = "telegram.restriction."
 
 
-def _legacy_setting(conn: sqlite3.Connection, suffix: str, default: str = "") -> str:
+def _legacy_setting(conn: SQLiteConnection, suffix: str, default: str = "") -> str:
     row = conn.execute(
         "SELECT value FROM settings WHERE key=?", (f"{_LEGACY_PREFIX}{suffix}",)
     ).fetchone()
