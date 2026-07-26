@@ -4,7 +4,6 @@ import asyncio
 from contextlib import closing
 import sqlite3
 from datetime import timedelta
-from types import SimpleNamespace
 
 import pytest
 from telethon.errors import FloodWaitError
@@ -162,59 +161,6 @@ async def test_due_deferred_task_can_be_claimed_later(tmp_path):
     claimed = db.claim_next_pending_task()
     assert claimed is not None
     assert claimed["id"] == task_id
-
-
-def test_session_backups_rotate_and_corrupt_session_is_restored(tmp_path):
-    source = tmp_path / "main.session"
-    with closing(sqlite3.connect(source)) as conn:
-        conn.execute("CREATE TABLE sample(value INTEGER)")
-        conn.execute("INSERT INTO sample(value) VALUES(7)")
-        conn.commit()
-
-    service = object.__new__(TelegramService)
-    service.client = SimpleNamespace(session=SimpleNamespace(filename=str(source)))
-    service.settings = SimpleNamespace(session_backup_enabled=True)
-
-    for _ in range(7):
-        assert service.backup_session() is not None
-
-    backup_dir = tmp_path / "backups"
-    backups = list(backup_dir.glob("main.session.*.bak"))
-    assert len(backups) == TelegramService.SESSION_BACKUP_LIMIT
-
-    source.write_bytes(b"not a sqlite database")
-    TelegramService._prepare_session_file(source)
-
-    assert TelegramService._session_is_healthy(source) is True
-    with closing(sqlite3.connect(source)) as conn:
-        assert conn.execute("SELECT value FROM sample").fetchone()[0] == 7
-    assert list(tmp_path.glob("main.session.corrupt.*"))
-
-
-def test_session_restore_falls_back_to_in_place_overwrite(tmp_path, monkeypatch):
-    source = tmp_path / "main.session"
-    with closing(sqlite3.connect(source)) as conn:
-        conn.execute("CREATE TABLE sample(value INTEGER)")
-        conn.execute("INSERT INTO sample(value) VALUES(11)")
-        conn.commit()
-
-    service = object.__new__(TelegramService)
-    service.client = SimpleNamespace(session=SimpleNamespace(filename=str(source)))
-    service.settings = SimpleNamespace(session_backup_enabled=True)
-    assert service.backup_session() is not None
-
-    source.write_bytes(b"not a sqlite database")
-    monkeypatch.setattr(
-        TelegramService,
-        "_replace_with_windows_retry",
-        staticmethod(lambda _source, _destination: False),
-    )
-
-    TelegramService._prepare_session_file(source)
-
-    assert TelegramService._session_is_healthy(source) is True
-    with closing(sqlite3.connect(source)) as conn:
-        assert conn.execute("SELECT value FROM sample").fetchone()[0] == 11
 
 
 def test_batch_channel_upsert_uses_one_public_operation(tmp_path):

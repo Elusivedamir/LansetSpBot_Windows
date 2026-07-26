@@ -37,6 +37,7 @@ class MainWindow(QMainWindow):
         "comments.svg",
         "instructions.svg",
     )
+    SIDEBAR_MAX_WIDTH = 360
     SUPPORT_CONTACT = "@lansetp"
     SUPPORT_URL = "https://t.me/lansetp"
 
@@ -68,6 +69,7 @@ class MainWindow(QMainWindow):
         self.horizontal_splitter.setChildrenCollapsible(False)
         self.horizontal_splitter.setHandleWidth(1)
 
+        self._sidebar_fitted = False
         self.sidebar = QFrame()
         self.sidebar.setObjectName("sidebar")
         self.sidebar.setMinimumWidth(150)
@@ -266,6 +268,52 @@ class MainWindow(QMainWindow):
             if callable(start):
                 start()
 
+    def _widen_sidebar_to_fit_menu(self) -> None:
+        """Give the navigation the width its longest entry actually needs.
+
+        "Комментирование" was rendering as "Комментирова…". The width required
+        depends on the font, the icon and the stylesheet's padding, so it is
+        measured from the laid-out items instead of hard-coded - a fixed number
+        would clip again after any theme, font or DPI change.
+
+        The measurement runs once, on first show. ``visualItemRect`` reports the
+        larger of the item hint and the viewport, so re-measuring after the
+        sidebar has grown would feed the new width back in and widen it again.
+        """
+
+        if self._sidebar_fitted or self.width() < 900:
+            return
+        needed_for_items = max(
+            (
+                self.menu.visualItemRect(self.menu.item(index)).width()
+                for index in range(self.menu.count())
+            ),
+            default=0,
+        )
+        if needed_for_items <= 0:
+            return
+        self._sidebar_fitted = True
+        margins = self.sidebar_layout.contentsMargins()
+        needed = (
+            needed_for_items
+            + margins.left()
+            + margins.right()
+            + 2 * self.menu.frameWidth()
+            + 4
+        )
+        if needed <= self.sidebar.width():
+            return
+        needed = min(needed, self.SIDEBAR_MAX_WIDTH)
+        self.sidebar.setMaximumWidth(max(self.sidebar.maximumWidth(), needed))
+        self.sidebar.setMinimumWidth(needed)
+        sizes = self.horizontal_splitter.sizes()
+        total = sum(sizes) if sizes else max(1, self.width())
+        self.horizontal_splitter.setSizes([needed, max(1, total - needed)])
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().showEvent(event)
+        self._widen_sidebar_to_fit_menu()
+
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
         super().resizeEvent(event)
         compact = self.width() < 900
@@ -299,7 +347,7 @@ class MainWindow(QMainWindow):
             if not sizes or sizes[0] > 175:
                 self.horizontal_splitter.setSizes([165, max(1, total - 165)])
         else:
-            self.sidebar.setMaximumWidth(310)
+            self.sidebar.setMaximumWidth(max(310, self.sidebar.minimumWidth()))
 
     def _change_page(self, index: int):
         self.stack.setCurrentIndex(index)

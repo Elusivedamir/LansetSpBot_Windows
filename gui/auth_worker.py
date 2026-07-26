@@ -233,11 +233,7 @@ class TelegramAuthWorker(QThread):
         # or quarantine corruption before Telethon opens it, otherwise the auth
         # thread can fail before the user is able to sign in again.
         session_file = (self.session_dir / "main").with_suffix(".session")
-        session_backup_enabled = str(
-            self.settings.get("telegram.session_backup_enabled", "0")
-        ).strip().lower() in {"1", "true", "yes", "on"}
-        if not session_backup_enabled:
-            TelegramService.purge_session_backups(session_file)
+        TelegramService.purge_session_backups(session_file)
         TelegramService._prepare_session_file(session_file)
         proxy_settings = self._proxy_settings()
         proxy, connection_type = TelegramService.build_transport(proxy_settings)

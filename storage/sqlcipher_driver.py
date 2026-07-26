@@ -20,6 +20,7 @@ from typing import Any, Final
 import sqlite3 as _stdlib_sqlite3
 
 from core.crypto_vault import EncryptedBlobCodec, OSBoundMasterKeyProvider
+from core.secure_memory import secure_memory_available
 from core.local_security import (
     LocalFileSecurityError,
     ensure_private_directory,
@@ -201,7 +202,11 @@ def _raw_key_pragma(key: bytes) -> str:
 
 def _apply_key(connection: Any, key: bytes) -> None:
     connection.execute(_raw_key_pragma(key))
-    connection.execute("PRAGMA cipher_memory_security = ON")
+    # Locked memory is enabled only where the OS can honour it. SQLCipher
+    # 4.12.0 overflows the C stack instead of degrading when VirtualLock is
+    # refused, which kills the process outright; see core.secure_memory.
+    if secure_memory_available():
+        connection.execute("PRAGMA cipher_memory_security = ON")
     version_row = connection.execute("PRAGMA cipher_version").fetchone()
     version = str(version_row[0] if version_row else "").strip()
     if not version:

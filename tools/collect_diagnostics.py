@@ -137,6 +137,15 @@ def _describe_dependencies(report: Report) -> None:
         report.line(f"sqlcipher_used: {SQLCIPHER_AVAILABLE} ({_DRIVER.__name__})")
     except Exception as exc:
         report.line(f"sqlcipher_used: unknown ({type(exc).__name__}: {exc})")
+    # Whether SQLCipher may lock its key pages here. False means the database is
+    # still encrypted but key pages can reach the page file - and it is the
+    # setting whose forced use crashed the process on some Windows machines.
+    try:
+        from core.secure_memory import secure_memory_available
+
+        report.line(f"locked_memory : {secure_memory_available()}")
+    except Exception as exc:
+        report.line(f"locked_memory : unknown ({type(exc).__name__}: {exc})")
 
 
 def _describe_profile(report: Report) -> None:

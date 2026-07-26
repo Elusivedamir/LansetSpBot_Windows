@@ -111,14 +111,6 @@ class GUIServiceAdapter:
     def get_settings(self, prefix=None):
         return self.api.get_settings(prefix)
 
-    def create_profile_backup(self, destination, *, include_sessions=False):
-        return self.api.create_profile_backup(
-            destination, include_sessions=include_sessions
-        )
-
-    def inspect_profile_backup(self, archive_path):
-        return self.api.inspect_profile_backup(archive_path)
-
     def save_comment_template(self, comments):
         return self.api.save_comment_template(comments)
 

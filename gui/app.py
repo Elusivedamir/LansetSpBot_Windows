@@ -41,7 +41,6 @@ class LansetSpBotApp(MainWindow):
         factory_reset_executor: Callable[[], object] | None = None,
         factory_reset_logging_reinitializer: Callable[[], object] | None = None,
         factory_reset_parent_terminator: Callable[[], object] | None = None,
-        profile_restore_executor: Callable[[str], object] | None = None,
         shutdown_finalizer: Callable[[], bool] | None = None,
     ) -> None:
         super().__init__(adapter, queue_worker, config)
@@ -51,10 +50,7 @@ class LansetSpBotApp(MainWindow):
         self._factory_reset_executor = factory_reset_executor
         self._factory_reset_logging_reinitializer = factory_reset_logging_reinitializer
         self._factory_reset_parent_terminator = factory_reset_parent_terminator
-        self._profile_restore_executor = profile_restore_executor
         self._shutdown_finalizer = shutdown_finalizer
-        self._profile_restore_archive: str | None = None
-        self._profile_restore_helper_pid: int | None = None
         self._quitting = False
         self._allow_qt_quit = False
         self._quit_finalize_started = False
@@ -83,9 +79,6 @@ class LansetSpBotApp(MainWindow):
         self._shutdown_timer.timeout.connect(self._poll_shutdown)
         self.quit_requested.connect(self.account_view.request_auth_stop)
         self.account_view.factory_reset_requested.connect(self.request_factory_reset)
-        self.account_view.profile_restore_requested.connect(
-            self.request_profile_restore
-        )
 
     def _create_tray(self) -> QSystemTrayIcon:
         icon = self.windowIcon()
@@ -151,22 +144,10 @@ class LansetSpBotApp(MainWindow):
         return bool(self._factory_reset_helper_pid)
 
     @property
-    def profile_restore_handoff_scheduled(self) -> bool:
-        return bool(self._profile_restore_helper_pid)
-
-    @property
     def runtime_shutdown_finalized(self) -> bool:
         """Whether the normal runtime was closed before leaving the Qt loop."""
 
         return bool(self._runtime_shutdown_finalized)
-
-    @Slot(str)
-    def request_profile_restore(self, archive_path: str) -> None:
-        if self._quitting or not str(archive_path).strip():
-            return
-        self._profile_restore_archive = str(archive_path)
-        self.account_view.set_profile_restore_pending(True)
-        self._begin_shutdown(factory_reset=False)
 
     @Slot()
     def request_factory_reset(self) -> None:
@@ -247,14 +228,6 @@ class LansetSpBotApp(MainWindow):
                 "не запускаются автоматически."
             )
             blockers = ["factory_reset_cancelled"]
-        elif self._profile_restore_archive is not None:
-            self._profile_restore_archive = None
-            self.account_view.set_profile_restore_pending(False)
-            message = (
-                "Восстановление backup отменено. Кампании, остановленные при "
-                "подготовке, не запускаются автоматически."
-            )
-            blockers = ["profile_restore_cancelled"]
         else:
             message = "Выход отменён. Приложение продолжает работу."
             blockers = ["shutdown_cancelled"]
@@ -329,9 +302,6 @@ class LansetSpBotApp(MainWindow):
     def _complete_shutdown(self) -> None:
         """Commit a reset only after blockers stop; otherwise restore the live app."""
 
-        if getattr(self, "_profile_restore_archive", None) is not None:
-            self._schedule_profile_restore()
-            return
         if not self._factory_reset_pending:
             self._finalize_quit()
             return
@@ -423,48 +393,6 @@ class LansetSpBotApp(MainWindow):
             f"Удалено файлов: {removed_files}; каталогов: {removed_directories}.",
         )
         self._finalize_quit()
-
-    def _schedule_profile_restore(self) -> None:
-        archive = self._profile_restore_archive
-        executor = self._profile_restore_executor
-        if not archive or executor is None:
-            self._profile_restore_archive = None
-            self.account_view.set_profile_restore_pending(False)
-            self._abort_shutdown(
-                "Restore не запущен: обработчик восстановления не создан.",
-                blockers=["profile_restore_executor_missing"],
-            )
-            return
-        self._set_shutdown_progress_text(
-            "Запуск отдельного процесса восстановления…\nLansetSpBot сейчас закроется."
-        )
-        if self._shutdown_progress is not None:
-            self._shutdown_progress.setCancelButton(None)
-        try:
-            result = executor(archive)
-            self._profile_restore_helper_pid = (
-                int(getattr(result, "helper_pid", 0) or 0) or None
-            )
-            if not self._profile_restore_helper_pid:
-                raise RuntimeError("Helper восстановления не вернул PID")
-        except Exception as exc:
-            log.exception("Could not schedule profile restore")
-            self._profile_restore_archive = None
-            self._profile_restore_helper_pid = None
-            self.account_view.set_profile_restore_pending(False)
-            self._abort_shutdown(
-                "Не удалось запустить восстановление. Текущий профиль не изменён.\n\n"
-                f"{type(exc).__name__}: {exc}",
-                blockers=["profile_restore_schedule_failed"],
-            )
-            return
-        log.info(
-            "Profile restore helper scheduled: pid=%s archive=%s",
-            self._profile_restore_helper_pid,
-            archive,
-        )
-        self.hide()
-        QTimer.singleShot(0, self._finalize_quit)
 
     def _start_factory_reset_async(self) -> None:
         """Schedule the detached helper without involving QThreadPool.
@@ -686,12 +614,7 @@ class LansetSpBotApp(MainWindow):
         critical: bool = True,
     ) -> None:
         reset_was_pending = self._factory_reset_pending
-        restore_was_pending = (
-            getattr(self, "_profile_restore_archive", None) is not None
-        )
         self._factory_reset_pending = False
-        self._profile_restore_archive = None
-        self._profile_restore_helper_pid = None
         self._quitting = False
         self._factory_reset_job = None
         close_progress = getattr(self, "_close_shutdown_progress", None)
@@ -708,11 +631,6 @@ class LansetSpBotApp(MainWindow):
         if callable(resume_updates):
             resume_updates()
         self.account_view.set_factory_reset_pending(False)
-        restore_pending_setter = getattr(
-            self.account_view, "set_profile_restore_pending", None
-        )
-        if callable(restore_pending_setter):
-            restore_pending_setter(False)
         central_widget = getattr(self, "centralWidget", None)
         central = central_widget() if callable(central_widget) else None
         if central is not None:
@@ -727,9 +645,8 @@ class LansetSpBotApp(MainWindow):
         else:
             QMessageBox.information(self, APP_NAME, message)
         log.critical(
-            "Shutdown aborted; factory_reset=%s profile_restore=%s blockers=%s",
+            "Shutdown aborted; factory_reset=%s blockers=%s",
             reset_was_pending,
-            restore_was_pending,
             blockers,
         )
 

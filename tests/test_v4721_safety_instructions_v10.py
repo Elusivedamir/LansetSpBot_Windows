@@ -101,8 +101,10 @@ def test_flood_wait_buffer_is_random_thirty_to_forty_five_seconds() -> None:
 def test_instruction_view_is_a_real_multi_step_slideshow() -> None:
     _app()
     view = InstructionsView()
-    assert view.stack.count() == 11
-    assert view.progress_label.text() == "Шаг 1 из 11"
+    total = len(view.STEPS)
+    assert view.stack.count() == total
+    assert total >= 11, "the guide must stay a full multi-step walkthrough"
+    assert view.progress_label.text() == f"Шаг 1 из {total}"
     first = view.stack.widget(0)
     assert isinstance(first, QScrollArea)
     assert first.widgetResizable() is True
@@ -110,7 +112,7 @@ def test_instruction_view_is_a_real_multi_step_slideshow() -> None:
     assert image is not None
     assert image.pixmap() is not None and not image.pixmap().isNull()
     view.next_step()
-    assert view.progress_label.text() == "Шаг 2 из 11"
+    assert view.progress_label.text() == f"Шаг 2 из {total}"
     assert view.back_button.isEnabled()
     view.deleteLater()
 

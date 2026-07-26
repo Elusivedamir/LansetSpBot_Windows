@@ -37,14 +37,6 @@ from core.factory_reset_runtime import (  # noqa: E402
     recover_incomplete_factory_reset,
     run_factory_reset_helper,
 )
-from core.profile_restore_runtime import (  # noqa: E402
-    PROFILE_RESTORE_HELPER_FLAG,
-    PROFILE_RESTORE_NO_RELAUNCH_FLAG,
-    consume_profile_restore_result,
-    launch_detached_profile_restore,
-    recover_incomplete_profile_restore,
-    run_profile_restore_helper,
-)
 from core.single_instance import SingleInstance  # noqa: E402
 from core.version import APP_NAME, __version__  # noqa: E402
 from gui.app import LansetSpBotApp  # noqa: E402
@@ -262,17 +254,6 @@ def _terminate_after_factory_reset(exit_code: int) -> None:
 
 
 def main() -> int:
-    if PROFILE_RESTORE_HELPER_FLAG in sys.argv:
-        try:
-            index = sys.argv.index(PROFILE_RESTORE_HELPER_FLAG)
-            parent_pid = int(sys.argv[index + 1])
-            archive_path = Path(sys.argv[index + 2])
-        except (ValueError, IndexError) as exc:
-            print(f"Invalid profile-restore helper arguments: {exc}", flush=True)
-            return 2
-        relaunch = PROFILE_RESTORE_NO_RELAUNCH_FLAG not in sys.argv
-        return run_profile_restore_helper(parent_pid, archive_path, relaunch=relaunch)
-
     if FACTORY_RESET_HELPER_FLAG in sys.argv:
         try:
             index = sys.argv.index(FACTORY_RESET_HELPER_FLAG)
@@ -305,7 +286,6 @@ def main() -> int:
             return 0
 
         config = Config()
-        profile_restore_recovery = recover_incomplete_profile_restore(config)
         recovery_result = recover_incomplete_factory_reset(config)
 
         try:
@@ -324,15 +304,6 @@ def main() -> int:
             return 1
 
         _install_exception_hook()
-        if profile_restore_recovery is not None:
-            QMessageBox.warning(
-                None,
-                f"{APP_NAME} — восстановление профиля",
-                str(
-                    profile_restore_recovery.get("message")
-                    or "Незавершённое восстановление профиля отменено"
-                ),
-            )
         if recovery_result is not None:
             QMessageBox.warning(
                 None,
@@ -341,37 +312,6 @@ def main() -> int:
                     recovery_result.get("message") or "Незавершённый сброс восстановлен"
                 ),
             )
-
-        profile_restore_result = consume_profile_restore_result(config)
-        if profile_restore_result is not None:
-            restore_ok = bool(profile_restore_result.get("ok"))
-            restore_message = str(
-                profile_restore_result.get("message")
-                or (
-                    "Профиль успешно восстановлен"
-                    if restore_ok
-                    else "Профиль не восстановлен"
-                )
-            )
-            if restore_ok:
-                previous_backup = str(
-                    profile_restore_result.get("previous_database_backup") or ""
-                )
-                if previous_backup:
-                    restore_message += (
-                        "\n\nПредыдущая база сохранена: " + previous_backup
-                    )
-                QMessageBox.information(
-                    None,
-                    f"{APP_NAME} — профиль восстановлен",
-                    restore_message,
-                )
-            else:
-                QMessageBox.critical(
-                    None,
-                    f"{APP_NAME} — ошибка восстановления",
-                    restore_message,
-                )
 
         factory_reset_result = consume_factory_reset_result(config)
         if factory_reset_result is not None:
@@ -410,9 +350,6 @@ def main() -> int:
             factory_reset_preparer=lambda: _prepare_factory_reset_execution(container),
             factory_reset_executor=lambda: _execute_factory_reset(container),
             factory_reset_parent_terminator=None,
-            profile_restore_executor=lambda archive: launch_detached_profile_restore(
-                Path(archive), parent_pid=os.getpid()
-            ),
             shutdown_finalizer=container.finalize_shutdown,
         )
         instance.activation_requested.connect(window.show_from_tray)
