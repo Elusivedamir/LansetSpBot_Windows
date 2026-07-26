@@ -164,7 +164,7 @@ def create_comment_slot_handler(
             for text in campaign.get("comments", [])
             if isinstance(text, str) and text.strip()
         ]
-        if comment_source != SOURCE_OPENAI and not variants:
+        if not variants:
             message = "Добавьте хотя бы один комментарий"
             pause_reason = "В кампании нет вариантов комментариев"
             finalizer = getattr(type(worker_db), "finalize_comment_slot_outcome", None)
@@ -674,6 +674,11 @@ def create_comment_slot_handler(
                     final_message = campaign_pause_reason
                     return
 
+                # One variant is drawn from the account's shuffled bag for every
+                # send, exactly as in prepared mode, and handed to the model as
+                # the meaning to preserve. Rotation without repeats therefore
+                # still holds in OpenAI mode.
+                reference_comment = reserve_variant()
                 set_runtime(
                     task_id,
                     f"OpenAI генерирует комментарий: {channel_title}",
@@ -684,7 +689,8 @@ def create_comment_slot_handler(
                         "INFO",
                         "OpenAI generation_started: "
                         f"campaign_id={campaign_id}; channel_id={channel_id}; "
-                        f"post_id={post_id}; input_length={len(generated_post_text)}",
+                        f"post_id={post_id}; input_length={len(generated_post_text)}; "
+                        f"reference_length={len(reference_comment)}",
                         account_id=campaign_account_id,
                     )
                 except Exception:  # pragma: no cover
@@ -695,7 +701,10 @@ def create_comment_slot_handler(
                     # early above when the OpenAI source has no service.
                     generator = cast(Any, openai_service)
                     generated = await generator.generate_comment(
-                        generated_post_text, generation_prompt, generation_settings
+                        generated_post_text,
+                        generation_prompt,
+                        generation_settings,
+                        reference_comment,
                     )
                 except OpenAICommentError as exc:
                     code = str(getattr(exc, "code", "openai_error") or "openai_error")

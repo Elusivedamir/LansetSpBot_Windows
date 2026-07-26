@@ -1,7 +1,13 @@
-cryptography==46.0.4
+# Runtime dependencies that are resolved into the hash-locked graph
+# requirements-runtime.lock and installed with `pip --require-hashes`.
+#
+# The OpenAI SDK is deliberately NOT listed here: its graph is not hash-locked
+# and lives in requirements-openai.txt, which the launcher and the build script
+# install as a separate, unpinned step. Keeping it out of this file makes the
+# declaration match what requirements-runtime.lock actually enforces.
+cryptography==48.0.1
 sqlcipher3==0.6.2
 PySide6==6.11.1
 Telethon==1.44.0
 PySocks==1.7.1
 tzdata==2026.3
-openai==2.48.0

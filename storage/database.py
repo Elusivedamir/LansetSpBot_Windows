@@ -256,7 +256,10 @@ class Database(
                     return None
                 # The sidecar was recreated between calls. Validate the new file.
                 continue
-        assert last_error is not None
+        if last_error is None:
+            raise LocalFileSecurityError(
+                f"Could not validate local path {candidate} after repeated attempts"
+            )
         raise last_error
 
     def _harden_database_artifacts(self, *, force: bool = False) -> None:

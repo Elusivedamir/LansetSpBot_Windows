@@ -373,7 +373,10 @@ def _reset_with_windows_lock_retries(config: Config) -> FactoryResetResult:
             last_error = exc
             if attempt >= len(delays) or not _is_transient_windows_reset_error(exc):
                 raise
-    assert last_error is not None
+    if last_error is None:
+        raise RuntimeError(
+            "Factory reset retry loop ended without a result and without an error"
+        )
     raise last_error
 
 

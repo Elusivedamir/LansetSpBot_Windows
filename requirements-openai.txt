@@ -1,3 +1,9 @@
 # Official OpenAI Python SDK used by LansetSpBot.
-# Kept separate because the original platform-specific hash locks predate this integration.
+#
+# WARNING: this file and its transitive dependency tree are NOT hash-locked.
+# The launcher and the Windows build script install it without
+# `--require-hashes`, unlike requirements-runtime.lock. Until a Windows-verified
+# hash lock is generated for this graph, the OpenAI SDK and everything it pulls
+# in are trusted on PyPI's TLS alone, inside the same process that holds the
+# Telegram session and the SQLCipher key.
 openai==2.48.0

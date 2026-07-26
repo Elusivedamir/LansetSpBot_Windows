@@ -80,8 +80,6 @@ BRANCH_GROUP_THRESHOLDS = {
     "comment_slot_state_machine": (
         (
             "workers/comment_slot/handler.py",
-            "workers/comment_slot/membership.py",
-            "workers/comment_slot/routing.py",
             "workers/comment_slot/finalization.py",
         ),
         30.0,

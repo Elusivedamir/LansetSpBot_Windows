@@ -20,6 +20,14 @@ Run
 Build a Windows executable
   BUILD_WINDOWS_X64.cmd
 
+Diagnose a failed start
+  3_COLLECT_DIAGNOSTICS.cmd
+    Writes lansetspbot-diagnostics.txt next to the program: environment,
+    dependency versions, profile layout, SHA256SUMS verification, the output
+    of the startup self-test and the redacted application log.
+    Never collected: marlen.db, the sessions folder, .secrets.json and
+    .master-key.dpapi. Send that one file when reporting a problem.
+
 Environment variables
   MARLEN_DATA_DIR
     Optional. Overrides the profile directory.

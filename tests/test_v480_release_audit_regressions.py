@@ -185,3 +185,189 @@ def test_every_instruction_step_has_an_existing_image() -> None:
 
     for _title, image, _body in InstructionsView.STEPS:
         assert (ROOT / "gui" / "assets" / "instructions" / image).is_file()
+
+
+# --------------------------------------------------------------------------
+# MEDIUM: an enabled quiet-hours window with quiet_start == quiet_end has no
+# active period at all. Every dispatch was deferred by another 24 hours
+# forever and the user only saw a moving "отложено до ..." time, so a campaign
+# stalled permanently without any explanation.
+# --------------------------------------------------------------------------
+
+
+def _schedule_api(tmp_path: Path):
+    from core.secret_store import SecretStore
+    from services.api import ServiceAPI
+    from storage.database import Database
+
+    database = Database(tmp_path / "schedule.db")
+    api = ServiceAPI(database, secret_store=SecretStore(tmp_path / ".secrets.json"))
+    api._campaign_timer.stop()  # noqa: SLF001 - deterministic unit under test
+    return api, database
+
+
+def test_identical_quiet_hours_are_rejected_while_the_schedule_is_enabled(
+    tmp_path: Path,
+) -> None:
+    api, database = _schedule_api(tmp_path)
+    try:
+        with pytest.raises(ValueError, match="совпадают"):
+            api.save_settings(
+                {
+                    "automation.schedule_enabled": "1",
+                    "automation.quiet_start": "09:00",
+                    "automation.quiet_end": "09:00",
+                }
+            )
+    finally:
+        api.prepare_shutdown()
+        database.close_thread_connection()
+
+
+def test_identical_quiet_hours_are_rejected_against_already_stored_values(
+    tmp_path: Path,
+) -> None:
+    """Changing only one field must not be able to close the window either."""
+
+    api, database = _schedule_api(tmp_path)
+    try:
+        api.save_settings(
+            {
+                "automation.schedule_enabled": "1",
+                "automation.quiet_start": "22:00",
+                "automation.quiet_end": "07:00",
+            }
+        )
+        with pytest.raises(ValueError, match="совпадают"):
+            api.save_settings({"automation.quiet_end": "22:00"})
+    finally:
+        api.prepare_shutdown()
+        database.close_thread_connection()
+
+
+def test_identical_quiet_hours_are_allowed_while_the_schedule_is_disabled(
+    tmp_path: Path,
+) -> None:
+    """A disabled schedule never defers anything, so the values are harmless."""
+
+    api, database = _schedule_api(tmp_path)
+    try:
+        api.save_settings(
+            {
+                "automation.schedule_enabled": "0",
+                "automation.quiet_start": "09:00",
+                "automation.quiet_end": "09:00",
+            }
+        )
+        assert database.get_setting("automation.quiet_start") == "09:00"
+    finally:
+        api.prepare_shutdown()
+        database.close_thread_connection()
+
+
+def test_a_normal_overnight_window_is_still_accepted(tmp_path: Path) -> None:
+    api, database = _schedule_api(tmp_path)
+    try:
+        api.save_settings(
+            {
+                "automation.schedule_enabled": "1",
+                "automation.quiet_start": "22:00",
+                "automation.quiet_end": "07:00",
+            }
+        )
+        assert database.get_setting("automation.quiet_end") == "07:00"
+    finally:
+        api.prepare_shutdown()
+        database.close_thread_connection()
+
+
+# --------------------------------------------------------------------------
+# LOW: `assert` was used as a production invariant check in five modules.
+# `python -O` strips assert statements, so a violated invariant degraded into
+# `raise None` (TypeError) or an AttributeError far from the real cause.
+# --------------------------------------------------------------------------
+
+
+PRODUCTION_PACKAGES = ("core", "services", "storage", "workers", "gui")
+
+
+def test_production_code_does_not_use_assert_for_runtime_checks() -> None:
+    offenders: list[str] = []
+    roots = [ROOT / name for name in PRODUCTION_PACKAGES] + [ROOT / "main.py"]
+    for root in roots:
+        files = [root] if root.is_file() else sorted(root.rglob("*.py"))
+        for path in files:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assert):
+                    offenders.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno}"
+                    )
+    assert offenders == [], (
+        "assert is stripped by python -O and must not guard production "
+        f"invariants: {offenders}"
+    )
+
+
+# --------------------------------------------------------------------------
+# HIGH (supply chain): the pinned cryptography 46.0.4 carried six known
+# advisories, including a statically linked OpenSSL inside the published
+# wheels that ships straight into the packaged Windows application.
+# --------------------------------------------------------------------------
+
+
+def _pinned_version(text: str, package: str) -> str:
+    match = re.search(rf"(?mi)^{re.escape(package)}==([0-9][^\s\\]*)", text)
+    assert match is not None, f"{package} is not pinned"
+    return match.group(1)
+
+
+def test_cryptography_is_pinned_above_the_known_advisories() -> None:
+    """46.0.4 is vulnerable; 48.0.1 is the first release fixing all six."""
+
+    from packaging.version import Version
+
+    declared = _pinned_version(
+        (ROOT / "requirements-runtime.in").read_text(encoding="utf-8"), "cryptography"
+    )
+    locked = _pinned_version(
+        (ROOT / "requirements-runtime.lock").read_text(encoding="utf-8"), "cryptography"
+    )
+    assert declared == locked, "the .in file and the lock disagree on cryptography"
+    assert Version(declared) >= Version("48.0.1"), (
+        f"cryptography {declared} is affected by PYSEC-2026-35/36, PYSEC-2026-2141 "
+        "and GHSA-537c-gmf6-5ccf (bundled OpenSSL)"
+    )
+
+
+def test_every_runtime_requirement_is_pinned_and_hash_locked() -> None:
+    """requirements-runtime.in must describe exactly what the lock enforces."""
+
+    lock = (ROOT / "requirements-runtime.lock").read_text(encoding="utf-8")
+    declared = (ROOT / "requirements-runtime.in").read_text(encoding="utf-8")
+    for line in declared.splitlines():
+        entry = line.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        name = re.split(r"[=<>!~\[]", entry, maxsplit=1)[0].strip()
+        assert re.search(rf"(?mi)^{re.escape(name)}==", lock), (
+            f"{name} is declared in requirements-runtime.in but is missing from "
+            "the hash-locked graph; either lock it or move it to its own file"
+        )
+    for block in re.findall(r"(?m)^[A-Za-z].*?==.*?(?=\n[A-Za-z]|\Z)", lock, re.S):
+        head = block.splitlines()[0]
+        assert "--hash=sha256:" in block, f"{head} has no pinned artifact hash"
+
+
+def test_the_unhashed_openai_graph_is_declared_separately_and_flagged() -> None:
+    """The one knowingly unpinned dependency must stay visible, not silent."""
+
+    runtime_in = (ROOT / "requirements-runtime.in").read_text(encoding="utf-8")
+    openai_txt = (ROOT / "requirements-openai.txt").read_text(encoding="utf-8")
+    lock = (ROOT / "requirements-runtime.lock").read_text(encoding="utf-8")
+
+    assert not re.search(r"(?mi)^openai==", runtime_in)
+    assert not re.search(r"(?mi)^openai==", lock)
+    assert re.search(r"(?mi)^openai==", openai_txt)
+    # The trade-off must remain documented where a maintainer will see it.
+    assert "NOT hash-locked" in openai_txt
