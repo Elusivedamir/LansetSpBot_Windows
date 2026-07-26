@@ -695,3 +695,104 @@ def test_a_nonempty_file_from_a_failed_construction_is_preserved(
         assert reopened.get_setting("k") == "v"
     finally:
         reopened.close_thread_connection()
+
+
+# --------------------------------------------------------------------------
+# The periodic cheap re-check between full hardening passes.
+# --------------------------------------------------------------------------
+
+
+def test_the_cheap_recheck_is_a_no_op_for_unchanged_artifacts(
+    tmp_path: Path,
+) -> None:
+    """A second non-forced pass inside the window must not re-validate."""
+
+    database = Database(tmp_path / "cheap-pass.db")
+    try:
+        database.set_setting("k", "v")
+        database._harden_database_artifacts(force=True)  # noqa: SLF001
+        before = dict(database._artifact_security_identities)  # noqa: SLF001
+        database._harden_database_artifacts(force=False)  # noqa: SLF001
+        assert dict(database._artifact_security_identities) == before  # noqa: SLF001
+    finally:
+        database.close_thread_connection()
+
+
+def test_the_cheap_recheck_detects_a_replaced_database_file(
+    tmp_path: Path,
+) -> None:
+    """Swapping the file on disk must force a full re-validation."""
+
+    database = Database(tmp_path / "replaced.db")
+    try:
+        database.set_setting("k", "v")
+        database._harden_database_artifacts(force=True)  # noqa: SLF001
+        tracked = dict(database._artifact_security_identities)  # noqa: SLF001
+        assert database.path in tracked
+
+        # Replace the database with a different inode while keeping it private.
+        import os
+
+        payload = database.path.read_bytes()
+        database.close_thread_connection()
+        replacement = database.path.with_name("replacement.tmp")
+        replacement.write_bytes(payload)
+        os.chmod(replacement, 0o600)
+        os.replace(replacement, database.path)
+
+        database._harden_database_artifacts(force=False)  # noqa: SLF001
+        assert (
+            database._artifact_security_identities.get(database.path)  # noqa: SLF001
+            != tracked[database.path]
+        )
+    finally:
+        database.close_thread_connection()
+
+
+def test_the_cheap_recheck_survives_an_lstat_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable artifact must trigger a full pass, not a crash."""
+
+    database = Database(tmp_path / "cheap-lstat.db")
+    try:
+        database.set_setting("k", "v")
+        database._harden_database_artifacts(force=True)  # noqa: SLF001
+
+        real_lstat = Path.lstat
+        calls = {"n": 0}
+
+        def flaky(self, *args, **kwargs):
+            if self == database.path and calls["n"] == 0:
+                calls["n"] += 1
+                raise OSError("transient I/O error")
+            return real_lstat(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "lstat", flaky)
+        database._harden_database_artifacts(force=False)  # noqa: SLF001
+        monkeypatch.undo()
+        assert calls["n"] == 1
+        assert database.get_setting("k") == "v"
+    finally:
+        monkeypatch.undo()
+        database.close_thread_connection()
+
+
+def test_a_broadened_database_mode_is_detected_by_the_cheap_pass(
+    tmp_path: Path,
+) -> None:
+    """A world-readable database must be tightened on the next check."""
+
+    import os
+    import stat as stat_module
+
+    database = Database(tmp_path / "broadened-main.db")
+    try:
+        database.set_setting("k", "v")
+        database._harden_database_artifacts(force=True)  # noqa: SLF001
+        os.chmod(database.path, 0o644)
+        database._harden_database_artifacts(force=False)  # noqa: SLF001
+        mode = stat_module.S_IMODE(database.path.stat().st_mode)
+        assert mode == 0o600, f"database mode was left at {oct(mode)}"
+    finally:
+        database.close_thread_connection()
