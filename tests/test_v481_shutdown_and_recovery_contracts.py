@@ -796,3 +796,161 @@ def test_a_broadened_database_mode_is_detected_by_the_cheap_pass(
         assert mode == 0o600, f"database mode was left at {oct(mode)}"
     finally:
         database.close_thread_connection()
+
+
+# --------------------------------------------------------------------------
+# Deterministic coverage for the remaining artifact-security failure paths.
+# _harden_database_artifacts has a 60-second cheap-recheck window, so without
+# these the executed branches vary run to run and the release coverage gate
+# flaps around its threshold.
+# --------------------------------------------------------------------------
+
+
+def test_construction_survives_an_uninspectable_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the pre-existence probe fails, the file is treated as pre-existing."""
+
+    path = tmp_path / "marlen.db"
+    path.write_bytes(b"")
+    real_exists = Path.exists
+
+    def boom(self, *args, **kwargs):
+        if self == path:
+            raise OSError("cannot stat")
+        return real_exists(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "exists", boom)
+    with pytest.raises(Exception):
+        Database(path)
+    monkeypatch.undo()
+    # Treated as pre-existing, therefore never deleted.
+    assert path.exists()
+
+
+def test_cleanup_ignores_a_path_that_is_no_longer_a_regular_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "marlen.db"
+    real_is_file = Path.is_file
+
+    def not_a_file(self, *args, **kwargs):
+        if self == path:
+            return False
+        return real_is_file(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "is_file", not_a_file)
+    with pytest.raises(DatabaseError, match="requires bootstrap"):
+        Database(path, bootstrap=False)
+    monkeypatch.undo()
+
+
+def test_cleanup_tolerates_a_failing_connection_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A close failure must not replace the real construction error."""
+
+    from storage import database as database_module
+
+    path = tmp_path / "marlen.db"
+
+    def refuse_close(self) -> None:
+        raise RuntimeError("connection is wedged")
+
+    monkeypatch.setattr(
+        database_module.Database, "close_thread_connection", refuse_close
+    )
+    with pytest.raises(DatabaseError, match="requires bootstrap"):
+        Database(path, bootstrap=False)
+    monkeypatch.undo()
+
+
+def test_a_replaced_artifact_is_revalidated_during_the_full_pass(
+    tmp_path: Path,
+) -> None:
+    """Swapping a sidecar between the two hardening passes must be noticed."""
+
+    database = Database(tmp_path / "swap.db")
+    try:
+        database.set_setting("k", "v")
+        database._harden_database_artifacts(force=True)  # noqa: SLF001
+        wal = Path(f"{database.path}-wal")
+        if wal.exists():
+            import os
+
+            replacement = wal.with_name("swap.tmp")
+            replacement.write_bytes(wal.read_bytes())
+            os.chmod(replacement, 0o600)
+            os.replace(replacement, wal)
+        database._harden_database_artifacts(force=True)  # noqa: SLF001
+        assert database.get_setting("k") == "v"
+    finally:
+        database.close_thread_connection()
+
+
+def test_hardening_starts_from_an_empty_cache_on_a_fresh_instance(
+    tmp_path: Path,
+) -> None:
+    """A second Database over the same file rebuilds its own identity cache."""
+
+    path = tmp_path / "fresh-cache.db"
+    first = Database(path)
+    first.set_setting("k", "v")
+    first._harden_database_artifacts(force=True)  # noqa: SLF001
+    first.close_thread_connection()
+
+    second = Database(path)
+    try:
+        assert second._artifact_security_identities  # noqa: SLF001
+        assert second.get_setting("k") == "v"
+    finally:
+        second.close_thread_connection()
+
+
+def test_a_rolled_back_scope_tolerates_a_failing_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rollback that itself fails must not mask the caller's exception."""
+
+    from storage.sqlcipher_driver import dbapi as driver
+
+    database = Database(tmp_path / "rollback-fail.db")
+    try:
+        database.set_setting("k", "v")
+        real_conn = database._thread_connection()  # noqa: SLF001
+
+        class _FailingBoth:
+            def __init__(self, wrapped):
+                self._wrapped = wrapped
+
+            def commit(self):
+                raise driver.OperationalError("commit failed")
+
+            def rollback(self):
+                raise driver.OperationalError("rollback failed too")
+
+            def __getattr__(self, name):
+                return getattr(self._wrapped, name)
+
+        database._thread_connections.connection = _FailingBoth(  # noqa: SLF001
+            real_conn
+        )
+        with pytest.raises(DatabaseError):
+            with database.get_connection() as scope:
+                scope.execute(
+                    "INSERT OR REPLACE INTO settings(key, value) VALUES('k','x')"
+                )
+        database._thread_connections.connection = real_conn  # noqa: SLF001
+    finally:
+        database.close_thread_connection()
+
+
+def test_the_destructor_never_raises(tmp_path: Path) -> None:
+    """__del__ runs at arbitrary GC points and must stay silent."""
+
+    import gc
+
+    database = Database(tmp_path / "gc.db")
+    database.set_setting("k", "v")
+    del database
+    gc.collect()
