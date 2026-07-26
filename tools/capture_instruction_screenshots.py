@@ -41,8 +41,8 @@ PAGES = (
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--width", type=int, default=1360)
-    parser.add_argument("--height", type=int, default=940)
+    parser.add_argument("--width", type=int, default=1600)
+    parser.add_argument("--height", type=int, default=1000)
     parser.add_argument("--destination", default=str(DESTINATION))
     arguments = parser.parse_args()
 
@@ -65,6 +65,25 @@ def main() -> int:
     window.show()
     application.processEvents()
 
+    # An empty activity log photographs as a broken panel. These lines are the
+    # ones a first run actually produces, so the screenshot shows the panel
+    # doing its job instead of a blank box. They are re-seeded immediately
+    # before every capture: the panel clears its feed whenever it reconciles
+    # the selected account, which happens on its own refresh timer.
+    def seed_activity() -> None:
+        append = getattr(window.activity_panel, "_append", None)
+        if not callable(append):
+            return
+        for message in (
+            "Telegram-аккаунт подключён.",
+            "Сохранено каналов: 24.",
+            "Связка готова: найден чат обсуждения @example_chat.",
+            "Кампания запущена на 24 часа: запланировано 40 слотов.",
+            "Комментарий отправлен, подтверждён Telegram.",
+        ):
+            append(message)
+        application.processEvents()
+
     destination = Path(arguments.destination)
     destination.mkdir(parents=True, exist_ok=True)
     written = 0
@@ -73,9 +92,14 @@ def main() -> int:
             if index >= window.stack.count():
                 print(f"skipped {name}: page {index} does not exist")
                 continue
+            # Drive the sidebar, not the stack: selecting the row is what a user
+            # does, and it leaves the correct entry highlighted. Setting the
+            # stack directly left every screenshot showing "Аккаунт" selected.
+            window.menu.setCurrentRow(index)
             window.stack.setCurrentIndex(index)
             for _ in range(3):
                 application.processEvents()
+            seed_activity()
             target = destination / name
             if not window.grab().save(str(target), "PNG"):
                 print(f"could not write {target}")

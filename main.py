@@ -276,13 +276,39 @@ def main() -> int:
     if _SELF_TEST:
         return _run_self_test(app)
 
-    instance = SingleInstance()
+    try:
+        instance = SingleInstance()
+    except Exception as exc:
+        # Without the guard a second copy could start and fight the first one
+        # over the database and the Telegram session, so a broken profile has
+        # to stop startup with an explanation instead of a bare traceback.
+        safe_exception = sanitize_exception(exc)
+        QMessageBox.critical(
+            None,
+            f"{APP_NAME} — профиль недоступен",
+            "Не удалось подготовить каталог данных, поэтому защита от "
+            "повторного запуска не работает и программа не будет запущена.\n\n"
+            f"{safe_exception}\n\n"
+            "Проверьте права на папку профиля, затем запустите снова.",
+        )
+        return 1
     container: ApplicationContainer | None = None
     window: LansetSpBotApp | None = None
     instance_closed = False
     exit_code = 1
     try:
         if not instance.acquire():
+            # The primary window has been asked to come forward. Say so anyway:
+            # a launch that appears to do nothing is what made operators start
+            # the program again and again.
+            log.info("Another LansetSpBot instance is already running")
+            QMessageBox.information(
+                None,
+                APP_NAME,
+                "LansetSpBot уже запущен.\n\n"
+                "Открыто существующее окно — второй копии не будет: две копии "
+                "работали бы с одной базой и одной Telegram-сессией.",
+            )
             return 0
 
         config = Config()

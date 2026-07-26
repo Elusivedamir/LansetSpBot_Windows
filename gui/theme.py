@@ -162,6 +162,62 @@ QComboBox::drop-down {
     border: none;
     width: 28px;
 }
+/* Popups are separate top-level windows. Without their own rules they fall
+   back to the system palette, which on this dark theme rendered near-white
+   text on a near-white background: the combo box list and the tray menu were
+   effectively unreadable. */
+QComboBox QAbstractItemView {
+    background: #15171B;
+    border: 1px solid #343942;
+    border-radius: 10px;
+    padding: 4px;
+    color: #F7FAFD;
+    outline: none;
+    selection-background-color: #2A3550;
+    selection-color: #FFFFFF;
+}
+QComboBox QAbstractItemView::item {
+    min-height: 28px;
+    padding: 4px 10px;
+    color: #F7FAFD;
+}
+QComboBox QAbstractItemView::item:selected,
+QComboBox QAbstractItemView::item:hover {
+    background: #2A3550;
+    color: #FFFFFF;
+}
+QMenu {
+    background: #15171B;
+    border: 1px solid #343942;
+    border-radius: 10px;
+    padding: 6px;
+    color: #F7FAFD;
+}
+QMenu::item {
+    background: transparent;
+    padding: 8px 18px;
+    border-radius: 8px;
+    color: #F7FAFD;
+}
+QMenu::item:selected {
+    background: #2A3550;
+    color: #FFFFFF;
+}
+QMenu::item:disabled {
+    color: #6E7480;
+}
+QMenu::separator {
+    height: 1px;
+    background: #292C33;
+    margin: 6px 8px;
+}
+QToolTip {
+    background: #15171B;
+    border: 1px solid #343942;
+    border-radius: 8px;
+    padding: 6px 8px;
+    color: #F7FAFD;
+}
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {
     background: transparent;
     border: none;

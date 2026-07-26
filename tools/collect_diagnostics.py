@@ -260,7 +260,21 @@ def _collect_logs(report: Report) -> None:
     if not log_dir.is_dir():
         report.line(f"no log directory yet: {log_dir}")
         return
-    files = sorted(log_dir.glob("marlen.log*"))
+    # glob() swallows a permission error and returns nothing, which reads as
+    # "the application never logged" - the opposite of the truth when the
+    # directory simply cannot be listed. The listing is done explicitly so an
+    # unreadable directory is reported as unreadable.
+    try:
+        files = sorted(
+            entry for entry in log_dir.iterdir() if entry.name.startswith("marlen.log")
+        )
+    except OSError as exc:
+        report.line(f"LOG DIRECTORY UNREADABLE: {exc}")
+        report.line(
+            "The log exists but this process may not list the directory. "
+            "Check its permissions before concluding anything from its absence."
+        )
+        return
     if not files:
         report.line("no marlen.log yet - the application has not logged anything")
         return

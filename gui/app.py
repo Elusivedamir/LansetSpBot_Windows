@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 from typing import Callable, Optional
 
@@ -90,6 +89,9 @@ class LansetSpBotApp(MainWindow):
         tray.setToolTip(APP_NAME)
 
         menu = QMenu(self)
+        minimize_action = QAction("Свернуть окно", menu)
+        minimize_action.triggered.connect(self.showMinimized)
+        menu.addAction(minimize_action)
         show_action = QAction("Открыть LansetSpBot", menu)
         show_action.triggered.connect(self.show_from_tray)
         menu.addAction(show_action)
@@ -107,8 +109,10 @@ class LansetSpBotApp(MainWindow):
         return tray
 
     def _install_shortcuts(self) -> None:
+        # Ctrl+W goes through close(), so it asks like the window button does
+        # instead of silently hiding a still-running application.
         self._close_shortcut = QShortcut(QKeySequence.StandardKey.Close, self)
-        self._close_shortcut.activated.connect(self.hide)
+        self._close_shortcut.activated.connect(self.close)
         self._quit_shortcut = QShortcut(QKeySequence.StandardKey.Quit, self)
         self._quit_shortcut.activated.connect(self.quit_application)
 
@@ -728,25 +732,39 @@ class LansetSpBotApp(MainWindow):
             return True
         return super().eventFilter(watched, event)
 
+    def confirm_close(self) -> bool:
+        """Ask before quitting. Closing ends the process, so it must be deliberate."""
+
+        answer = QMessageBox.question(
+            self,
+            APP_NAME,
+            "Закрыть LansetSpBot?\n\n"
+            "Программа завершится полностью, а не свернётся. Фоновые операции "
+            "останавливаются безопасно: начатая отправка доводится до конца, "
+            "новые слоты не запускаются.\n\n"
+            "Чтобы убрать окно с экрана, не закрывая программу, сверните его.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        """Closing the window closes the application.
+
+        It used to hide into the tray, which left a live process holding the
+        database and the Telegram session while the operator believed the
+        application was closed. Repeating that accumulated several running
+        copies of the program.
+        """
+
         if self._quitting:
             # The real quit is controlled by _finalize_quit after workers stop.
             event.ignore()
             return
-        if not self._tray.isVisible():
-            # Never hide the only recoverable window when the platform has no tray.
-            event.ignore()
-            self.quit_application()
-            return
         event.ignore()
-        self.hide()
-        location = "области уведомлений Windows" if os.name == "nt" else "строке меню"
-        self._tray.showMessage(
-            APP_NAME,
-            f"Приложение продолжает работать в {location}.",
-            QSystemTrayIcon.MessageIcon.Information,
-            2000,
-        )
+        if not self.confirm_close():
+            return
+        self.quit_application()
 
     def _keep_alive_tick(self) -> None:
         log.debug("Application heartbeat")

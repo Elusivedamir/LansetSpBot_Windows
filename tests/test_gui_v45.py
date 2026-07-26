@@ -102,7 +102,10 @@ def test_premium_gui_is_resizable_and_has_activity_panel(monkeypatch, tmp_path):
     assert window.horizontal_splitter.count() == 2
 
     window._tray.hide()
-    window.close()
+    # Not close(): closing now asks the operator to confirm, and a modal
+    # question in a headless run waits forever. This is teardown, not a test of
+    # the close path - that lives in test_v490_closing_really_closes.py.
+    window.hide()
     window.deleteLater()
     app.processEvents()
     container.shutdown()
