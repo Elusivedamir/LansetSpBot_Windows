@@ -724,6 +724,35 @@ class TaskRepositoryMixin:
                 outcome=outcome,
             )
 
+    def seconds_until_next_pending_task(self) -> float | None:
+        """Return seconds until the next pending task is due, or ``None``.
+
+        This read-only helper lets the persistent queue worker sleep on an event
+        instead of opening a writer transaction every 250 ms. A task without a
+        ``not_before`` deadline is due immediately and therefore returns ``0``.
+        """
+
+        try:
+            with self.get_connection() as conn:
+                row = conn.execute(
+                    """SELECT COUNT(*) AS pending_count,
+                              MAX(0.0, MIN(
+                                  (julianday(COALESCE(not_before, CURRENT_TIMESTAMP))
+                                   - julianday(CURRENT_TIMESTAMP)) * 86400.0
+                              )) AS seconds_until_due
+                       FROM tasks
+                       WHERE status='pending'"""
+                ).fetchone()
+            if row is None or int(row["pending_count"] or 0) <= 0:
+                return None
+            return max(0.0, float(row["seconds_until_due"] or 0.0))
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError(
+                f"Failed to read next pending task deadline: {exc}"
+            ) from exc
+
     def get_tasks(self, status=None, limit=50):
         """Get tasks by status."""
         try:
