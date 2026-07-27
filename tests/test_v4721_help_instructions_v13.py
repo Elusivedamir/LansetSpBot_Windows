@@ -111,3 +111,20 @@ def test_instruction_slideshow_documents_current_gui_routes_and_help() -> None:
 
 def test_v13_build_identity_is_visible() -> None:
     assert BUILD_ID == "V46-OPENAI-PREMIUM-GUI"
+
+def test_windows_build_regenerates_guide_assets_before_release_checks() -> None:
+    root = Path(__file__).resolve().parents[1]
+    build = (root / "build" / "build_windows_x64.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+    capture = '& $BuildPython tools\\capture_instruction_screenshots.py'
+    manifest = '& $BuildPython tools\\generate_manifest.py'
+    pytest_gate = "& $BuildPython -m coverage run -m pytest -q"
+    package = "& $BuildPython -m PyInstaller"
+
+    assert build.count(capture) == 1
+    assert build.count(manifest) == 1
+    assert build.index(capture) < build.index(manifest)
+    assert build.index(manifest) < build.index(pytest_gate)
+    assert build.index(manifest) < build.index(package)
+    assert "Instruction screenshot regeneration failed." in build
