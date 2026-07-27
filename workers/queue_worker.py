@@ -185,8 +185,8 @@ class QueueWorker(QThread):
         self._cancelled_scope_retention_seconds = 24 * 60 * 60
         self._startup_started_at: float | None = None
         self._active_task_lock = threading.RLock()
-        self._active_task_id: int | None = None
-        self._active_task_type: str | None = None
+        self._active_tasks: dict[int, tuple[str, int]] = {}
+        self.max_parallel_accounts = 5
         self._account_cooldown_lock = threading.RLock()
         # account_id -> (monotonic deadline, persisted UTC deadline key).
         # The monotonic deadline prevents a forward wall-clock correction from
@@ -204,29 +204,57 @@ class QueueWorker(QThread):
 
     @property
     def has_active_task(self) -> bool:
-        """Return True only while a claimed queue task is being processed.
-
-        A persistent idle worker deliberately remains alive to keep Telethon
-        connected, but that idle thread is not an active user operation and must
-        not block account changes.
-        """
-
         with self._active_task_lock:
-            return self._active_task_id is not None
+            return bool(self._active_tasks)
 
     @property
     def active_task(self) -> tuple[int | None, str | None]:
         with self._active_task_lock:
-            return self._active_task_id, self._active_task_type
+            if not self._active_tasks:
+                return None, None
+            task_id, (task_type, _account_id) = next(
+                iter(self._active_tasks.items())
+            )
+            return task_id, task_type
 
-    def _set_active_task(self, task: dict | None) -> None:
+    @property
+    def active_account_ids(self) -> set[int]:
         with self._active_task_lock:
+            return {
+                account_id
+                for _task_type, account_id in self._active_tasks.values()
+                if account_id > 0
+            }
+
+    def _set_active_task(
+        self, task: dict | None, *, finished_task_id: int | None = None
+    ) -> None:
+        with self._active_task_lock:
+            if finished_task_id is not None:
+                self._active_tasks.pop(int(finished_task_id), None)
+                return
             if task is None:
-                self._active_task_id = None
-                self._active_task_type = None
-            else:
-                self._active_task_id = int(task.get("id") or 0) or None
-                self._active_task_type = str(task.get("type") or "") or None
+                self._active_tasks.clear()
+                return
+            task_id = int(task.get("id") or 0)
+            payload = task.get("payload") or {}
+            try:
+                account_id = int(
+                    task.get("account_id")
+                    or (
+                        payload.get("account_id")
+                        if isinstance(payload, dict)
+                        else 0
+                    )
+                    or 0
+                )
+            except (TypeError, ValueError, OverflowError):
+                account_id = 0
+            if task_id > 0:
+                self._active_tasks[task_id] = (
+                    str(task.get("type") or ""),
+                    account_id,
+                )
 
     def _remember_account_rpc_cooldown(
         self, account_id: int, remaining_seconds: float, persisted_key: str
@@ -696,92 +724,121 @@ class QueueWorker(QThread):
         return not self.isInterruptionRequested()
 
     async def _run_async(self) -> None:
-        log.info("Queue worker started")
+        log.info("Queue worker started in isolated multiaccount mode")
         self._set_lifecycle_state(self.STATE_ACTIVE)
-        consecutive_loop_errors = 0
-        idle_since = None
-        while not self.isInterruptionRequested():
-            self.heartbeat = time.time()
-            if self.paused:
-                idle_since = None
-                if not await self._wait_for_task_available(None):
-                    break
-                continue
-            try:
-                task = self.get_db().claim_next_pending_task()
-                if task is None:
-                    if self.persistent_idle:
-                        # Production mode: keep the thread-owned TelegramClient and
-                        # SQLite connection alive until coordinated application
-                        # shutdown. This avoids reconnect/authorization RPCs between
-                        # sparse campaign slots.
-                        if self.lifecycle_state != self.STATE_ACTIVE:
-                            self._set_lifecycle_state(self.STATE_ACTIVE)
-                        idle_since = None
-                        next_due_in = self.get_db().seconds_until_next_pending_task()
-                        if not await self._wait_for_task_available(next_due_in):
-                            break
-                        continue
-                    # Finite/test mode preserves the historical drain-on-idle
-                    # lifecycle so isolated coroutine tests can complete naturally.
-                    if self._consume_task_wakeup():
-                        idle_since = None
-                        continue
-                    if idle_since is None:
-                        idle_since = time.monotonic()
-                    elif time.monotonic() - idle_since >= 1.5:
-                        self._set_lifecycle_state(self.STATE_DRAINING)
-                        if self._consume_task_wakeup():
-                            self._set_lifecycle_state(self.STATE_ACTIVE)
-                            idle_since = None
-                            continue
-                        final_task = self.get_db().claim_next_pending_task()
-                        if final_task is not None:
-                            self._set_lifecycle_state(self.STATE_ACTIVE)
-                            idle_since = None
-                            await self._process_task(final_task)
-                            consecutive_loop_errors = 0
-                            continue
-                        if self._consume_task_wakeup():
-                            self._set_lifecycle_state(self.STATE_ACTIVE)
-                            idle_since = None
-                            continue
-                        log.info(
-                            "Queue is empty; worker stops until the next user action"
-                        )
-                        break
-                    remaining_drain = max(
-                        0.01,
-                        1.5 - (time.monotonic() - float(idle_since)),
+        active: dict[asyncio.Task, int] = {}
+        idle_since: float | None = None
+
+        async def reap(done_tasks) -> None:
+            for future in done_tasks:
+                active.pop(future, None)
+                try:
+                    future.result()
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    safe_error = sanitize_exception(exc)
+                    log.exception(
+                        "Concurrent account task failed: %s", safe_error
                     )
-                    next_due_in = self.get_db().seconds_until_next_pending_task()
-                    wait_for = remaining_drain
-                    if next_due_in is not None:
-                        wait_for = min(wait_for, max(0.01, float(next_due_in)))
-                    if not await self._wait_for_task_available(wait_for):
+                    self.worker_error.emit(safe_error)
+
+        try:
+            while not self.isInterruptionRequested():
+                self.heartbeat = time.time()
+                done = {future for future in active if future.done()}
+                if done:
+                    await reap(done)
+                    self.stats_changed.emit(self.get_stats())
+
+                claimed_any = False
+                if not self.paused:
+                    while len(active) < self.max_parallel_accounts:
+                        excluded = set(active.values())
+                        task = self.get_db().claim_next_pending_task(excluded)
+                        if task is None:
+                            break
+                        payload = task.get("payload") or {}
+                        try:
+                            account_id = int(
+                                task.get("account_id")
+                                or (
+                                    payload.get("account_id")
+                                    if isinstance(payload, dict)
+                                    else 0
+                                )
+                                or 0
+                            )
+                        except (TypeError, ValueError, OverflowError):
+                            account_id = 0
+                        future = asyncio.create_task(self._process_task(task))
+                        active[future] = account_id
+                        claimed_any = True
+                        idle_since = None
+
+                if claimed_any:
+                    continue
+
+                if active:
+                    next_due = self.get_db().seconds_until_next_pending_task()
+                    timeout = 0.5
+                    if next_due is not None:
+                        timeout = min(timeout, max(0.01, float(next_due)))
+                    done, _pending = await asyncio.wait(
+                        set(active),
+                        timeout=timeout,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if done:
+                        await reap(done)
+                    continue
+
+                if self.paused:
+                    if not await self._wait_for_task_available(None):
                         break
                     continue
-                if self.lifecycle_state != self.STATE_ACTIVE:
+
+                if self.persistent_idle:
+                    next_due = self.get_db().seconds_until_next_pending_task()
+                    if not await self._wait_for_task_available(next_due):
+                        break
+                    continue
+
+                if self._consume_task_wakeup():
+                    idle_since = None
+                    continue
+                if idle_since is None:
+                    idle_since = time.monotonic()
+                elif time.monotonic() - idle_since >= 1.5:
+                    self._set_lifecycle_state(self.STATE_DRAINING)
+                    final_task = self.get_db().claim_next_pending_task()
+                    if final_task is None:
+                        break
                     self._set_lifecycle_state(self.STATE_ACTIVE)
-                idle_since = None
-                await self._process_task(task)
-                consecutive_loop_errors = 0
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                consecutive_loop_errors += 1
-                safe_error = sanitize_exception(exc)
-                log.exception("Unexpected error in worker loop: %s", safe_error)
-                self.worker_error.emit(safe_error)
-                if consecutive_loop_errors >= 5:
-                    log.critical(
-                        "Queue worker stopped after %s consecutive loop failures",
-                        consecutive_loop_errors,
+                    future = asyncio.create_task(self._process_task(final_task))
+                    payload = final_task.get("payload") or {}
+                    active[future] = int(
+                        final_task.get("account_id")
+                        or (
+                            payload.get("account_id")
+                            if isinstance(payload, dict)
+                            else 0
+                        )
+                        or 0
                     )
+                    idle_since = None
+                    continue
+                wait_for = max(
+                    0.01, 1.5 - (time.monotonic() - float(idle_since))
+                )
+                if not await self._wait_for_task_available(wait_for):
                     break
-                if not await self.safe_sleep(min(2.0 * consecutive_loop_errors, 10.0)):
-                    break
-            self.stats_changed.emit(self.get_stats())
+        finally:
+            if active:
+                for future in active:
+                    if not future.done():
+                        future.cancel()
+                await asyncio.gather(*active, return_exceptions=True)
 
     async def _process_task(self, task: dict) -> None:
         started = time.monotonic()
@@ -789,7 +846,9 @@ class QueueWorker(QThread):
         try:
             await self._process_task_impl(task)
         finally:
-            self._set_active_task(None)
+            self._set_active_task(
+                None, finished_task_id=int(task.get("id") or 0)
+            )
             log_if_slow(
                 log,
                 "queue_task",
@@ -814,36 +873,33 @@ class QueueWorker(QThread):
             self.get_db().requeue_task(task_id, "Worker interrupted before execution")
             return
 
-        get_setting = getattr(self.get_db(), "get_setting", None)
-        strict_account_binding = type(self.get_db()).__module__.startswith("storage.")
-        if (
-            task_type in self.DIRECT_ACCOUNT_BOUND_TASK_TYPES
-            and strict_account_binding
-            and callable(get_setting)
-        ):
-            payload = task.get("payload") or {}
-            try:
-                task_account_id = int(payload.get("account_id") or 0)
-                current_account_id = int(get_setting("telegram.account_id", 0) or 0)
-            except (TypeError, ValueError, OverflowError):
-                task_account_id = 0
-                current_account_id = 0
-            if (
-                task_account_id <= 0
-                or current_account_id <= 0
-                or task_account_id != current_account_id
-            ):
-                message = (
-                    "account_state_mismatch: задача Telegram принадлежит другому "
-                    "аккаунту "
-                    f"(task={task_account_id}, current={current_account_id})"
-                )
-                self.get_db().set_failed(task_id, message, retry=False)
-                self.failed_count += 1
-                self.task_failed.emit(task_id, message)
-                return
-
         task_payload = task.get("payload") or {}
+        try:
+            column_account_id = int(task.get("account_id") or 0)
+            payload_account_id = int(
+                task_payload.get("account_id")
+                if isinstance(task_payload, dict)
+                else 0
+                or 0
+            )
+        except (TypeError, ValueError, OverflowError):
+            column_account_id = 0
+            payload_account_id = 0
+        if (
+            column_account_id > 0
+            and payload_account_id > 0
+            and column_account_id != payload_account_id
+        ):
+            message = (
+                "account_state_mismatch: task account column does not match "
+                f"payload (column={column_account_id}, "
+                f"payload={payload_account_id})"
+            )
+            self.get_db().set_failed(task_id, message, retry=False)
+            self.failed_count += 1
+            self.task_failed.emit(task_id, message)
+            return
+
         raw_task_account_id: Any = (
             task_payload.get("account_id") if isinstance(task_payload, dict) else 0
         )
@@ -1042,6 +1098,16 @@ class QueueWorker(QThread):
                     details=dict(getattr(exc, "details", {}) or {}),
                     account_id=restriction_account_id,
                 )
+                if task_account_id > 0:
+                    state_setter = getattr(
+                        self.get_db(), "set_account_runtime_state", None
+                    )
+                    if callable(state_setter):
+                        state_setter(
+                            task_account_id,
+                            "restricted",
+                            error=message,
+                        )
                 comment_id = state.get("comment_campaign_id")
                 if comment_id:
                     self.request_scope_cancellation("comment_campaign", int(comment_id))

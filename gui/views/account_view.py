@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import secrets
+
 
 from PySide6.QtCore import QTime, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -31,6 +33,7 @@ from core.activity_schedule import (
 )
 from core.version import APP_NAME
 from gui.auth_worker import TelegramAuthWorker
+from gui.account_manager_panel import AccountManagerPanel
 from gui.background import BackgroundCall, connect_lifecycle_safe
 from services.proxy_validation import normalize_proxy_config
 
@@ -45,7 +48,10 @@ class AccountView(QWidget):
         self.config = config
         self.auth_worker = None
         self.phone_code_hash = ""
-        self._cached_account_values: dict[str, object] = {}
+        self._cached_account_values: dict = {}
+        self._adding_account = False
+        self._pending_session_name = ""
+        self._account_catalog_generation = 0
         self._active_auth_mode = ""
         self._background_jobs: set[BackgroundCall] = set()
         self._account_blocking_jobs: set[BackgroundCall] = set()
@@ -195,9 +201,9 @@ class AccountView(QWidget):
         self.connect_button.clicked.connect(self.request_code)
         button_row = QHBoxLayout()
         button_row.addWidget(self.connect_button)
-        self.logout_button = QPushButton("Сменить аккаунт")
+        self.logout_button = QPushButton("Добавить аккаунт")
         self.logout_button.setObjectName("secondaryButton")
-        self.logout_button.clicked.connect(self.logout_account)
+        self.logout_button.clicked.connect(self._begin_add_account)
         button_row.addWidget(self.logout_button)
         form_layout.addRow("", button_row)
 
@@ -265,6 +271,19 @@ class AccountView(QWidget):
         layout.addWidget(title)
         layout.addWidget(subtitle)
         layout.addWidget(self.status_card)
+
+        self.account_manager = AccountManagerPanel()
+        self.account_manager.account_selected.connect(self._select_account)
+        self.account_manager.add_requested.connect(self._begin_add_account)
+        self.account_manager.stop_requested.connect(self._stop_account)
+        self.account_manager.resume_requested.connect(self._resume_account)
+        self.account_manager.import_comments_requested.connect(
+            self._import_comments_from_previous
+        )
+        self.account_manager.import_channels_requested.connect(
+            self._import_channels_from_previous
+        )
+        layout.addWidget(self.account_manager)
         layout.addWidget(form_card)
         layout.addWidget(self.reset_card)
         layout.addStretch(1)
@@ -350,6 +369,189 @@ class AccountView(QWidget):
                 22 if compact else 28,
             )
         self._refresh_dynamic_layout()
+
+    def _load_account_catalog(self) -> None:
+        self._account_catalog_generation += 1
+        generation = self._account_catalog_generation
+
+        def applied(accounts) -> None:
+            if generation != self._account_catalog_generation:
+                return
+            selected = self.adapter.get_selected_account_id()
+            previous = self.adapter.get_previous_selected_account_id()
+            self.account_manager.reload(
+                list(accounts or []),
+                selected_account_id=selected,
+                previous_account_id=previous,
+            )
+
+        self._run_background(
+            lambda: self.adapter.list_telegram_accounts(),
+            on_success=applied,
+            on_error=lambda message: self.account_label.setText(message),
+        )
+
+    def _select_account(self, account_id: int) -> None:
+        self.status_label.setText("Переключение аккаунта…")
+
+        def selected(_result) -> None:
+            self._adding_account = False
+            self._pending_session_name = ""
+            self.account_manager.set_selected_account_id(account_id)
+            self.load_settings()
+            self.account_changed.emit()
+
+        self._run_background(
+            lambda: self.adapter.select_telegram_account(account_id),
+            on_success=selected,
+            on_error=lambda message: QMessageBox.warning(
+                self, "Аккаунт", message
+            ),
+        )
+
+    def _begin_add_account(self) -> None:
+        state = self.adapter.can_add_telegram_account()
+        if not state.get("allowed"):
+            QMessageBox.warning(
+                self, "Лимит аккаунтов", state.get("message") or ""
+            )
+            return
+        if self.auth_worker is not None and self.auth_worker.isRunning():
+            QMessageBox.warning(self, APP_NAME, "Авторизация уже выполняется")
+            return
+        self._adding_account = True
+        self._pending_session_name = f"pending_{secrets.token_hex(16)}"
+        self.api_id.clear()
+        self.api_hash.clear()
+        self.phone.clear()
+        self.proxy_enabled.setChecked(False)
+        self.proxy_host.clear()
+        self.proxy_port.clear()
+        self.proxy_login.clear()
+        self.proxy_password.clear()
+        self.proxy_secret.clear()
+        self._set_code_card_visible(False)
+        self.status_label.setText("Добавление Telegram-аккаунта")
+        self.account_label.setText(
+            "Заполните API ID, API Hash, телефон и отдельный proxy при необходимости"
+        )
+        self.connect_button.setText("Отправить код Telegram")
+        self.api_id.setFocus()
+
+    def _stop_account(self, account_id: int) -> None:
+        answer = QMessageBox.question(
+            self,
+            "Остановить всю работу аккаунта?",
+            "Будут принудительно завершены все кампании, вступления, связки и "
+            "запланированные отправки этого аккаунта. Другие аккаунты продолжат "
+            "работу. Telegram-сессия останется сохранённой.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.status_label.setText("Остановка работы аккаунта…")
+
+        def stopped(result) -> None:
+            QMessageBox.information(
+                self,
+                "Работа остановлена",
+                str(result.get("message") or "Работа аккаунта остановлена."),
+            )
+            self._load_account_catalog()
+            self.account_changed.emit()
+
+        self._run_background(
+            lambda: self.adapter.stop_telegram_account(account_id),
+            on_success=stopped,
+            on_error=lambda message: QMessageBox.warning(
+                self, "Остановка аккаунта", message
+            ),
+        )
+
+    def _resume_account(self, account_id: int) -> None:
+        def resumed(_result) -> None:
+            self._load_account_catalog()
+            self.account_changed.emit()
+
+        self._run_background(
+            lambda: self.adapter.resume_telegram_account(account_id),
+            on_success=resumed,
+            on_error=lambda message: QMessageBox.warning(
+                self, "Аккаунт", message
+            ),
+        )
+
+    def _import_comments_from_previous(self) -> None:
+        box = QMessageBox(self)
+        box.setWindowTitle("Импорт комментариев")
+        box.setText(
+            "Комментарии будут скопированы из непосредственно предыдущего "
+            "выбранного аккаунта. Источник не изменится."
+        )
+        replace_button = box.addButton(
+            "Заменить текущие комментарии",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        fill_button = box.addButton(
+            "Добавить только в свободные позиции",
+            QMessageBox.ButtonRole.ActionRole,
+        )
+        box.addButton("Отмена", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is replace_button:
+            mode = "replace"
+        elif clicked is fill_button:
+            mode = "fill"
+        else:
+            return
+        self._run_background(
+            lambda: self.adapter.import_comments_from_previous_account(
+                mode=mode
+            ),
+            on_success=lambda result: QMessageBox.information(
+                self,
+                "Импорт завершён",
+                f"Изменено позиций: {int(result.get('imported') or 0)}",
+            ),
+            on_error=lambda message: QMessageBox.warning(
+                self, "Импорт комментариев", message
+            ),
+        )
+
+    def _import_channels_from_previous(self) -> None:
+        self._run_background(
+            lambda: self.adapter.import_channels_from_previous_account(),
+            on_success=lambda result: QMessageBox.information(
+                self,
+                "Импорт каналов завершён",
+                "Импортировано: {imported}\nУже существовали: {existing}\n"
+                "Пропущено: {skipped}".format(**result),
+            ),
+            on_error=lambda message: QMessageBox.warning(
+                self, "Импорт каналов", message
+            ),
+        )
+
+    def _check_selected_account(self) -> None:
+        account_id = int(self.adapter.get_selected_account_id() or 0)
+        if account_id <= 0:
+            QMessageBox.warning(self, "Telegram", "Сначала выберите аккаунт")
+            return
+        self.status_label.setText("Проверка подключения…")
+
+        def checked(_result) -> None:
+            self.status_label.setText("Аккаунт подключён")
+            self._load_account_catalog()
+
+        self._run_background(
+            lambda: self.adapter.check_telegram_account_runtime(account_id),
+            on_success=checked,
+            on_error=lambda message: QMessageBox.warning(
+                self, "Telegram", message
+            ),
+        )
 
     def _toggle_proxy(self, enabled: bool):
         self.proxy_box.setVisible(enabled)
@@ -485,6 +687,7 @@ class AccountView(QWidget):
         )
 
     def load_settings(self):
+        self._load_account_catalog()
         self.connect_button.setEnabled(False)
         self._run_background(
             lambda: self.adapter.get_settings(),
@@ -744,7 +947,11 @@ class AccountView(QWidget):
         self._refresh_dynamic_layout(self.code)
 
     def request_code(self):
-        if not self._ensure_account_change_allowed():
+        if not self._adding_account and self.adapter.get_selected_account_id():
+            self._check_selected_account()
+            return
+        if self.auth_worker is not None and self.auth_worker.isRunning():
+            QMessageBox.warning(self, APP_NAME, "Авторизация уже выполняется")
             return
         try:
             settings = self._settings()
@@ -753,16 +960,12 @@ class AccountView(QWidget):
             return
         self.connect_button.setEnabled(False)
         self._show_pending_code_request()
-        self.status_label.setText("Сохранение защищённых настроек…")
-        self._run_background(
-            lambda: self.adapter.save_settings(settings),
-            on_success=lambda _result: self._start_worker("request_code", settings),
-            on_error=self._settings_save_failed,
-            blocks_account_change=True,
-        )
+        self.status_label.setText("Запрос кода Telegram…")
+        self._start_worker("request_code", settings)
 
     def confirm_login(self):
-        if not self._ensure_account_change_allowed():
+        if self.auth_worker is not None and self.auth_worker.isRunning():
+            QMessageBox.warning(self, APP_NAME, "Авторизация уже выполняется")
             return
         try:
             settings = self._settings()
@@ -788,26 +991,11 @@ class AccountView(QWidget):
         self._active_auth_mode = str(mode)
         self.adapter.set_auth_in_progress(True)
         self._set_account_controls_busy(True)
-        self.status_label.setText("Завершение фонового подключения…")
+        self.status_label.setText("Подключение к Telegram…")
         self.account_label.setText(
-            "LansetSpBot безопасно освобождает Telegram-сессию перед авторизацией"
+            "Авторизация нового аккаунта не останавливает остальные кампании"
         )
-
-        def launch(prepared) -> None:
-            if not prepared:
-                self._failed(
-                    "Не удалось освободить Telegram-сессию. "
-                    "Дождитесь завершения текущей операции и повторите попытку"
-                )
-                return
-            self._launch_auth_worker(mode, settings, **kwargs)
-
-        self._run_background(
-            lambda: self.adapter.prepare_account_change(),
-            on_success=launch,
-            on_error=self._failed,
-            blocks_account_change=True,
-        )
+        self._launch_auth_worker(mode, settings, **kwargs)
 
     def _launch_auth_worker(self, mode, settings, **kwargs):
         self.connect_button.setEnabled(False)
@@ -819,6 +1007,8 @@ class AccountView(QWidget):
             settings=settings,
             session_dir=self.config.telegram.session_dir,
             database_path=self.config.database_path,
+            session_name=self._pending_session_name or "main",
+            persist_state=False,
             parent=self,
             **kwargs,
         )
@@ -859,31 +1049,40 @@ class AccountView(QWidget):
 
     def _authorized(self, account: dict):
         self._clear_temporary_auth_fields()
-        persisted = bool(account.get("_persisted"))
         if not account.get("id"):
-            values = {
-                "telegram.account_id": "",
-                "telegram.account_name": "",
-                "telegram.account_username": "",
-                "telegram.authorized": "0",
-            }
-            if persisted:
-                self._apply_disconnected_account(values)
-            else:
-                self._save_account_state(
-                    values, on_success=self._apply_disconnected_account
-                )
+            self._failed("Telegram не вернул идентификатор аккаунта")
             return
-        values = {
-            "telegram.account_id": account.get("id") or "",
-            "telegram.account_name": account.get("name") or "Telegram Account",
-            "telegram.account_username": account.get("username") or "",
-            "telegram.authorized": "1",
-        }
-        if persisted:
-            self._apply_authorized_account(values)
-        else:
-            self._save_account_state(values, on_success=self._apply_authorized_account)
+        settings = self._settings()
+        pending_name = str(
+            account.get("_session_name") or self._pending_session_name or ""
+        )
+
+        def registered(values) -> None:
+            self._adding_account = False
+            self._pending_session_name = ""
+            compatibility = {
+                "telegram.account_id": values.get("telegram_account_id"),
+                "telegram.account_name": values.get("display_name"),
+                "telegram.account_username": values.get("username") or "",
+                "telegram.authorized": "1",
+            }
+            self._cached_account_values = dict(compatibility)
+            self._set_authorized_ui(compatibility)
+            self._set_code_card_visible(False)
+            self.load_settings()
+            self.account_changed.emit()
+
+        self.status_label.setText("Сохранение изолированного аккаунта…")
+        self._run_background(
+            lambda: self.adapter.register_authorized_account(
+                account,
+                settings,
+                pending_session_name=pending_name,
+            ),
+            on_success=registered,
+            on_error=self._failed,
+            blocks_account_change=True,
+        )
 
     def _set_status_dot(self, online: bool) -> None:
         self.status_dot.setObjectName(
@@ -916,6 +1115,7 @@ class AccountView(QWidget):
             f"{name}" + (f"  ·  @{username}" if username else "")
         )
         self.connect_button.setText("Проверить подключение")
+        self._load_account_catalog()
 
     def _temporary_failed(self, message: str) -> None:
         """Keep a cached authorized session usable after a transient check failure."""

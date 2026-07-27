@@ -212,3 +212,45 @@ class GUIServiceAdapter:
 
     def confirm_spambot_restriction_cleared(self, account_id=None):
         return self.api.confirm_spambot_restriction_cleared(account_id=account_id)
+
+    def list_telegram_accounts(self):
+        return self.api.list_telegram_accounts()
+
+    def can_add_telegram_account(self):
+        return self.api.can_add_telegram_account()
+
+    def select_telegram_account(self, account_id):
+        return self.api.select_telegram_account(account_id)
+
+    def get_selected_account_id(self):
+        return self.api.get_selected_account_id()
+
+    def get_previous_selected_account_id(self):
+        return self.api.get_previous_selected_account_id()
+
+    def get_account_settings(self, account_id=None):
+        return self.api.get_account_settings(account_id)
+
+    def register_authorized_account(
+        self, account, settings, *, pending_session_name
+    ):
+        return self.api.register_authorized_account(
+            account,
+            settings,
+            pending_session_name=pending_session_name,
+        )
+
+    def stop_telegram_account(self, account_id):
+        return self.api.stop_telegram_account(account_id)
+
+    def resume_telegram_account(self, account_id):
+        return self.api.resume_telegram_account(account_id)
+
+    def check_telegram_account_runtime(self, account_id):
+        return self.api.check_telegram_account_runtime(account_id)
+
+    def import_comments_from_previous_account(self, *, mode):
+        return self.api.import_comments_from_previous_account(mode=mode)
+
+    def import_channels_from_previous_account(self):
+        return self.api.import_channels_from_previous_account()

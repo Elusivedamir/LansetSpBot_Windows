@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import logging
 
@@ -15,8 +15,6 @@ from core.activity_schedule import (
     parse_clock,
     validate_timezone_name,
 )
-from typing import Any, cast
-
 
 log = logging.getLogger(__name__)
 
@@ -24,13 +22,17 @@ log = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from core.mixin_host import MixinHost as _MixinHost
 else:
-
     class _MixinHost:
         pass
 
 
 class SettingsAPIMixin(_MixinHost):
-    def _strict_secret_snapshot(self, key: str) -> str | None:
+    def _strict_secret_snapshot(
+        self, key: str, *, account_id: int | None = None
+    ) -> str | None:
+        owner = int(account_id or 0)
+        if owner > 0 and hasattr(self, "_strict_account_secret"):
+            return self._strict_account_secret(owner, key)
         getter = getattr(type(self.secret_store), "get_strict_optional", None)
         if callable(getter):
             value = self.secret_store.get_strict_optional(key)
@@ -38,20 +40,24 @@ class SettingsAPIMixin(_MixinHost):
         value = self.secret_store.get(key, "")
         return None if value in (None, "") else str(value)
 
-    def _restore_secret_snapshot(self, key: str, value: str | None) -> None:
+    def _restore_secret_snapshot(
+        self,
+        key: str,
+        value: str | None,
+        *,
+        account_id: int | None = None,
+    ) -> None:
+        owner = int(account_id or 0)
+        if owner > 0 and hasattr(self, "_set_account_secret"):
+            self._set_account_secret(owner, key, value)
+            return
         if value is None:
             self.secret_store.delete(key)
         else:
             self.secret_store.set(key, value)
 
     def save_settings(self, values: dict[str, Any]) -> None:
-        """Persist public settings and protected credentials as one logical unit.
-
-        SQLite and the local secret file cannot share a native transaction. Marlen
-        therefore snapshots every affected credential, executes all SQLite writes
-        in one transaction, and restores the local secret file if a credential write
-        or SQLite commit fails.
-        """
+        """Persist settings in the selected account without affecting runtimes."""
 
         if not isinstance(values, dict):
             raise ValueError("Settings must be an object")
@@ -72,18 +78,21 @@ class SettingsAPIMixin(_MixinHost):
                 parse_clock(public[QUIET_END_KEY], default="07:00")
             )
 
-        # An enabled window whose start equals its end has no active period at
-        # all: every dispatch is deferred by another 24 hours forever, and the
-        # user only ever sees a moving "отложено до ..." time. Reject it at the
-        # settings boundary instead of stalling the campaign silently.
+        owner = self.get_current_account_id()
+        target_db = self.database.for_account(owner) if owner > 0 else self.database
+
         if QUIET_START_KEY in public or QUIET_END_KEY in public:
-            stored = self.database.get_settings(SCHEDULE_SETTINGS_PREFIX)
+            stored = target_db.get_settings(SCHEDULE_SETTINGS_PREFIX)
             enabled_raw = public.get(
                 SCHEDULE_ENABLED_KEY, stored.get(SCHEDULE_ENABLED_KEY)
             )
             if normalize_bool(enabled_raw):
-                start_value = public.get(QUIET_START_KEY, stored.get(QUIET_START_KEY))
-                end_value = public.get(QUIET_END_KEY, stored.get(QUIET_END_KEY))
+                start_value = public.get(
+                    QUIET_START_KEY, stored.get(QUIET_START_KEY)
+                )
+                end_value = public.get(
+                    QUIET_END_KEY, stored.get(QUIET_END_KEY)
+                )
                 start = parse_clock(start_value, default="22:00")
                 end = parse_clock(end_value, default="07:00")
                 if start == end:
@@ -94,29 +103,49 @@ class SettingsAPIMixin(_MixinHost):
                     )
 
         secret_updates = {
-            key: public.pop(key) for key in self.SECRET_SETTING_KEYS if key in public
+            key: public.pop(key)
+            for key in self.SECRET_SETTING_KEYS
+            if key in public
         }
+        identity_keys = {
+            "telegram.account_id",
+            "telegram.account_name",
+            "telegram.account_username",
+            "telegram.authorized",
+            "telegram.session_name",
+            "telegram.runtime_state",
+        }
+        for key in identity_keys:
+            public.pop(key, None)
+
         if not secret_updates:
             if public:
-                self.database.set_settings(public)
+                target_db.set_settings(public)
+                if owner > 0:
+                    # Current global keys remain a selected-account compatibility
+                    # mirror; workers never read them directly after v31.
+                    self.database.set_settings(public)
             return
 
         with self._secret_lock:
             snapshots = {
-                key: self._strict_secret_snapshot(key) for key in secret_updates
+                key: self._strict_secret_snapshot(key, account_id=owner or None)
+                for key in secret_updates
             }
             touched: list[str] = []
             try:
-                # Nested repository calls reuse this outer SQLite transaction.
-                # A commit failure is raised from this context and triggers the
-                # same local-secret rollback as an in-body database failure.
                 with self.database.get_connection():
                     for key, value in secret_updates.items():
                         touched.append(key)
-                        self.secret_store.set(key, value)
-                        self.database.delete_setting(key)
+                        if owner > 0:
+                            self._set_account_secret(owner, key, value)
+                        else:
+                            self.secret_store.set(key, value)
+                            self.database.delete_setting(key)
                     if public:
-                        self.database.set_settings(public)
+                        target_db.set_settings(public)
+                        if owner > 0:
+                            self.database.set_settings(public)
                 if not any(
                     self.database.get_setting(key, "")
                     for key in self.SECRET_SETTING_KEYS
@@ -126,8 +155,10 @@ class SettingsAPIMixin(_MixinHost):
                 rollback_errors: list[str] = []
                 for key in reversed(touched):
                     try:
-                        self._restore_secret_snapshot(key, snapshots[key])
-                    except Exception as rollback_exc:  # noqa: BLE001
+                        self._restore_secret_snapshot(
+                            key, snapshots[key], account_id=owner or None
+                        )
+                    except Exception as rollback_exc:
                         rollback_errors.append(f"{key}: {rollback_exc}")
                 if rollback_errors:
                     raise RuntimeError(
@@ -137,6 +168,11 @@ class SettingsAPIMixin(_MixinHost):
                 raise
 
     def get_current_account_id(self) -> int:
+        getter = getattr(self.database, "get_selected_account_id", None)
+        if callable(getter):
+            value = int(getter() or 0)
+            if value > 0:
+                return value
         try:
             return max(
                 0,
@@ -146,6 +182,17 @@ class SettingsAPIMixin(_MixinHost):
             return 0
 
     def get_settings(self, prefix: str | None = None) -> dict[str, Any]:
+        owner = self.get_current_account_id()
+        if owner > 0 and hasattr(self, "get_account_settings"):
+            values = dict(self.get_account_settings(owner))
+            if prefix:
+                values = {
+                    key: value
+                    for key, value in values.items()
+                    if key.startswith(prefix)
+                }
+            return cast(dict[str, Any], values)
+
         values = self.database.get_settings(prefix)
         with self._secret_lock:
             for key in self.SECRET_SETTING_KEYS:
@@ -156,16 +203,19 @@ class SettingsAPIMixin(_MixinHost):
         return cast(dict[str, Any], values)
 
     def save_comment_template(self, comments: list[str]) -> None:
-        # Compatibility entry point: current Marlen always stores ten fields.
         normalized = [str(item).strip() for item in comments[:10]]
         normalized += [""] * (10 - len(normalized))
         self.database.save_account_comment_profile(
             normalized,
             visible_count=10,
+            account_id=self.get_current_account_id() or None,
         )
 
     def get_main_comments(self) -> list[str]:
-        profile = self.database.get_account_comment_profile(touch=True)
+        profile = self.database.get_account_comment_profile(
+            account_id=self.get_current_account_id() or None,
+            touch=True,
+        )
         comments = list(profile.get("comments") or [])[:10]
         comments += [""] * (10 - len(comments))
         return comments
@@ -177,20 +227,24 @@ class SettingsAPIMixin(_MixinHost):
         visible_count: int,
         account_id: int | None = None,
     ) -> dict[str, Any]:
+        owner = int(account_id or self.get_current_account_id() or 0)
         return cast(
             dict[str, Any],
             self.database.save_account_comment_profile(
                 comments,
                 visible_count=visible_count,
-                account_id=account_id,
+                account_id=owner or None,
             ),
         )
 
-    def get_comment_profile(self, account_id: int | None = None) -> dict[str, Any]:
+    def get_comment_profile(
+        self, account_id: int | None = None
+    ) -> dict[str, Any]:
+        owner = int(account_id or self.get_current_account_id() or 0)
         return cast(
             dict[str, Any],
             self.database.get_account_comment_profile(
-                account_id=account_id,
+                account_id=owner or None,
                 touch=True,
             ),
         )
@@ -198,10 +252,11 @@ class SettingsAPIMixin(_MixinHost):
     def import_previous_comment_profile(
         self, account_id: int | None = None
     ) -> dict[str, Any] | None:
-        result = self.database.import_previous_account_comment_profile(
-            account_id=account_id
+        del account_id
+        return cast(
+            dict[str, Any] | None,
+            self.import_comments_from_previous_account(mode="replace"),
         )
-        return cast(dict[str, Any] | None, result)
 
     def get_comment_history(
         self,
@@ -210,9 +265,10 @@ class SettingsAPIMixin(_MixinHost):
         campaign_id: int | None = None,
         account_id: int | None = None,
     ):
+        owner = int(account_id or self.get_current_account_id() or 0)
         return self.database.get_comment_history(
             task_id=task_id,
             limit=limit,
             campaign_id=campaign_id,
-            account_id=account_id,
+            account_id=owner or None,
         )

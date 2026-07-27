@@ -60,6 +60,23 @@ def main() -> int:
     config = Config()
     container = ApplicationContainer(config)
     container.database.reset_running_tasks()
+    # Multiaccount screenshot fixture: local rows only, no Telegram connection.
+    for account_id, name, username, phone, state in (
+        (910001, "Damir", "damir_main", "+79990001122", "running"),
+        (910002, "Рабочий аккаунт", "work_account", "+79990003344", "connected"),
+        (910003, "Резервный профиль", "reserve_account", "+79990005566", "paused"),
+    ):
+        container.database.register_telegram_account(
+            telegram_account_id=account_id,
+            session_name=f"account_{account_id}",
+            display_name=name,
+            username=username,
+            phone=phone,
+            authorized=True,
+        )
+        container.database.set_account_runtime_state(account_id, state)
+    container.database.select_telegram_account(910001)
+    container.database.select_telegram_account(910002)
     window = LansetSpBotApp(container.adapter, container.queue_worker, config)
     window.resize(arguments.width, arguments.height)
     window.show()

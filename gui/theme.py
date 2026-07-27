@@ -50,8 +50,39 @@ QLabel#statusDotOffline {
     font-size: 25px;
 }
 QLabel#statusDotOnline {
-    color: #65B58C;
+    color: #22C55E;
     font-size: 25px;
+}
+QFrame#accountManagerCard {
+    background: #15171B;
+    border: 1px solid #30343C;
+    border-radius: 17px;
+}
+QLabel#accountStateOnline {
+    color: #22C55E;
+    font-size: 24px;
+    font-weight: 900;
+}
+QLabel#accountStatePaused {
+    color: #FACC15;
+    font-size: 24px;
+}
+QLabel#accountStateWarning {
+    color: #FB923C;
+    font-size: 24px;
+}
+QLabel#accountStateError {
+    color: #EF4444;
+    font-size: 24px;
+}
+QLabel#accountStateStopped, QLabel#accountStateDisconnected {
+    color: #9CA3AF;
+    font-size: 24px;
+}
+QLabel#accountStateText {
+    color: #F7FAFD;
+    font-size: 15px;
+    font-weight: 750;
 }
 QListWidget#navigation {
     background: transparent;

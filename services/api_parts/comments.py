@@ -341,12 +341,12 @@ class CommentCampaignAPIMixin(_MixinHost):
                 )
                 self._secret_migration_thread.start()
             return
-        if self._auth_in_progress or has_pending_account_state(self.database.path):
-            return
-        if get_account_restriction_state(self.database).get("active"):
+        if has_pending_account_state(self.database.path):
             return
         try:
-            self._campaign_tick_once()
+            from services.multiaccount_scheduler import run_multiaccount_campaign_tick
+
+            run_multiaccount_campaign_tick(self)
         except Exception as exc:
             self._scheduler_failures += 1
             log.exception("Persistent campaign scheduler failed")

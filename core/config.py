@@ -87,6 +87,8 @@ class TelegramSettings:
     api_id: int
     api_hash: str
     session_dir: Path
+    session_name: str = "main"
+    account_id: int | None = None
     phone: str | None = None
     proxy_enabled: bool = False
     proxy_type: str = "SOCKS5"

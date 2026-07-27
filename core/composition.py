@@ -15,6 +15,11 @@ from services.comment_service import CommentService
 from services.import_service import ImportService
 from services.linked_chat_service import LinkedChatService
 from services.telegram_service import TelegramService
+from services.account_sessions import (
+    migrate_legacy_account_secrets,
+    migrate_legacy_main_session,
+)
+from services.account_runtime_manager import create_multiaccount_handlers
 from storage.database import Database
 from workers.queue_worker import QueueWorker
 from workers.handler_registry import create_worker_handlers
@@ -33,6 +38,12 @@ class ApplicationContainer:
         self.database = Database(config.database_path, busy_timeout_ms=1_000)
         reconcile_pending_account_state(self.database)
         self.secret_store = SecretStore()
+        self.session_migration = migrate_legacy_main_session(
+            self.database, config.telegram.session_dir
+        )
+        self.account_secret_migration = migrate_legacy_account_secrets(
+            self.database, self.secret_store
+        )
         self.queue_worker = QueueWorker(
             handler_factory=self._create_worker_handlers,
             max_retries=config.queue.max_retries,
@@ -46,6 +57,7 @@ class ApplicationContainer:
             secret_store=self.secret_store,
             max_joins_per_hour=config.max_joins_per_hour,
             campaign_hours=config.campaign_hours,
+            config=config,
         )
         self.adapter = GUIServiceAdapter(self.api)
 
@@ -109,8 +121,9 @@ class ApplicationContainer:
     def _create_worker_handlers(self):
         # Pass module-level factories explicitly so test doubles and future
         # dependency injection keep the same public seam after extraction.
-        return create_worker_handlers(
+        return create_multiaccount_handlers(
             self,
+            create_worker_handlers=create_worker_handlers,
             TelegramService=TelegramService,
             ImportService=ImportService,
             LinkedChatService=LinkedChatService,

@@ -9,9 +9,11 @@ from PySide6.QtCore import QObject, QThreadPool, QTimer, Slot
 
 from core.config import DEFAULT_MAX_CHANNELS_PER_RUN
 from core.secret_store import SecretStore
+from services.account_context import account_secret_key
 from gui.background import BackgroundCall
 from services.api_parts import (
     AccountRestrictionAPIMixin,
+    AccountsAPIMixin,
     CommentCampaignAPIMixin,
     JoinCampaignAPIMixin,
     OpenAICommentAPIMixin,
@@ -25,6 +27,7 @@ log = logging.getLogger(__name__)
 
 class ServiceAPI(
     QObject,
+    AccountsAPIMixin,
     TaskQueueAPIMixin,
     SettingsAPIMixin,
     AccountRestrictionAPIMixin,
@@ -91,10 +94,12 @@ class ServiceAPI(
         secret_store: SecretStore | None = None,
         max_joins_per_hour: int = 40,
         campaign_hours: int = 24,
+        config=None,
     ) -> None:
         super().__init__()
         self.database = database
         self.queue_worker = queue_worker
+        self.config = config
         self.max_channels_per_run = max(1, int(max_channels_per_run))
         self.max_joins_per_hour = max(1, int(max_joins_per_hour))
         self.campaign_hours = max(1, min(168, int(campaign_hours)))
@@ -259,14 +264,29 @@ class ServiceAPI(
                         strict_method = getattr(
                             type(secret_store), "get_strict_optional", None
                         )
+                        owner_getter = getattr(
+                            database, "get_selected_account_id", None
+                        )
+                        owner = (
+                            int(owner_getter() or 0)
+                            if callable(owner_getter)
+                            else 0
+                        )
+                        target_key = (
+                            account_secret_key(owner, key)
+                            if owner > 0
+                            else key
+                        )
                         if callable(strict_method):
-                            current = secret_store.get_strict_optional(key)
+                            current = secret_store.get_strict_optional(target_key)
                         else:
-                            current = secret_store.get(key, "") or None
+                            current = secret_store.get(target_key, "") or None
                         if current is None:
-                            secret_store.set(key, legacy)
+                            secret_store.set(target_key, legacy)
                             if callable(strict_method):
-                                verified = secret_store.get_strict_optional(key)
+                                verified = secret_store.get_strict_optional(
+                                    target_key
+                                )
                                 if verified != str(legacy):
                                     raise RuntimeError(
                                         f"Protected secret verification failed for {key}"
