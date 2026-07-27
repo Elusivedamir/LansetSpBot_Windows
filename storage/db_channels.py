@@ -34,8 +34,10 @@ class ChannelRepositoryMixin:
                            comment_mode=CASE
                                WHEN channels.local_banned_at IS NOT NULL
                                    THEN channels.comment_mode
-                               WHEN excluded.comment_mode='linked_discussion'
-                                   THEN 'linked_discussion'
+                               WHEN excluded.comment_mode IN (
+                                    'linked_discussion', 'direct_group'
+                                )
+                                   THEN excluded.comment_mode
                                WHEN channels.target_kind=excluded.target_kind
                                    THEN channels.comment_mode
                                ELSE excluded.comment_mode
@@ -55,7 +57,9 @@ class ChannelRepositoryMixin:
                            link_status=CASE
                                WHEN channels.local_banned_at IS NOT NULL
                                    THEN channels.link_status
-                               WHEN excluded.comment_mode='linked_discussion'
+                               WHEN excluded.comment_mode IN (
+                                    'linked_discussion', 'direct_group'
+                                )
                                    THEN excluded.link_status
                                WHEN channels.target_kind=excluded.target_kind
                                    THEN COALESCE(channels.link_status, excluded.link_status)
@@ -517,7 +521,10 @@ class ChannelRepositoryMixin:
                                   negative_status, negative_until, local_ban_reason,
                                   local_ban_peer_id, local_banned_at
                            FROM channels
-                           WHERE account_id=? AND comment_mode='channel_post' AND linked_chat_id IS NOT NULL
+                           WHERE account_id=? AND (
+                                  (comment_mode='channel_post' AND linked_chat_id IS NOT NULL)
+                                  OR (comment_mode='direct_group' AND target_kind='group')
+                              )
                              AND local_banned_at IS NULL
                              AND NOT EXISTS(
                                  SELECT 1 FROM local_ban_targets AS ban
@@ -542,7 +549,10 @@ class ChannelRepositoryMixin:
                                   negative_status, negative_until, local_ban_reason,
                                   local_ban_peer_id, local_banned_at
                            FROM channels
-                           WHERE account_id=? AND comment_mode='channel_post' AND linked_chat_id IS NOT NULL
+                           WHERE account_id=? AND (
+                                  (comment_mode='channel_post' AND linked_chat_id IS NOT NULL)
+                                  OR (comment_mode='direct_group' AND target_kind='group')
+                              )
                              AND local_banned_at IS NULL
                              AND NOT EXISTS(
                                  SELECT 1 FROM local_ban_targets AS ban
@@ -573,7 +583,7 @@ class ChannelRepositoryMixin:
     def count_channels_for_commenting(
         self, *, cooldown_hours=0, account_id=None
     ) -> int:
-        """Count linked channels eligible for one attempt in the current window."""
+        """Count post-comment and standalone-group targets in the current window."""
         modifier = self._comment_cooldown_modifier(cooldown_hours)
         owner_account_id = resolve_account_id(self, account_id)
         try:
@@ -581,7 +591,10 @@ class ChannelRepositoryMixin:
                 if modifier is None:
                     row = conn.execute(
                         """SELECT COUNT(*) AS total FROM channels
-                           WHERE account_id=? AND comment_mode='channel_post' AND linked_chat_id IS NOT NULL
+                           WHERE account_id=? AND (
+                                  (comment_mode='channel_post' AND linked_chat_id IS NOT NULL)
+                                  OR (comment_mode='direct_group' AND target_kind='group')
+                              )
                              AND local_banned_at IS NULL
                              AND NOT EXISTS(
                                  SELECT 1 FROM local_ban_targets AS ban
@@ -594,7 +607,10 @@ class ChannelRepositoryMixin:
                 else:
                     row = conn.execute(
                         """SELECT COUNT(*) AS total FROM channels
-                           WHERE account_id=? AND comment_mode='channel_post' AND linked_chat_id IS NOT NULL
+                           WHERE account_id=? AND (
+                                  (comment_mode='channel_post' AND linked_chat_id IS NOT NULL)
+                                  OR (comment_mode='direct_group' AND target_kind='group')
+                              )
                              AND local_banned_at IS NULL
                              AND NOT EXISTS(
                                  SELECT 1 FROM local_ban_targets AS ban
@@ -1135,7 +1151,7 @@ class ChannelRepositoryMixin:
                         (str(status or ""), owner_account_id, int(group_id)),
                     )
                 else:
-                    mode = "linked_discussion" if is_linked else "pending"
+                    mode = "linked_discussion" if is_linked else "direct_group"
                     cursor = conn.execute(
                         """UPDATE channels
                            SET comment_mode=?,
@@ -1156,11 +1172,11 @@ class ChannelRepositoryMixin:
             ) from exc
 
     def refresh_group_comment_modes(self, *, account_id=None) -> dict[str, int]:
-        """Keep only linked discussions eligible for comment campaigns.
+        """Classify linked discussions and standalone ordinary-group targets.
 
-        Ordinary groups remain visible in the channel list but never become
-        plain-message targets. This makes the legacy ``direct_group`` delivery
-        path unreachable from synchronization and scheduling.
+        Linked discussions remain post-comment routes. Ordinary writable groups
+        become ``direct_group`` targets and receive a standalone message without
+        a post id or reply target.
         """
         try:
             owner_account_id = resolve_account_id(self, account_id)
@@ -1183,12 +1199,15 @@ class ChannelRepositoryMixin:
                               ))""",
                     (owner_account_id,),
                 ).rowcount
-                conn.execute(
+                direct = conn.execute(
                     """UPDATE channels AS group_target
-                       SET comment_mode='pending',
-                           linked_chat_id=NULL,
-                           linked_chat_title=NULL,
-                           link_status='Обычная группа · прямая отправка отключена',
+                       SET comment_mode='direct_group',
+                           linked_chat_id=group_target.channel_id,
+                           linked_chat_title=COALESCE(
+                               group_target.linked_chat_title,
+                               group_target.title
+                           ),
+                           link_status='Обычная группа · сообщение без привязки к посту',
                            last_sync_at=CURRENT_TIMESTAMP
                        WHERE group_target.account_id=?
                          AND group_target.target_kind='group'
@@ -1201,10 +1220,10 @@ class ChannelRepositoryMixin:
                                AND channel_target.linked_chat_id=group_target.channel_id
                          )""",
                     (owner_account_id,),
-                )
+                ).rowcount
             return {
                 "linked_discussion": max(0, int(linked or 0)),
-                "direct_group": 0,
+                "direct_group": max(0, int(direct or 0)),
             }
         except DatabaseError:
             raise
