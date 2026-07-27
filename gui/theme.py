@@ -232,14 +232,32 @@ QCheckBox {
     font-weight: 650;
     color: #E0E2E6;
 }
+/* The switch state is carried by colour alone, so the two states use hues that
+   stay distinguishable rather than two shades of the same grey-blue. */
 QCheckBox::indicator {
     width: 42px;
     height: 22px;
     border-radius: 11px;
-    background: #464B55;
+    background: #B2373F;
+    border: 1px solid #D0555D;
 }
 QCheckBox::indicator:checked {
-    background: #6E84AD;
+    background: #2E9E58;
+    border: 1px solid #45C173;
+}
+QCheckBox::indicator:hover {
+    border: 1px solid #E0767D;
+}
+QCheckBox::indicator:checked:hover {
+    border: 1px solid #63D98D;
+}
+QCheckBox::indicator:disabled {
+    background: #4A3034;
+    border: 1px solid #5C393E;
+}
+QCheckBox::indicator:checked:disabled {
+    background: #2A5740;
+    border: 1px solid #356A4D;
 }
 QPushButton {
     min-height: 42px;
