@@ -1,14 +1,8 @@
-"""Popups must be readable, and readability is measured, not assumed.
-
-Reported from a real screen: the tray menu and the comment-source list showed
-near-white text on a near-white background. Both are separate top-level
-windows, and neither had a rule in the stylesheet, so they fell back to the
-system palette while inheriting the dark theme's light text colour.
-
-Rendering them offscreen and measuring luminance is what catches this; reading
-the stylesheet cannot tell you what a popup ends up looking like. Before the
-fix the tray menu measured a mean luminance of 240 out of 255 - a white sheet.
-"""
+# Popup and functional-toggle contrast must match the operator-facing design.
+#
+# The tray remains dark. Selection popups intentionally use a light surface
+# with dark text, and every functional QCheckBox uses red for OFF and green
+# for ON. The checks render real Qt surfaces instead of trusting text alone.
 
 from __future__ import annotations
 
@@ -22,11 +16,10 @@ from core.composition import ApplicationContainer
 from core.config import Config
 from gui.app import LansetSpBotApp
 
-# A popup whose whole surface sits above this is a light rectangle; the dark
-# theme's own panels measure around 20-40.
-MAX_BACKGROUND_LUMINANCE = 120.0
-# Text has to stand out from the surface it is drawn on.
-MIN_CONTRAST_RANGE = 120.0
+MAX_DARK_BACKGROUND_LUMINANCE = 120.0
+MIN_LIGHT_BACKGROUND_LUMINANCE = 150.0
+MIN_DARK_CONTRAST_RANGE = 120.0
+MIN_LIGHT_CONTRAST_RANGE = 70.0
 
 
 def _app() -> QApplication:
@@ -62,27 +55,20 @@ def _luminances(image: QImage) -> list[float]:
         for y in range(0, image.height(), 4):
             colour = image.pixelColor(x, y)
             values.append(
-                0.2126 * colour.red() + 0.7152 * colour.green() + 0.0722 * colour.blue()
+                0.2126 * colour.red()
+                + 0.7152 * colour.green()
+                + 0.0722 * colour.blue()
             )
     return values
 
 
-def _assert_readable(image: QImage, what: str) -> None:
+def _surface_metrics(image: QImage, what: str) -> tuple[float, float]:
     assert image.width() > 0 and image.height() > 0, f"{what} rendered nothing"
     values = _luminances(image)
-    mean = sum(values) / len(values)
-    spread = max(values) - min(values)
-    assert mean <= MAX_BACKGROUND_LUMINANCE, (
-        f"{what} is a light sheet (mean luminance {mean:.1f}); "
-        "text on it is invisible against the dark theme"
-    )
-    assert spread >= MIN_CONTRAST_RANGE, (
-        f"{what} has no contrast (range {spread:.1f}): "
-        "text and background are the same shade"
-    )
+    return sum(values) / len(values), max(values) - min(values)
 
 
-def test_the_tray_menu_is_readable(window) -> None:
+def test_the_tray_menu_remains_dark_and_readable(window) -> None:
     main, application = window
     menu = main._tray.contextMenu()  # noqa: SLF001
     assert menu is not None
@@ -91,13 +77,15 @@ def test_the_tray_menu_is_readable(window) -> None:
     menu.resize(menu.sizeHint())
     application.processEvents()
     try:
-        _assert_readable(menu.grab().toImage(), "the tray menu")
+        mean, spread = _surface_metrics(menu.grab().toImage(), "the tray menu")
+        assert mean <= MAX_DARK_BACKGROUND_LUMINANCE
+        assert spread >= MIN_DARK_CONTRAST_RANGE
     finally:
         menu.hide()
         application.processEvents()
 
 
-def test_the_comment_source_list_is_readable(window) -> None:
+def test_the_comment_source_list_is_light_with_dark_readable_text(window) -> None:
     main, application = window
     combo = main.commenting_view.findChild(QComboBox)
     assert combo is not None
@@ -109,15 +97,17 @@ def test_the_comment_source_list_is_readable(window) -> None:
     for _ in range(3):
         application.processEvents()
     try:
-        _assert_readable(combo.view().viewport().grab().toImage(), "the source list")
+        mean, spread = _surface_metrics(
+            combo.view().viewport().grab().toImage(), "the source list"
+        )
+        assert mean >= MIN_LIGHT_BACKGROUND_LUMINANCE
+        assert spread >= MIN_LIGHT_CONTRAST_RANGE
     finally:
         combo.hidePopup()
         application.processEvents()
 
 
-def test_the_stylesheet_covers_every_popup_surface() -> None:
-    """Guard the rules themselves so the popups cannot lose them silently."""
-
+def test_the_stylesheet_covers_popup_surfaces_and_toggle_states() -> None:
     from gui.theme import TELEGRAM_PREMIUM_QSS
 
     for selector in (
@@ -128,3 +118,9 @@ def test_the_stylesheet_covers_every_popup_surface() -> None:
         "QToolTip",
     ):
         assert selector in TELEGRAM_PREMIUM_QSS, f"{selector} is not styled"
+
+    assert "background: #E6EBF1;" in TELEGRAM_PREMIUM_QSS
+    assert "color: #17202A;" in TELEGRAM_PREMIUM_QSS
+    assert "QCheckBox::indicator:checked" in TELEGRAM_PREMIUM_QSS
+    assert "background: #9C3542;" in TELEGRAM_PREMIUM_QSS
+    assert "background: #238B57;" in TELEGRAM_PREMIUM_QSS

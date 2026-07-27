@@ -167,24 +167,27 @@ QComboBox::drop-down {
    text on a near-white background: the combo box list and the tray menu were
    effectively unreadable. */
 QComboBox QAbstractItemView {
-    background: #15171B;
-    border: 1px solid #343942;
+    background: #E6EBF1;
+    border: 1px solid #AAB5C2;
     border-radius: 10px;
     padding: 4px;
-    color: #F7FAFD;
+    color: #17202A;
     outline: none;
-    selection-background-color: #2A3550;
-    selection-color: #FFFFFF;
+    selection-background-color: #C3CFDC;
+    selection-color: #101820;
 }
 QComboBox QAbstractItemView::item {
     min-height: 28px;
     padding: 4px 10px;
-    color: #F7FAFD;
+    color: #17202A;
 }
 QComboBox QAbstractItemView::item:selected,
 QComboBox QAbstractItemView::item:hover {
-    background: #2A3550;
-    color: #FFFFFF;
+    background: #C3CFDC;
+    color: #101820;
+}
+QComboBox QAbstractItemView::item:disabled {
+    color: #7A8490;
 }
 QMenu {
     background: #15171B;
@@ -236,10 +239,24 @@ QCheckBox::indicator {
     width: 42px;
     height: 22px;
     border-radius: 11px;
-    background: #464B55;
+    background: #9C3542;
+    border: 1px solid #E96674;
+}
+QCheckBox::indicator:unchecked:hover {
+    background: #B23E4C;
+    border: 1px solid #FF7B87;
 }
 QCheckBox::indicator:checked {
-    background: #6E84AD;
+    background: #238B57;
+    border: 1px solid #65D69A;
+}
+QCheckBox::indicator:checked:hover {
+    background: #2AA868;
+    border: 1px solid #78E8AF;
+}
+QCheckBox::indicator:disabled {
+    background: #4A4E55;
+    border: 1px solid #676C75;
 }
 QPushButton {
     min-height: 42px;

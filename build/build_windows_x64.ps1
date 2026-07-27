@@ -64,6 +64,34 @@ if (-not $SkipTests) {
 Get-ChildItem -LiteralPath $ProjectRoot -Directory -Recurse -Filter "__pycache__" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath ".pytest_cache", ".mypy_cache", ".ruff_cache", ".coverage", "coverage.json" -Recurse -Force -ErrorAction SilentlyContinue
 
+# The guide images are release assets, not manually maintained screenshots.
+# Refresh them from the real current widgets after PySide6 is installed and
+# before tests, manifest validation or PyInstaller can package stale PNG files.
+Write-Host "[LansetSpBot build] Refreshing instruction screenshots..." -ForegroundColor Cyan
+$OldInstructionQt = [Environment]::GetEnvironmentVariable("QT_QPA_PLATFORM", "Process")
+try {
+    $env:QT_QPA_PLATFORM = "offscreen"
+    & $BuildPython tools\capture_instruction_screenshots.py
+    if ($LASTEXITCODE -ne 0) {
+        throw "Instruction screenshot regeneration failed."
+    }
+}
+finally {
+    if ($null -eq $OldInstructionQt) {
+        Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:QT_QPA_PLATFORM = $OldInstructionQt
+    }
+}
+
+# Screenshot bytes are part of SHA256SUMS.txt. Refresh the manifest immediately,
+# so the following tests validate the exact assets that will be packaged.
+& $BuildPython tools\generate_manifest.py
+if ($LASTEXITCODE -ne 0) {
+    throw "Manifest regeneration after instruction screenshots failed."
+}
+
 if (-not $SkipTests) {
     $env:QT_QPA_PLATFORM = "offscreen"
     # Run under coverage using only locked dev dependencies: the hash-locked
