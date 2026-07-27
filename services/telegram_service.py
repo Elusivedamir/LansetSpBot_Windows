@@ -8,6 +8,7 @@ from telethon import connection
 
 from core.version import APP_NAME, __version__
 from services.paced_telegram_client import PacedTelegramClient
+from services.account_sessions import session_base, validate_session_name
 from services.telegram import (
     LatestPostResult,
     TelegramDialogsMixin,
@@ -44,9 +45,13 @@ class TelegramService(
     ):
         self.settings = settings
         self.limiter = limiter
+        self.account_id = int(getattr(settings, "account_id", 0) or 0)
         settings.session_dir.mkdir(parents=True, exist_ok=True)
-        session_base = settings.session_dir / "main"
-        session_file = session_base.with_suffix(".session")
+        session_name = validate_session_name(
+            getattr(settings, "session_name", "main")
+        )
+        telegram_session_base = session_base(settings.session_dir, session_name)
+        session_file = telegram_session_base.with_suffix(".session")
         # Session copies are never kept; remove any left by an older version.
         self.purge_session_backups(session_file)
         self._prepare_session_file(session_file)
@@ -65,7 +70,7 @@ class TelegramService(
                     category=UserWarning,
                     module=r"telethon\.client\.telegrambaseclient",
                 )
-            encrypted_session = EncryptedSQLiteSession(session_base)
+            encrypted_session = EncryptedSQLiteSession(telegram_session_base)
             self.client = PacedTelegramClient(
                 encrypted_session,
                 settings.api_id,
@@ -86,7 +91,7 @@ class TelegramService(
                 request_limiter=limiter,
                 request_timeout=30.0,
             )
-        self._secure_session_file(session_base.with_suffix(".session"))
+        self._secure_session_file(telegram_session_base.with_suffix(".session"))
         self._connected = False
         self._last_authorization_check = 0.0
         self._status_callback = status_callback

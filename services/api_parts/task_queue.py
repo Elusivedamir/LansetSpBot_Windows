@@ -74,7 +74,9 @@ class TaskQueueAPIMixin(_MixinHost):
 
     def get_comment_daily_limit(self) -> int:
         """Return the locally persisted GUI limit in the inclusive 0-1000 range."""
-        raw = self.database.get_setting(
+        owner = int(self.get_current_account_id() or 0)
+        database = self.database.for_account(owner) if owner > 0 else self.database
+        raw = database.get_setting(
             self.COMMENT_DAILY_LIMIT_SETTING, self.max_channels_per_run
         )
         try:
@@ -98,12 +100,16 @@ class TaskQueueAPIMixin(_MixinHost):
                 "Количество комментариев должно быть целым числом"
             ) from exc
         normalized = max(0, min(1000, normalized))
-        if self.database.get_active_comment_campaign():
+        owner = int(self.get_current_account_id() or 0)
+        if owner <= 0:
+            raise ValueError("Сначала выберите Telegram-аккаунт")
+        database = self.database.for_account(owner)
+        if database.get_active_comment_campaign(account_id=owner):
             raise ValueError(
                 "Лимит нельзя менять во время активной кампании. "
                 "Остановите её и задайте значение перед новым запуском"
             )
-        self.database.set_setting(self.COMMENT_DAILY_LIMIT_SETTING, normalized)
+        database.set_setting(self.COMMENT_DAILY_LIMIT_SETTING, normalized)
         return normalized
 
     def create_task(
@@ -149,18 +155,18 @@ class TaskQueueAPIMixin(_MixinHost):
             if not (isinstance(files, dict) and files) and not single:
                 raise ValueError("import requires non-empty files object or kind/path")
         if task_type in self.ACCOUNT_BOUND_TASK_TYPES:
-            if self._auth_in_progress:
-                raise ValueError(
-                    "Нельзя создавать Telegram-задачи во время смены аккаунта"
-                )
             try:
-                account_id = int(
-                    self.database.get_setting("telegram.account_id", 0) or 0
-                )
+                requested = int(payload.get("account_id") or 0)
+                selected = int(self.get_current_account_id() or 0)
+                account_id = requested or selected
             except (TypeError, ValueError, OverflowError) as exc:
                 raise ValueError("Некорректный Telegram-аккаунт") from exc
             if account_id <= 0:
                 raise ValueError("Сначала авторизуйте Telegram-аккаунт")
+            if not self.database.account_accepts_new_work(account_id):
+                raise ValueError(
+                    "Работа выбранного аккаунта остановлена или ограничена"
+                )
             payload["account_id"] = account_id
         effective_retries = (
             0 if task_type in self.NON_IDEMPOTENT_TASK_TYPES else max_retries
@@ -261,12 +267,8 @@ class TaskQueueAPIMixin(_MixinHost):
             return "shutdown_in_progress"
         if self._secret_migration_required.is_set():
             return "local_secret_migration"
-        if has_pending_account_state(self.database.path):
-            return "account_state_pending"
-        if self._auth_in_progress:
-            return "auth_in_progress"
-        if get_account_restriction_state(self.database).get("active"):
-            return "account_restricted"
+        # Authorization and Telegram restrictions are account-scoped.
+        # They must not stop the shared worker from serving other accounts.
         return None
 
     def get_queue_unavailable_reason(self) -> str | None:

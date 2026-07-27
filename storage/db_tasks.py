@@ -46,13 +46,22 @@ class TaskRepositoryMixin:
                 ) from exc
             if max_retries < 0:
                 raise DatabaseError("max_retries must be a non-negative integer")
+            payload_json = self._validated_payload_json(payload)
+            decoded = self._decode_task_payload(payload)
+            try:
+                account_id = max(0, int(decoded.get("account_id") or 0))
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise DatabaseError("Task account_id must be an integer") from exc
             with self.get_connection() as conn:
                 cursor = conn.execute(
-                    """INSERT INTO tasks(type, payload, status, max_retries, created_at, updated_at)
-                       VALUES(?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+                    """INSERT INTO tasks(
+                           account_id, type, payload, status, max_retries,
+                           created_at, updated_at)
+                       VALUES(?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
                     (
+                        account_id,
                         task_type.strip(),
-                        self._validated_payload_json(payload),
+                        payload_json,
                         "pending",
                         max_retries,
                     ),
@@ -69,6 +78,8 @@ class TaskRepositoryMixin:
         owner_account_id = max(0, int(account_id or 0))
         if owner_account_id <= 0:
             raise DatabaseError("link task requires a positive account_id")
+        payload = dict(payload or {})
+        payload["account_id"] = owner_account_id
         payload_json = self._validated_payload_json(payload)
         conn = None
         try:
@@ -82,88 +93,76 @@ class TaskRepositoryMixin:
             conn.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("BEGIN IMMEDIATE")
-            rows = conn.execute(
-                """SELECT id, type, payload, status, progress, status_text, error,
-                          retry_count, max_retries, defer_count, first_deferred_at,
-                          last_deferred_at, not_before, created_at, updated_at
+            row = conn.execute(
+                """SELECT id, account_id, type, payload, status, progress,
+                          status_text, error, retry_count, max_retries,
+                          defer_count, first_deferred_at, last_deferred_at,
+                          not_before, created_at, updated_at
                    FROM tasks
-                   WHERE type='link_channels'
+                   WHERE account_id=? AND type='link_channels'
                      AND status IN ('pending','running','processing','paused')
-                   ORDER BY id ASC"""
-            ).fetchall()
-            for row in rows:
-                try:
-                    decoded = json.loads(row["payload"] or "{}")
-                    row_account_id = int(decoded.get("account_id") or 0)
-                except (TypeError, ValueError, OverflowError, json.JSONDecodeError):
-                    continue
-                if row_account_id == owner_account_id:
-                    conn.execute("COMMIT")
-                    return dict(row), False
-
+                   ORDER BY id ASC LIMIT 1""",
+                (owner_account_id,),
+            ).fetchone()
+            if row is not None:
+                conn.execute("COMMIT")
+                return dict(row), False
             cursor = conn.execute(
-                """INSERT INTO tasks(type, payload, status, max_retries, created_at, updated_at)
-                   VALUES('link_channels', ?, 'pending', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-                (payload_json, max(0, int(max_retries))),
+                """INSERT INTO tasks(
+                       account_id, type, payload, status, max_retries,
+                       created_at, updated_at)
+                   VALUES(?, 'link_channels', ?, 'pending', ?,
+                          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+                (owner_account_id, payload_json, max(0, int(max_retries))),
             )
             task_id = int(cursor.lastrowid or 0)
-            if task_id <= 0:
-                raise DatabaseError("SQLite did not return a link task id")
             row = conn.execute(
-                """SELECT id, type, payload, status, progress, status_text, error,
-                          retry_count, max_retries, defer_count, first_deferred_at,
-                          last_deferred_at, not_before, created_at, updated_at
+                """SELECT id, account_id, type, payload, status, progress,
+                          status_text, error, retry_count, max_retries,
+                          defer_count, first_deferred_at, last_deferred_at,
+                          not_before, created_at, updated_at
                    FROM tasks WHERE id=?""",
                 (task_id,),
             ).fetchone()
             conn.execute("COMMIT")
-            log.info("Link task created: %s for account %s", task_id, owner_account_id)
             return dict(row), True
-        except DatabaseError:
-            if conn is not None:
-                try:
-                    conn.execute("ROLLBACK")
-                except sqlite3.Error:
-                    pass
-            raise
         except Exception as exc:
             if conn is not None:
                 try:
                     conn.execute("ROLLBACK")
                 except sqlite3.Error:
                     pass
+            if isinstance(exc, DatabaseError):
+                raise
             raise DatabaseError(f"Failed to create or reuse link task: {exc}") from exc
         finally:
             if conn is not None:
                 conn.close()
 
     def get_active_link_task(self, *, account_id=None):
-        """Return the sole pending/running/paused link task for one account."""
+        """Return the sole active link task for one account."""
         try:
             if account_id is None:
                 account_id = self.get_setting("telegram.account_id", 0)
             owner_account_id = max(0, int(account_id or 0))
+            if owner_account_id <= 0:
+                return None
             with self.get_connection() as conn:
-                rows = conn.execute(
-                    """SELECT id, type, payload, status, progress, status_text, error,
-                              retry_count, max_retries, defer_count, first_deferred_at,
-                              last_deferred_at, not_before, created_at, updated_at
+                row = conn.execute(
+                    """SELECT id, account_id, type, payload, status, progress,
+                              status_text, error, retry_count, max_retries,
+                              defer_count, first_deferred_at, last_deferred_at,
+                              not_before, created_at, updated_at
                        FROM tasks
-                       WHERE type='link_channels'
+                       WHERE account_id=? AND type='link_channels'
                          AND status IN ('pending','running','processing','paused')
-                       ORDER BY progress DESC, id ASC"""
-                ).fetchall()
-            for row in rows:
-                try:
-                    decoded = json.loads(row["payload"] or "{}")
-                    if int(decoded.get("account_id") or 0) == owner_account_id:
-                        return dict(row)
-                except (TypeError, ValueError, OverflowError, json.JSONDecodeError):
-                    continue
-            return None
-        except DatabaseError:
-            raise
+                       ORDER BY progress DESC, id ASC LIMIT 1""",
+                    (owner_account_id,),
+                ).fetchone()
+                return dict(row) if row else None
         except Exception as exc:
+            if isinstance(exc, DatabaseError):
+                raise
             raise DatabaseError(f"Failed to read active link task: {exc}") from exc
 
     @staticmethod
@@ -634,13 +633,9 @@ class TaskRepositoryMixin:
         except Exception as e:
             raise DatabaseError(f"Failed to get pending tasks: {e}") from e
 
-    def claim_next_pending_task(self):
-        """Atomically claim and return the oldest pending task.
-
-        BEGIN IMMEDIATE serializes competing workers before the SELECT. The
-        conditional UPDATE is an additional guard, so one task cannot be
-        returned to two workers even if several processes share the database.
-        """
+    def claim_next_pending_task(self, excluded_account_ids=()):
+        """Claim the oldest due task not owned by a currently active account."""
+        excluded = sorted({max(0, int(value)) for value in excluded_account_ids})
         conn = None
         started = time.monotonic()
         outcome = "error"
@@ -655,107 +650,79 @@ class TaskRepositoryMixin:
             conn.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("BEGIN IMMEDIATE")
-
             while True:
+                exclusion_sql = ""
+                parameters = []
+                if excluded:
+                    placeholders = ",".join("?" for _ in excluded)
+                    exclusion_sql = f" AND account_id NOT IN ({placeholders})"
+                    parameters.extend(excluded)
                 row = conn.execute(
-                    """SELECT id, type, payload, status, progress, retry_count, max_retries, defer_count
-                       FROM tasks
-                       WHERE status = 'pending'
-                         AND (not_before IS NULL OR not_before <= CURRENT_TIMESTAMP)
-                       ORDER BY created_at ASC, id ASC
-                       LIMIT 1"""
+                    f"""SELECT id, account_id, type, payload, status, progress,
+                               retry_count, max_retries, defer_count
+                        FROM tasks
+                        WHERE status='pending'
+                          AND (not_before IS NULL OR not_before<=CURRENT_TIMESTAMP)
+                          {exclusion_sql}
+                        ORDER BY created_at ASC, id ASC
+                        LIMIT 1""",
+                    tuple(parameters),
                 ).fetchone()
-
                 if row is None:
                     conn.execute("COMMIT")
                     outcome = "empty"
                     return None
-
                 claimed = dict(row)
-                payload = claimed.get("payload")
                 try:
-                    decoded = (
-                        json.loads(payload) if isinstance(payload, str) else payload
-                    )
-                    if decoded is None:
-                        decoded = {}
+                    decoded = json.loads(claimed.get("payload") or "{}")
                     if not isinstance(decoded, dict):
                         raise ValueError("task payload must be a JSON object")
-                except (json.JSONDecodeError, ValueError, TypeError) as exc:
+                    column_account = max(0, int(claimed.get("account_id") or 0))
+                    payload_account = max(0, int(decoded.get("account_id") or 0))
+                    if column_account and payload_account and column_account != payload_account:
+                        raise ValueError("task account column does not match payload")
+                    account_id = column_account or payload_account
+                except (json.JSONDecodeError, TypeError, ValueError) as exc:
                     conn.execute(
-                        """UPDATE tasks
-                           SET status='failed', error=?, updated_at=CURRENT_TIMESTAMP
+                        """UPDATE tasks SET status='failed', error=?,
+                                  updated_at=CURRENT_TIMESTAMP
                            WHERE id=? AND status='pending'""",
                         (f"Invalid task payload: {exc}", claimed["id"]),
                     )
-                    log.error("Task %s has invalid payload: %s", claimed["id"], exc)
-                    # Continue inside the same writer transaction so a corrupt
-                    # oldest row cannot make the worker falsely report an empty queue.
                     continue
-
                 cursor = conn.execute(
                     """UPDATE tasks
-                       SET status = 'running', not_before = NULL, updated_at = CURRENT_TIMESTAMP
-                       WHERE id = ? AND status = 'pending'
-                         AND (not_before IS NULL OR not_before <= CURRENT_TIMESTAMP)""",
-                    (claimed["id"],),
+                       SET account_id=?, status='running', not_before=NULL,
+                           updated_at=CURRENT_TIMESTAMP
+                       WHERE id=? AND status='pending'
+                         AND (not_before IS NULL OR not_before<=CURRENT_TIMESTAMP)""",
+                    (account_id, claimed["id"]),
                 )
                 if cursor.rowcount != 1:
                     continue
-
+                claimed["account_id"] = account_id
                 claimed["payload"] = decoded
                 claimed["status"] = "running"
                 conn.execute("COMMIT")
-                log.debug("Task %s claimed atomically", claimed["id"])
                 outcome = "claimed"
                 return claimed
-        except sqlite3.Error as e:
+        except sqlite3.Error as exc:
             if conn is not None:
                 try:
                     conn.execute("ROLLBACK")
                 except sqlite3.Error:
                     pass
-            log.error("Failed to claim pending task: %s", e)
-            raise DatabaseError(f"Failed to claim pending task: {e}") from e
+            raise DatabaseError(f"Failed to atomically claim task: {exc}") from exc
         finally:
             if conn is not None:
                 conn.close()
             log_if_slow(
                 log,
-                "claim_next_pending_task",
+                "sqlite_claim_next_task",
                 started,
-                threshold_seconds=0.3,
+                threshold_seconds=0.5,
                 outcome=outcome,
             )
-
-    def seconds_until_next_pending_task(self) -> float | None:
-        """Return seconds until the next pending task is due, or ``None``.
-
-        This read-only helper lets the persistent queue worker sleep on an event
-        instead of opening a writer transaction every 250 ms.  A task without a
-        ``not_before`` deadline is due immediately and therefore returns ``0``.
-        """
-
-        try:
-            with self.get_connection() as conn:
-                row = conn.execute(
-                    """SELECT COUNT(*) AS pending_count,
-                              MAX(0.0, MIN(
-                                  (julianday(COALESCE(not_before, CURRENT_TIMESTAMP))
-                                   - julianday(CURRENT_TIMESTAMP)) * 86400.0
-                              )) AS seconds_until_due
-                       FROM tasks
-                       WHERE status='pending'"""
-                ).fetchone()
-            if row is None or int(row["pending_count"] or 0) <= 0:
-                return None
-            return max(0.0, float(row["seconds_until_due"] or 0.0))
-        except DatabaseError:
-            raise
-        except Exception as exc:
-            raise DatabaseError(
-                f"Failed to read next pending task deadline: {exc}"
-            ) from exc
 
     def get_tasks(self, status=None, limit=50):
         """Get tasks by status."""

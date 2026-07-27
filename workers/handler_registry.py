@@ -149,6 +149,7 @@ def create_worker_handlers(
             "sync_saved_dialogs": telegram_not_configured,
             "join_saved_slot": telegram_not_configured,
             "openai_test": openai_test,
+        "telegram_health": telegram_health,
         }, None
 
     limiter = RateLimiter(self.config.rate_limit)
@@ -485,6 +486,36 @@ def create_worker_handlers(
             "Пакетный режим отключён. Используйте суточную кампанию в GUI.",
             code="legacy_batch_disabled",
         )
+
+    async def telegram_health(_task: dict[str, Any]) -> dict[str, Any]:
+        await telegram.connect()
+        client = getattr(telegram, "client", None)
+        if client is None:
+            raise NonRetryableTelegramError(
+                "Telegram client is unavailable", code="handler_missing"
+            )
+        if not await client.is_user_authorized():
+            raise NonRetryableTelegramError(
+                "Telegram session requires authorization",
+                code="authorization_required",
+            )
+        me = await client.get_me()
+        actual_id = int(getattr(me, "id", 0) or 0)
+        expected_id = int(getattr(telegram, "account_id", 0) or 0)
+        if actual_id <= 0 or (expected_id > 0 and actual_id != expected_id):
+            raise NonRetryableTelegramError(
+                "Telegram session belongs to another account",
+                code="account_state_mismatch",
+                details={
+                    "expected_account_id": expected_id,
+                    "actual_account_id": actual_id,
+                },
+            )
+        return {
+            "account_id": actual_id,
+            "authorized": True,
+            "connected": True,
+        }
 
     handlers = {
         "noop": noop,

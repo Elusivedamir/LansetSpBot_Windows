@@ -26,6 +26,12 @@ class AccountRestrictionAPIMixin(_MixinHost):
         No text scraping is used because @SpamBot wording may be localized or
         changed by Telegram, and a false positive would silently restart sends.
         """
-        return clear_account_restriction_after_spambot_confirmation(
+        result = clear_account_restriction_after_spambot_confirmation(
             self.database, account_id=account_id
         )
+        owner = int(account_id or self.get_current_account_id() or 0)
+        if result and owner > 0:
+            account = self.database.get_telegram_account(owner)
+            if account and not bool(account.get("stopped")):
+                self.database.set_account_runtime_state(owner, "connected")
+        return result

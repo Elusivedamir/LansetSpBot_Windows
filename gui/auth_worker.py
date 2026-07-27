@@ -27,6 +27,7 @@ from core.version import APP_NAME, __version__
 from services.encrypted_telethon_session import EncryptedSQLiteSession
 from services.paced_telegram_client import PacedTelegramClient as TelegramClient
 from services.telegram_service import TelegramService
+from services.account_sessions import session_base, validate_session_name
 from services.mtproxy_faketls import ConnectionTcpMTProxyFakeTLS
 
 log = logging.getLogger(__name__)
@@ -60,6 +61,8 @@ class TelegramAuthWorker(QThread):
         settings: dict,
         session_dir: Path,
         database_path: Path | None = None,
+        session_name: str = "main",
+        persist_state: bool = True,
         code: str = "",
         phone_code_hash: str = "",
         password: str = "",
@@ -70,6 +73,8 @@ class TelegramAuthWorker(QThread):
         self.settings = dict(settings)
         self.session_dir = Path(session_dir)
         self.database_path = Path(database_path) if database_path is not None else None
+        self.session_name = validate_session_name(session_name)
+        self.persist_state = bool(persist_state)
         self.code = code.strip()
         self.phone_code_hash = phone_code_hash
         self.password = password
@@ -230,6 +235,9 @@ class TelegramAuthWorker(QThread):
             "Сохранённая сессия не удалена; повторите проверку позже."
         ) from last_error
 
+    def _session_base(self) -> Path:
+        return session_base(self.session_dir, self.session_name)
+
     def _proxy_settings(self):
         return SimpleNamespace(
             proxy_enabled=str(self.settings.get("telegram.proxy_enabled", "0")).lower()
@@ -257,7 +265,7 @@ class TelegramAuthWorker(QThread):
         # Authorization uses the same SQLite session as the queue worker. Repair
         # or quarantine corruption before Telethon opens it, otherwise the auth
         # thread can fail before the user is able to sign in again.
-        session_file = (self.session_dir / "main").with_suffix(".session")
+        session_file = self._session_base().with_suffix(".session")
         TelegramService.purge_session_backups(session_file)
         TelegramService._prepare_session_file(session_file)
         proxy_settings = self._proxy_settings()
@@ -273,7 +281,7 @@ class TelegramAuthWorker(QThread):
                     category=UserWarning,
                     module=r"telethon\.client\.telegrambaseclient",
                 )
-            encrypted_session = EncryptedSQLiteSession(self.session_dir / "main")
+            encrypted_session = EncryptedSQLiteSession(self._session_base())
             client = TelegramClient(
                 encrypted_session,
                 api_id,
@@ -305,7 +313,7 @@ class TelegramAuthWorker(QThread):
                 if client.is_connected():
                     await self._await_interruptible(client.disconnect(), timeout=5.0)
                 TelegramService.purge_session_artifacts(
-                    (self.session_dir / "main").with_suffix(".session")
+                    self._session_base().with_suffix(".session")
                 )
                 if not self.isInterruptionRequested():
                     account: dict[str, Any] = {
@@ -357,7 +365,7 @@ class TelegramAuthWorker(QThread):
                     await asyncio.wait_for(client.disconnect(), timeout=5.0)
 
     def _persist_account_state(self, account: dict) -> None:
-        if self.database_path is None:
+        if not self.persist_state or self.database_path is None:
             return
         account_id = account.get("id")
         values = {
@@ -371,7 +379,7 @@ class TelegramAuthWorker(QThread):
     async def _emit_me(self, client: TelegramClient) -> None:
         me = await self._with_transient_retries(client.get_me)
         TelegramService._secure_session_file(
-            (self.session_dir / "main").with_suffix(".session")
+            self._session_base().with_suffix(".session")
         )
         if self.isInterruptionRequested():
             raise asyncio.CancelledError
@@ -383,6 +391,7 @@ class TelegramAuthWorker(QThread):
             or "Telegram Account",
             "username": getattr(me, "username", None),
             "phone": getattr(me, "phone", None),
+            "_session_name": self.session_name,
         }
         self._persist_account_state(account)
         account["_persisted"] = self.database_path is not None

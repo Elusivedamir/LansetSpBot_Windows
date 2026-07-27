@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from PySide6.QtCore import QTimer, Slot
 
 from core.account_state import has_pending_account_state
+from services.multiaccount_scheduler import run_multiaccount_campaign_tick
 from core.account_restriction import get_account_restriction_state
 from core.campaign_schedule import from_db_time, local_display, utc_now
 from core.config import MAX_COMMENT_VARIANTS
@@ -341,12 +342,10 @@ class CommentCampaignAPIMixin(_MixinHost):
                 )
                 self._secret_migration_thread.start()
             return
-        if self._auth_in_progress or has_pending_account_state(self.database.path):
-            return
-        if get_account_restriction_state(self.database).get("active"):
+        if has_pending_account_state(self.database.path):
             return
         try:
-            self._campaign_tick_once()
+            run_multiaccount_campaign_tick(self)
         except Exception as exc:
             self._scheduler_failures += 1
             log.exception("Persistent campaign scheduler failed")

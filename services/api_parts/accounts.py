@@ -1,0 +1,377 @@
+from __future__ import annotations
+
+import re
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from core.config import MAX_COMMENT_VARIANTS
+from services.account_context import (
+    SECRET_SETTING_KEYS,
+    account_secret_key,
+)
+from services.account_sessions import (
+    discard_pending_session,
+    finalize_pending_session,
+    rollback_finalized_session,
+    validate_session_name,
+)
+from storage.db_common import DatabaseError
+
+if TYPE_CHECKING:  # pragma: no cover
+    from core.mixin_host import MixinHost as _MixinHost
+else:
+    class _MixinHost:
+        pass
+
+
+PENDING_SESSION_RE = re.compile(r"^pending_[a-f0-9]{16,64}$")
+
+
+class AccountsAPIMixin(_MixinHost):
+    MAX_TELEGRAM_ACCOUNTS = 5
+
+    def list_telegram_accounts(self) -> list[dict[str, Any]]:
+        return self.database.list_telegram_accounts()
+
+    def get_selected_account_id(self) -> int:
+        return int(self.database.get_selected_account_id() or 0)
+
+    def get_previous_selected_account_id(self) -> int:
+        return int(self.database.get_previous_selected_account_id() or 0)
+
+    def can_add_telegram_account(self) -> dict[str, Any]:
+        count = int(self.database.count_telegram_accounts())
+        return {
+            "count": count,
+            "limit": self.MAX_TELEGRAM_ACCOUNTS,
+            "allowed": count < self.MAX_TELEGRAM_ACCOUNTS,
+            "message": (
+                ""
+                if count < self.MAX_TELEGRAM_ACCOUNTS
+                else "Достигнут лимит: можно подключить не более 5 Telegram-аккаунтов."
+            ),
+        }
+
+    def select_telegram_account(self, account_id: int) -> dict[str, Any]:
+        result = self.database.select_telegram_account(account_id)
+        # Account-scoped values are authoritative. The compatibility mirror in
+        # settings is updated by the repository for older GUI/service methods.
+        return result
+
+    def _strict_account_secret(
+        self, account_id: int, key: str
+    ) -> str | None:
+        namespaced = account_secret_key(account_id, key)
+        getter = getattr(type(self.secret_store), "get_strict_optional", None)
+        if callable(getter):
+            value = self.secret_store.get_strict_optional(namespaced)
+        else:
+            value = self.secret_store.get(namespaced, "") or None
+        return None if value in (None, "") else str(value)
+
+    def _set_account_secret(
+        self, account_id: int, key: str, value: object
+    ) -> None:
+        self.secret_store.set(
+            account_secret_key(account_id, key),
+            None if value in (None, "") else str(value),
+        )
+
+    def get_account_settings(
+        self, account_id: int | None = None
+    ) -> dict[str, Any]:
+        owner = int(account_id or self.get_selected_account_id() or 0)
+        if owner <= 0:
+            return {}
+        account = self.database.get_telegram_account(owner)
+        if not account:
+            return {}
+        values = self.database.get_account_settings(owner)
+        values.update(
+            {
+                "telegram.account_id": str(owner),
+                "telegram.account_name": str(
+                    account.get("display_name") or "Telegram Account"
+                ),
+                "telegram.account_username": str(account.get("username") or ""),
+                "telegram.authorized": "1" if account.get("authorized") else "0",
+                "telegram.session_name": str(account.get("session_name") or ""),
+                "telegram.runtime_state": str(
+                    account.get("runtime_state") or "disconnected"
+                ),
+            }
+        )
+        with self._secret_lock:
+            for key in SECRET_SETTING_KEYS:
+                value = self._strict_account_secret(owner, key)
+                if value:
+                    values[key] = value
+        return values
+
+    def save_account_settings(
+        self,
+        values: dict[str, Any],
+        *,
+        account_id: int | None = None,
+    ) -> None:
+        owner = int(account_id or self.get_selected_account_id() or 0)
+        if owner <= 0:
+            raise ValueError("Сначала выберите Telegram-аккаунт")
+        if not self.database.get_telegram_account(owner):
+            raise ValueError("Telegram-аккаунт не найден")
+        public = dict(values)
+        secret_updates = {
+            key: public.pop(key)
+            for key in SECRET_SETTING_KEYS
+            if key in public
+        }
+        for key in (
+            "telegram.account_id",
+            "telegram.account_name",
+            "telegram.account_username",
+            "telegram.authorized",
+            "telegram.session_name",
+            "telegram.runtime_state",
+        ):
+            public.pop(key, None)
+        with self._secret_lock:
+            snapshots = {
+                key: self._strict_account_secret(owner, key)
+                for key in secret_updates
+            }
+            touched: list[str] = []
+            try:
+                for key, value in secret_updates.items():
+                    touched.append(key)
+                    self._set_account_secret(owner, key, value)
+                if public:
+                    self.database.set_account_settings(owner, public)
+                if owner == self.get_selected_account_id():
+                    # Preserve compatibility for current GUI methods while all
+                    # worker handlers use AccountDatabaseView.
+                    self.database.set_settings(public)
+            except BaseException:
+                for key in reversed(touched):
+                    self._set_account_secret(owner, key, snapshots[key])
+                raise
+
+    def register_authorized_account(
+        self,
+        account: dict[str, Any],
+        settings: dict[str, Any],
+        *,
+        pending_session_name: str,
+    ) -> dict[str, Any]:
+        telegram_id = int(account.get("id") or 0)
+        if telegram_id <= 0:
+            raise ValueError("Telegram не вернул корректный account ID")
+        pending = validate_session_name(pending_session_name)
+        if not PENDING_SESSION_RE.fullmatch(pending):
+            raise ValueError("Новый аккаунт должен использовать временную сессию")
+        check = self.can_add_telegram_account()
+        existing = self.database.get_telegram_account(telegram_id)
+        if not existing and not bool(check["allowed"]):
+            discard_pending_session(
+                self.config.telegram.session_dir, pending
+            )
+            raise ValueError(str(check["message"]))
+        if existing:
+            discard_pending_session(
+                self.config.telegram.session_dir, pending
+            )
+            selected = self.database.select_telegram_account(telegram_id)
+            selected["created"] = False
+            selected["duplicate"] = True
+            return selected
+
+        final_name = f"account_{telegram_id}"
+        moved = False
+        if pending != final_name:
+            final_name = finalize_pending_session(
+                self.database,
+                self.config.telegram.session_dir,
+                pending_session_name=pending,
+                telegram_account_id=telegram_id,
+            )
+            moved = True
+
+        public = dict(settings)
+        secrets = {
+            key: public.pop(key)
+            for key in SECRET_SETTING_KEYS
+            if key in public
+        }
+        created = False
+        try:
+            row, created = self.database.register_telegram_account(
+                telegram_account_id=telegram_id,
+                session_name=final_name,
+                display_name=str(account.get("name") or "Telegram Account"),
+                username=(
+                    str(account.get("username") or "").strip() or None
+                ),
+                phone=str(account.get("phone") or ""),
+                authorized=True,
+            )
+            self.database.update_account_session_name(telegram_id, final_name)
+            for identity_key in (
+                "telegram.account_id",
+                "telegram.account_name",
+                "telegram.account_username",
+                "telegram.authorized",
+            ):
+                public.pop(identity_key, None)
+            self.database.set_account_settings(telegram_id, public)
+            with self._secret_lock:
+                for key, value in secrets.items():
+                    self._set_account_secret(telegram_id, key, value)
+            selected = self.database.select_telegram_account(telegram_id)
+            selected["created"] = created
+            return selected
+        except BaseException:
+            if created:
+                self.database.rollback_new_telegram_account(
+                    telegram_id, expected_session_name=final_name
+                )
+            with self._secret_lock:
+                for key in secrets:
+                    self._set_account_secret(telegram_id, key, None)
+            if moved:
+                rollback_finalized_session(
+                    self.config.telegram.session_dir,
+                    pending_session_name=pending,
+                    telegram_account_id=telegram_id,
+                )
+            discard_pending_session(
+                self.config.telegram.session_dir, pending
+            )
+            raise
+
+    def update_authorized_account_metadata(
+        self, account: dict[str, Any]
+    ) -> dict[str, Any]:
+        telegram_id = int(account.get("id") or 0)
+        existing = self.database.get_telegram_account(telegram_id)
+        if not existing:
+            raise ValueError("Telegram-аккаунт не зарегистрирован")
+        row, _created = self.database.register_telegram_account(
+            telegram_account_id=telegram_id,
+            session_name=str(existing["session_name"]),
+            display_name=str(account.get("name") or existing["display_name"]),
+            username=str(account.get("username") or "").strip() or None,
+            phone=str(account.get("phone") or ""),
+            authorized=True,
+        )
+        return row
+
+    def stop_telegram_account(
+        self, account_id: int, *, timeout_seconds: float = 20.0
+    ) -> dict[str, Any]:
+        owner = int(account_id)
+        if owner <= 0:
+            raise ValueError("Некорректный Telegram-аккаунт")
+        worker = self.queue_worker
+        scopes = [("account", owner)]
+
+        def mutation():
+            return self.database.begin_account_stop(owner)
+
+        if worker is not None and worker.isRunning():
+            stopped = worker.cancel_scopes_and_run(scopes, mutation)
+        else:
+            stopped = mutation()
+        for campaign_id in stopped.get("comment_campaign_ids", []):
+            if worker is not None:
+                worker.request_scope_cancellation(
+                    "comment_campaign", int(campaign_id)
+                )
+        for campaign_id in stopped.get("join_campaign_ids", []):
+            if worker is not None:
+                worker.request_scope_cancellation("join_campaign", int(campaign_id))
+        for task_id in stopped.get("running_task_ids", []):
+            if worker is not None:
+                worker.request_scope_cancellation("task", int(task_id))
+
+        disconnect_result: dict[str, Any] = {
+            "account_id": owner,
+            "disconnected": False,
+        }
+        error: str | None = None
+        try:
+            if worker is not None and worker.isRunning():
+                future = worker.submit_utility(
+                    "stop_account_runtime", {"account_id": owner}
+                )
+                disconnect_result = dict(
+                    future.result(timeout=max(1.0, float(timeout_seconds))) or {}
+                )
+        except FutureTimeoutError:
+            error = (
+                "Telegram runtime не завершился за отведённое время; "
+                "потенциально начатые отправки требуют ручной проверки"
+            )
+        except Exception as exc:
+            error = str(exc)
+        self.database.finish_account_stop(owner, error=error)
+        if error:
+            raise RuntimeError(error)
+        result = dict(stopped)
+        result.update(disconnect_result)
+        result["message"] = (
+            "Работа аккаунта остановлена. Telegram-сессия сохранена."
+        )
+        return result
+
+    def resume_telegram_account(self, account_id: int) -> dict[str, Any]:
+        owner = int(account_id)
+        self.database.resume_account_work(owner)
+        worker = self.queue_worker
+        if worker is not None:
+            worker.clear_scope_cancellation("account", owner)
+        return self.database.get_telegram_account(owner) or {}
+
+    def check_telegram_account_runtime(
+        self, account_id: int, *, timeout_seconds: float = 20.0
+    ) -> dict[str, Any]:
+        owner = int(account_id)
+        worker = self.queue_worker
+        if worker is None:
+            raise RuntimeError("Фоновый обработчик не создан")
+        self.database.resume_account_work(owner)
+        worker.clear_scope_cancellation("account", owner)
+        if not worker.isRunning():
+            self.start_queue()
+        future = worker.submit_utility(
+            "check_account_runtime", {"account_id": owner}
+        )
+        return dict(
+            future.result(timeout=max(1.0, float(timeout_seconds))) or {}
+        )
+
+    def import_comments_from_previous_account(
+        self, *, mode: str
+    ) -> dict[str, Any]:
+        target = self.get_selected_account_id()
+        source = self.get_previous_selected_account_id()
+        if target <= 0 or source <= 0 or source == target:
+            raise ValueError(
+                "Сначала переключитесь с другого подключённого аккаунта."
+            )
+        return self.database.import_comment_profile_between_accounts(
+            source_account_id=source,
+            target_account_id=target,
+            mode=mode,
+        )
+
+    def import_channels_from_previous_account(self) -> dict[str, int]:
+        target = self.get_selected_account_id()
+        source = self.get_previous_selected_account_id()
+        if target <= 0 or source <= 0 or source == target:
+            raise ValueError(
+                "Сначала переключитесь с другого подключённого аккаунта."
+            )
+        return self.database.import_channels_between_accounts(
+            source_account_id=source,
+            target_account_id=target,
+        )

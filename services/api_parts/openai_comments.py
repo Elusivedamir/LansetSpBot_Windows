@@ -13,13 +13,15 @@ from core.openai_settings import (
 if TYPE_CHECKING:
     from core.mixin_host import MixinHost as _MixinHost
 else:
-
     class _MixinHost:
         pass
 
 
 class OpenAICommentAPIMixin(_MixinHost):
     def _strict_openai_key(self) -> str | None:
+        owner = int(self.get_current_account_id() or 0)
+        if owner > 0 and hasattr(self, "_strict_account_secret"):
+            return self._strict_account_secret(owner, OPENAI_API_KEY_SECRET)
         getter = getattr(type(self.secret_store), "get_strict_optional", None)
         if callable(getter):
             value = self.secret_store.get_strict_optional(OPENAI_API_KEY_SECRET)
@@ -36,8 +38,13 @@ class OpenAICommentAPIMixin(_MixinHost):
             return "•" * len(key)
         return f"{key[:3]}…{key[-4:]}"
 
+    def _openai_database(self):
+        owner = int(self.get_current_account_id() or 0)
+        return self.database.for_account(owner) if owner > 0 else self.database
+
     def get_openai_configuration(self) -> dict[str, Any]:
-        public = dict(self.database.get_settings("openai."))
+        database = self._openai_database()
+        public = dict(database.get_settings("openai."))
         settings = CommentGenerationSettings.from_mapping(public)
         prompt = str(
             public.get("openai.system_prompt") or DEFAULT_OPENAI_SYSTEM_PROMPT
@@ -62,7 +69,11 @@ class OpenAICommentAPIMixin(_MixinHost):
     def save_openai_configuration(self, values: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(values, dict):
             raise ValueError("Настройки OpenAI должны быть объектом")
-        merged = dict(self.database.get_settings("openai."))
+        owner = int(self.get_current_account_id() or 0)
+        if owner <= 0:
+            raise ValueError("Сначала выберите Telegram-аккаунт")
+        database = self.database.for_account(owner)
+        merged = dict(database.get_settings("openai."))
         public_keys = {
             "model": "openai.model",
             "max_words": "openai.max_words",
@@ -96,36 +107,40 @@ class OpenAICommentAPIMixin(_MixinHost):
                 "openai.manual_approval_required": "0",
             }
         )
-        self.database.set_settings(public)
+        database.set_settings(public)
 
         raw_key = values.get("api_key")
         if raw_key is not None:
             key = str(raw_key).strip()
             if key:
-                if len(key) < 20 or len(key) > 512 or any(ch.isspace() for ch in key):
+                if (
+                    len(key) < 20
+                    or len(key) > 512
+                    or any(ch.isspace() for ch in key)
+                ):
                     raise ValueError("API-ключ OpenAI имеет некорректный формат")
-                self.secret_store.set(OPENAI_API_KEY_SECRET, key)
+                self._set_account_secret(owner, OPENAI_API_KEY_SECRET, key)
             elif bool(values.get("clear_api_key")):
-                self.secret_store.delete(OPENAI_API_KEY_SECRET)
+                self._set_account_secret(owner, OPENAI_API_KEY_SECRET, None)
         return self.get_openai_configuration()
 
     def submit_openai_test(self, post_text: str | None = None) -> Future[Any]:
         worker = self.queue_worker
         if worker is None:
             raise RuntimeError("Фоновый обработчик не создан")
+        owner = int(self.get_current_account_id() or 0)
+        if owner <= 0:
+            raise RuntimeError("Сначала выберите Telegram-аккаунт")
         if not worker.isRunning():
             if not self.start_queue():
-                reason = self.get_queue_unavailable_reason()
-                # An account restriction blocks Telegram sends but must not block
-                # a local OpenAI connectivity test.
-                if reason != "account_restricted":
-                    raise RuntimeError(self.get_queue_unavailable_message())
-                with self._queue_lock:
-                    if self._shutdown_requested or worker.isRunning():
-                        pass
-                    else:
-                        worker.start()
+                raise RuntimeError(self.get_queue_unavailable_message())
         submit = getattr(worker, "submit_utility", None)
         if not callable(submit):
             raise RuntimeError("Эта сборка не поддерживает фоновые тесты OpenAI")
-        return cast("Future[Any]", submit("openai_test", {"post_text": str(post_text or "")}))
+        return cast(
+            "Future[Any]",
+            submit(
+                "openai_test",
+                {"post_text": str(post_text or ""), "account_id": owner},
+            ),
+        )
