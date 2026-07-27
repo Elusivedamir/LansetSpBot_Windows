@@ -50,7 +50,9 @@ QLabel#statusDotOffline {
     font-size: 25px;
 }
 QLabel#statusDotOnline {
-    color: #65B58C;
+    /* The connected dot is the one thing on the page that has to be readable
+       from across the desk; the previous muted green sat close to the card. */
+    color: #3BE07C;
     font-size: 25px;
 }
 QListWidget#navigation {
@@ -130,16 +132,16 @@ QFrame#infoCard {
 }
 QFrame#dangerCard {
     background: #15171B;
-    border: 1px solid #78414A;
+    border: 1px solid #A32E3B;
     border-radius: 17px;
 }
 QLabel#dangerTitle {
-    color: #D98D96;
+    color: #FF6E7B;
     font-size: 16px;
     font-weight: 850;
 }
 QLabel#dangerText {
-    color: #CBA7AB;
+    color: #E8AEB4;
     font-size: 13px;
 }
 QLineEdit, QPlainTextEdit, QComboBox, QAbstractSpinBox {
@@ -238,22 +240,22 @@ QCheckBox::indicator {
     width: 42px;
     height: 22px;
     border-radius: 11px;
-    background: #B2373F;
-    border: 1px solid #D0555D;
+    background: #D62B3C;
+    border: 1px solid #FF5C6B;
 }
 QCheckBox::indicator:checked {
     background: #2E9E58;
     border: 1px solid #45C173;
 }
 QCheckBox::indicator:hover {
-    border: 1px solid #E0767D;
+    border: 1px solid #FF8E98;
 }
 QCheckBox::indicator:checked:hover {
     border: 1px solid #63D98D;
 }
 QCheckBox::indicator:disabled {
-    background: #4A3034;
-    border: 1px solid #5C393E;
+    background: #6E2029;
+    border: 1px solid #8E2C36;
 }
 QCheckBox::indicator:checked:disabled {
     background: #2A5740;
@@ -287,16 +289,16 @@ QPushButton#secondaryButton:hover {
     border: 1px solid #596270;
 }
 QPushButton#dangerButton {
-    background: #8E343F;
+    background: #D62B3C;
     color: #FFFFFF;
-    border: 1px solid #B95C67;
+    border: 1px solid #FF5C6B;
 }
 QPushButton#dangerButton:hover {
-    background: #9C3B47;
+    background: #EB3A4B;
     border: 1px solid #FF7380;
 }
 QPushButton#dangerButton:pressed {
-    background: #7F1825;
+    background: #B01F2E;
 }
 QPushButton#saveButton {
     background: #123247;

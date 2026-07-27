@@ -12,7 +12,7 @@ import sys
 
 import pytest
 from PySide6.QtGui import QImage
-from PySide6.QtWidgets import QApplication, QCheckBox
+from PySide6.QtWidgets import QApplication, QCheckBox, QPushButton
 
 from core.composition import ApplicationContainer
 from core.config import Config
@@ -117,3 +117,60 @@ def test_every_switch_on_the_account_page_follows_the_same_rule(window) -> None:
             )
         finally:
             box.setChecked(previous)
+
+
+# A destructive control has to be unmistakable, not a muted maroon that reads
+# as another dark surface. The previous danger button measured RGB(142, 52, 63).
+MIN_DANGER_RED = 180
+MIN_DANGER_DOMINANCE = 100
+
+
+def test_destructive_buttons_are_vividly_red(window) -> None:
+    main, application = window
+    application.processEvents()
+    buttons = [
+        button
+        for view in (
+            main.account_view,
+            main.channels_view,
+            main.links_view,
+            main.commenting_view,
+        )
+        for button in view.findChildren(QPushButton)
+        if button.objectName() == "dangerButton"
+    ]
+    assert buttons, "no destructive buttons were found to check"
+    for button in buttons:
+        image: QImage = button.grab().toImage()
+        colour = image.pixelColor(image.width() // 2, 4)
+        assert colour.red() >= MIN_DANGER_RED, (
+            f"{button.text()!r} is a dull red: {colour.getRgb()[:3]}"
+        )
+        assert colour.red() - colour.green() >= MIN_DANGER_DOMINANCE, (
+            f"{button.text()!r} does not read as a warning: {colour.getRgb()[:3]}"
+        )
+
+
+def test_the_connected_indicator_is_a_bright_green(window) -> None:
+    """The dot is the status an operator reads from across the desk."""
+
+    from PySide6.QtWidgets import QLabel
+
+    main, application = window
+    dot = next(
+        label
+        for label in main.account_view.findChildren(QLabel)
+        if label.objectName() in {"statusDotOnline", "statusDotOffline"}
+    )
+    dot.setObjectName("statusDotOnline")
+    dot.style().unpolish(dot)
+    dot.style().polish(dot)
+    application.processEvents()
+
+    image: QImage = dot.grab().toImage()
+    greenest = max(
+        (image.pixelColor(x, y) for x in range(image.width()) for y in range(image.height())),
+        key=lambda colour: colour.green() - max(colour.red(), colour.blue()),
+    )
+    assert greenest.green() >= 200, f"the connected dot is muted: {greenest.getRgb()[:3]}"
+    assert greenest.green() - max(greenest.red(), greenest.blue()) >= 80
