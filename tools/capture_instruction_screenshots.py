@@ -77,11 +77,34 @@ def main() -> int:
         for message in (
             "Telegram-аккаунт подключён.",
             "Сохранено каналов: 24.",
-            "Связка готова: найден чат обсуждения @example_chat.",
+            "Связка готова: канал использует обсуждение, группа — прямое сообщение.",
             "Кампания запущена на 24 часа: запланировано 40 слотов.",
             "Комментарий отправлен, подтверждён Telegram.",
         ):
             append(message)
+        application.processEvents()
+
+    def prepare_page(index: int) -> None:
+        # Show representative current controls before taking each page image.
+        if index == 0:
+            account = window.account_view
+            account.api_id.setText("12345678")
+            account.api_hash.setText("0123456789abcdef0123456789abcdef")
+            account.phone.setText("+79990000000")
+            account.proxy_enabled.setChecked(True)
+            account.proxy_type.setCurrentText("SOCKS5")
+            account.proxy_host.setText("proxy.example")
+            account.proxy_port.setText("1080")
+            account.schedule_enabled.setChecked(True)
+            account.timezone_name.setText("Europe/Berlin")
+        elif index == 3:
+            comments = window.commenting_view
+            comments.comment_source_combo.setCurrentIndex(1)
+            comments.continuous.setChecked(True)
+            if comments.editors:
+                comments.editors[0].setPlainText(
+                    "Спасибо за полезную публикацию — особенно важна практическая часть."
+                )
         application.processEvents()
 
     destination = Path(arguments.destination)
@@ -97,6 +120,7 @@ def main() -> int:
             # stack directly left every screenshot showing "Аккаунт" selected.
             window.menu.setCurrentRow(index)
             window.stack.setCurrentIndex(index)
+            prepare_page(index)
             for _ in range(3):
                 application.processEvents()
             seed_activity()

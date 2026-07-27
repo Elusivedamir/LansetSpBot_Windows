@@ -50,36 +50,56 @@ def test_sidebar_help_button_is_small_last_item_and_shows_support_contact(
     container.shutdown()
 
 
-def test_instruction_slideshow_documents_v12_comment_bag_and_help() -> None:
+def test_instruction_slideshow_documents_current_gui_routes_and_help() -> None:
     app = _app()
     view = InstructionsView()
 
-    # One page per documented step; the count itself grows between releases,
-    # so what is pinned is the correspondence, not a number.
     assert view.stack.count() == len(view.STEPS)
-    assert view.stack.count() >= 11
-    # The comment-source page is located by title: the slideshow gained pages
-    # over several releases, so a fixed index is not a stable contract.
+    assert view.stack.count() >= 13
+
     comments_step = next(
         step for step in view.STEPS if step[0] == "Комментарии и источник текста"
     )
-    assert "мешк" in comments_step[2], "the variant bag must stay documented"
-    assert "один раз" in comments_step[2], "rotation without repeats must be stated"
-    # Per-account isolation is documented on the account-switch page.
+    assert "мешк" in comments_step[2]
+    assert "ровно один раз" in comments_step[2]
+    assert "светлый фон" in comments_step[2]
+    assert "тёмный текст" in comments_step[2]
+
     account_step = next(
         step for step in view.STEPS if step[0] == "Смена Telegram-аккаунта"
     )
     assert "изолированы по Telegram account_id" in account_step[2]
+
+    toggle_step = next(
+        step for step in view.STEPS
+        if step[0] == "Тихие часы и цвет переключателей"
+    )
+    assert "красный" in toggle_step[2]
+    assert "зелёный" in toggle_step[2]
+    assert "числовым регулятором" in toggle_step[2]
+
+    route_step = next(
+        step for step in view.STEPS if step[0] == "Запуск кампании и маршруты"
+    )
+    assert "обычную доступную" in route_step[2]
+    assert "без привязки к посту" in route_step[2]
+    assert "не создаёт вторую кампанию" in route_step[2]
+
+    joined = "\n".join(step[0] + "\n" + step[2] for step in view.STEPS)
+    assert "каждую секунду" in joined
+    assert "личные переписки" in joined
+    assert "Выполнено" in joined and "Отправлено" in joined
+    assert "Fake TLS EE" in joined
+    assert "LansetSpBot.exe" in joined
+
     assert "поддержка" in view.STEPS[-1][0].lower()
     assert "@lansetp" in view.STEPS[-1][2]
 
-    # Every step must point at an image that actually ships.
     for _title, asset, _text in view.STEPS:
         path = view._asset_path(asset)
         assert path.is_file(), f"{asset} is referenced but not shipped"
         assert path.stat().st_size > 10_000
 
-    # On the last page "next" must be disabled, whatever the page count is.
     last_index = view.stack.count() - 1
     view.stack.setCurrentIndex(last_index)
     view._update_navigation()
