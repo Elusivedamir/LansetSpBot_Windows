@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtGui import QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -21,12 +22,154 @@ from core.version import __version__
 from ..resources import asset_path
 
 
+class ClickableScreenshot(QLabel):
+    """Keyboard-accessible screenshot preview that opens on activation."""
+
+    activated = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName("Открыть увеличенный скриншот")
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.rect().contains(event.position().toPoint())
+        ):
+            self.activated.emit()
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if event.key() in {
+            Qt.Key.Key_Enter,
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Space,
+        }:
+            self.activated.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class ScreenshotPreviewDialog(QDialog):
+    """Large screenshot viewer with fit-to-window and original-size modes."""
+
+    def __init__(self, title: str, pixmap: QPixmap, parent=None):
+        super().__init__(parent)
+        self._source_pixmap = QPixmap(pixmap)
+        self._fit_to_window = True
+
+        self.setObjectName("instructionImageDialog")
+        self.setWindowTitle(f"{title} — увеличенный скриншот")
+        self.setModal(True)
+
+        screen = (
+            parent.screen()
+            if parent is not None
+            else QGuiApplication.primaryScreen()
+        )
+        if screen is not None:
+            available = screen.availableGeometry()
+            self.resize(
+                max(520, int(available.width() * 0.90)),
+                max(420, int(available.height() * 0.86)),
+            )
+        else:
+            self.resize(1100, 760)
+
+        self.image_label = QLabel()
+        self.image_label.setObjectName("instructionImagePreview")
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.scroll = QScrollArea()
+        self.scroll.setObjectName("instructionImageScroll")
+        self.scroll.setWidgetResizable(False)
+        self.scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.scroll.setWidget(self.image_label)
+
+        hint = QLabel(
+            "Используйте «По размеру окна» для общего вида или «100%» "
+            "для чтения мелких подписей."
+        )
+        hint.setObjectName("mutedText")
+        hint.setWordWrap(True)
+
+        self.fit_button = QPushButton("По размеру окна")
+        self.fit_button.setObjectName("primaryButton")
+        self.fit_button.clicked.connect(lambda: self._set_fit_mode(True))
+
+        self.actual_size_button = QPushButton("100%")
+        self.actual_size_button.setObjectName("secondaryButton")
+        self.actual_size_button.clicked.connect(lambda: self._set_fit_mode(False))
+
+        close_button = QPushButton("Закрыть")
+        close_button.setObjectName("secondaryButton")
+        close_button.clicked.connect(self.accept)
+
+        controls = QHBoxLayout()
+        controls.setSpacing(10)
+        controls.addWidget(hint, 1)
+        controls.addWidget(self.fit_button)
+        controls.addWidget(self.actual_size_button)
+        controls.addWidget(close_button)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+        layout.addWidget(self.scroll, 1)
+        layout.addLayout(controls)
+
+        self._sync_mode_buttons()
+        QTimer.singleShot(0, self._update_pixmap)
+
+    def _set_fit_mode(self, fit_to_window: bool) -> None:
+        self._fit_to_window = bool(fit_to_window)
+        self._sync_mode_buttons()
+        self._update_pixmap()
+
+    def _sync_mode_buttons(self) -> None:
+        self.fit_button.setEnabled(not self._fit_to_window)
+        self.actual_size_button.setEnabled(self._fit_to_window)
+
+    def _update_pixmap(self) -> None:
+        if self._source_pixmap.isNull():
+            return
+        pixmap = self._source_pixmap
+        if self._fit_to_window:
+            viewport = self.scroll.viewport().size()
+            pixmap = self._source_pixmap.scaled(
+                max(1, viewport.width() - 24),
+                max(1, viewport.height() - 24),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        self.image_label.setPixmap(pixmap)
+        self.image_label.resize(pixmap.size())
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        if self._fit_to_window:
+            QTimer.singleShot(0, self._update_pixmap)
+
+
 class InstructionsView(QWidget):
     """Scrollable slide-by-slide operator guide with annotated UI diagrams."""
 
     IMAGE_SHARE_OF_SLIDE = 0.58
 
     STEPS = (
+        (
+            "Подключение аккаунта и proxy",
+            "01_account.png",
+            "Введите API ID, API Hash и телефон, затем нажмите «Подключить аккаунт». "
+            "Код Telegram и пароль 2FA появятся в этой же карточке. Переключатель "
+            "«Использовать proxy» открывает SOCKS5, SOCKS4, HTTP и MTProxy. Для MTProxy "
+            "поддерживаются обычный Secret, DD и Fake TLS EE в hex или Base64URL. "
+            "Рабочая сессия хранится локально и сохраняет вход после закрытия программы. "
+            "Дополнительные резервные копии сессии не создаются.",
+        ),
         (
             "Пять изолированных аккаунтов",
             "01_account.png",
@@ -41,16 +184,6 @@ class InstructionsView(QWidget):
             "его Telegram-сессию. Комментарии и каналы можно вручную скопировать только из "
             "непосредственно предыдущего выбранного аккаунта; proxy, история, ledger, "
             "ограничения и секреты никогда не импортируются.",
-        ),
-        (
-            "Подключение аккаунта и proxy",
-            "01_account.png",
-            "Введите API ID, API Hash и телефон, затем нажмите «Подключить аккаунт». "
-            "Код Telegram и пароль 2FA появятся в этой же карточке. Переключатель "
-            "«Использовать proxy» открывает SOCKS5, SOCKS4, HTTP и MTProxy. Для MTProxy "
-            "поддерживаются обычный Secret, DD и Fake TLS EE в hex или Base64URL. "
-            "Рабочая сессия хранится локально и сохраняет вход после закрытия программы. "
-            "Дополнительные резервные копии сессии не создаются.",
         ),
         (
             "Тихие часы и цвет переключателей",
@@ -131,10 +264,11 @@ class InstructionsView(QWidget):
             "Запуск кампании и маршруты",
             "04_comments.png",
             "Нажмите «Запустить на 24 часа» один раз. Повторное нажатие при активной кампании "
-            "не создаёт вторую кампанию. Для канала программа берёт только новый последний "
-            "пост и отправляет комментарий через связанное обсуждение. В обычную доступную "
-            "группу уходит отдельное сообщение без привязки к посту. Защита доставки не "
-            "повторяет подтверждённые или неопределённые отправки автоматически.",
+            "не создаёт вторую кампанию. Для канала программа берёт самый последний доступный "
+            "пост и отправляет комментарий через связанное обсуждение, если такой результат "
+            "ещё не зафиксирован. В обычную доступную группу уходит отдельное сообщение без "
+            "привязки к посту. Защита доставки не повторяет подтверждённые или неопределённые "
+            "отправки автоматически.",
         ),
         (
             "Живой таймер, история и журнал",
@@ -160,9 +294,10 @@ class InstructionsView(QWidget):
             "Запускайте программу через 1_RUN_LANSETSPBOT_WINDOWS.bat или LansetSpBot.exe. "
             "Кнопка закрытия спрашивает подтверждение и действительно завершает процесс; для "
             "временного скрытия используйте сворачивание. База, настройки и Telegram-сессия "
-            "остаются локально, резервные копии не создаются. «Заводской сброс» безвозвратно "
-            "удаляет профиль. 3_COLLECT_DIAGNOSTICS.cmd собирает безопасный отчёт без базы, "
-            "паролей и сессии. Кнопка «Помощь» показывает поддержку @lansetp.",
+            "остаются локально, резервные копии не создаются. В карточке «Заводской сброс» "
+            "кнопка «Сбросить базу данных» безвозвратно удаляет локальный профиль после "
+            "двойного подтверждения. 3_COLLECT_DIAGNOSTICS.cmd собирает безопасный отчёт без "
+            "базы, паролей и сессии. Кнопка «Помощь» показывает поддержку @lansetp.",
         ),
     )
 
@@ -174,8 +309,8 @@ class InstructionsView(QWidget):
         title = QLabel("Инструкция")
         title.setObjectName("pageTitle")
         subtitle = QLabel(
-            "Актуальный порядок работы: аккаунт, красно-зелёные переключатели, каналы, "
-            "маршруты для постов и обычных групп, комментарии, журнал и поддержка."
+            "Актуальный порядок работы: подключение аккаунта, красно-зелёные переключатели, "
+            "каналы, маршруты для постов и обычных групп, комментарии, журнал и поддержка."
         )
         subtitle.setObjectName("pageSubtitle")
         subtitle.setWordWrap(True)
@@ -253,18 +388,35 @@ class InstructionsView(QWidget):
         heading.setWordWrap(True)
         layout.addWidget(heading)
 
-        image = QLabel()
+        image = ClickableScreenshot()
         image.setObjectName("instructionImage")
         image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         image.setMinimumHeight(220)
         image.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         pixmap = QPixmap(str(self._asset_path(image_name)))
         image.setProperty("sourcePixmap", pixmap)
+        if pixmap.isNull():
+            image.setText("Скриншот недоступен")
+            image.setCursor(Qt.CursorShape.ArrowCursor)
+            image.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        else:
+            image.setToolTip("Нажмите, чтобы открыть увеличенный скриншот")
+            image.activated.connect(
+                lambda pixmap=pixmap, title=title: self._open_image_preview(
+                    title, pixmap
+                )
+            )
         # The full-size pixmap is never handed to the label: it would set the
         # label's size hint to the screenshot's own height, push the card past
         # the visible area and leave the reader scrolling through one image.
         # _rescale_current_image() fits it to the space that actually exists.
         layout.addWidget(image, 1)
+
+        image_hint = QLabel("Нажмите на изображение, чтобы увеличить")
+        image_hint.setObjectName("instructionImageHint")
+        image_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        image_hint.setVisible(not pixmap.isNull())
+        layout.addWidget(image_hint)
 
         description = QLabel(body)
         description.setObjectName("pageSubtitle")
@@ -275,6 +427,12 @@ class InstructionsView(QWidget):
         layout.addWidget(description)
         scroll.setWidget(card)
         return scroll
+
+    def _open_image_preview(self, title: str, pixmap: QPixmap) -> None:
+        if pixmap.isNull():
+            return
+        dialog = ScreenshotPreviewDialog(title, pixmap, self)
+        dialog.exec()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
         super().resizeEvent(event)

@@ -383,6 +383,26 @@ QLabel#instructionImage {
     border-radius: 14px;
     padding: 10px;
 }
+QLabel#instructionImage:hover, QLabel#instructionImage:focus {
+    background: #121923;
+    border: 1px solid #6E84AD;
+}
+QLabel#instructionImageHint {
+    color: #8ECFF0;
+    font-size: 12px;
+    font-weight: 650;
+}
+QDialog#instructionImageDialog {
+    background: #090A0C;
+}
+QScrollArea#instructionImageScroll,
+QScrollArea#instructionImageScroll > QWidget > QWidget {
+    background: #0B0D10;
+    border: 1px solid #30343C;
+}
+QLabel#instructionImagePreview {
+    background: #0B0D10;
+}
 QProgressBar {
     min-height: 18px;
     max-height: 18px;
