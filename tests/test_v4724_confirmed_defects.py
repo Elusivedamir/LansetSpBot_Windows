@@ -333,7 +333,10 @@ def test_v23_delivery_routes_collapse_to_one_source_receipt(tmp_path: Path) -> N
         conn.close()
 
     migrated = Database(path)
-    assert migrated.get_version() == Database.SCHEMA_VERSION == 30
+    # The number moves with every migration; what these tests exist to pin
+    # is that a migrated database reaches the version the code expects.
+    assert migrated.get_version() == Database.SCHEMA_VERSION
+    assert Database.SCHEMA_VERSION >= 30
     with migrated.get_connection() as active:
         rows = active.execute(
             """SELECT linked_chat_id, status FROM comment_deliveries

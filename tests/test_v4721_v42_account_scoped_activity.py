@@ -11,7 +11,12 @@ from tests.conftest import open_project_database
 
 def test_new_database_uses_schema_v29_and_account_scoped_logs(tmp_path):
     db = Database(tmp_path / "fresh.db")
-    assert db.get_version() == 30
+    # The number moves with every migration; what these tests exist to pin
+    # is that a migrated database reaches the version the code expects.
+    from storage.database import Database as _Database
+
+    assert db.get_version() == _Database.SCHEMA_VERSION
+    assert db.get_version() >= 29
     with db.get_connection() as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(logs)")}
         indexes = {row[1] for row in conn.execute("PRAGMA index_list(logs)")}

@@ -133,7 +133,10 @@ def test_v25_disables_legacy_direct_group_work_before_worker_start(tmp_path):
         conn.execute("PRAGMA user_version=24")
 
     migrated = Database(path)
-    assert migrated.get_version() == Database.SCHEMA_VERSION == 30
+    # The number moves with every migration; the invariant is that a
+    # migrated database reaches the version the code expects.
+    assert migrated.get_version() == Database.SCHEMA_VERSION
+    assert Database.SCHEMA_VERSION >= 30
     channel = migrated.get_channel_by_id(-1009001, account_id=201)
     assert channel["comment_mode"] == "pending"
     assert channel["linked_chat_id"] is None

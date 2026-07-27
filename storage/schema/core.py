@@ -30,6 +30,7 @@ from storage.migrations.safety_invariants_v28 import migrate_safety_invariants_v
 from storage.migrations.activity_log_account_scope_v29 import (
     migrate_activity_log_account_scope_v29,
 )
+from storage.migrations.account_registry_v31 import migrate_account_registry_v31
 from storage.migrations.openai_comments_v30 import migrate_openai_comments_v30
 
 log = logging.getLogger(__name__)
@@ -232,6 +233,13 @@ class SchemaCoreMixin(_MixinHost):
             current_version = self.get_version()
         if current_version < 30:
             migrate_openai_comments_v30(
+                self.path,
+                sqlite_timeout_seconds=self.sqlite_timeout_seconds,
+                busy_timeout_ms=self.busy_timeout_ms,
+            )
+            current_version = self.get_version()
+        if current_version < 31:
+            migrate_account_registry_v31(
                 self.path,
                 sqlite_timeout_seconds=self.sqlite_timeout_seconds,
                 busy_timeout_ms=self.busy_timeout_ms,

@@ -151,7 +151,10 @@ def test_production_worker_can_stay_connected_until_shutdown():
 
 def test_schema_v23_contains_rpc_optimization_columns(tmp_path):
     db = Database(tmp_path / "schema-v23.db")
-    assert db.get_version() == Database.SCHEMA_VERSION == 30
+    # The number moves with every migration; what these tests exist to pin
+    # is that a migrated database reaches the version the code expects.
+    assert db.get_version() == Database.SCHEMA_VERSION
+    assert Database.SCHEMA_VERSION >= 30
     with db.get_connection() as conn:
         channel_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(channels)")

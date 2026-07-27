@@ -29,6 +29,7 @@ from storage.db_common import (
     _telegram_id as _telegram_id,
     json_dumps_safe as json_dumps_safe,
 )
+from storage.db_accounts import AccountRegistryRepositoryMixin
 from storage.db_join_campaigns import JoinCampaignRepositoryMixin
 from storage.db_settings import SettingsRepositoryMixin
 from storage.db_schema import DatabaseSchemaMixin
@@ -45,6 +46,7 @@ _NATIVE_OS = os
 
 class Database(
     DatabaseSchemaMixin,
+    AccountRegistryRepositoryMixin,
     AccountRestrictionRepositoryMixin,
     TaskRepositoryMixin,
     ChannelRepositoryMixin,

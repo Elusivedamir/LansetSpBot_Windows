@@ -140,7 +140,10 @@ def test_v10_global_restriction_migrates_to_account_scoped_v19(tmp_path: Path) -
 
     migrated = Database(path)
     state = get_account_restriction_state(migrated, account_id=404)
-    assert migrated.get_version() == Database.SCHEMA_VERSION == 30
+    # The number moves with every migration; what these tests exist to pin
+    # is that a migrated database reaches the version the code expects.
+    assert migrated.get_version() == Database.SCHEMA_VERSION
+    assert Database.SCHEMA_VERSION >= 30
     assert state["active"] is True
     assert state["code"] == "peer_flood"
     assert migrated.get_settings(prefix="telegram.restriction.") == {}
