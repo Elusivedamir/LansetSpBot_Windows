@@ -65,7 +65,11 @@ def finalize_comment_slot(
                     )
                     or {}
                 )
-        finalizer(worker_db, task_id, slot_id, **outcome_kwargs)
+        finalized = finalizer(worker_db, task_id, slot_id, **outcome_kwargs)
+        if finalized is not True:
+            raise RuntimeError(
+                "Comment slot finalization returned without committing an outcome"
+            )
         if restriction_kwargs is not None:
             activator = getattr(worker_db, "activate_account_restriction_atomic", None)
             if not callable(activator):

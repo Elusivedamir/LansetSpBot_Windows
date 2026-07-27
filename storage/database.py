@@ -57,7 +57,7 @@ class Database(
 ):
     """SQLite compatibility facade composed from domain repositories."""
 
-    ARTIFACT_SECURITY_RECHECK_SECONDS = 60.0
+    ARTIFACT_SECURITY_RECHECK_SECONDS = 300.0
 
     def __init__(
         self, path=None, *, busy_timeout_ms: int = 30_000, bootstrap: bool = True,
@@ -673,12 +673,21 @@ class Database(
                         ) from exc
                 finally:
                     state.rollback_only = False
-                    self._harden_database_artifacts()
                     if outer_started is not None:
                         log_if_slow(
                             log,
                             "sqlite_transaction",
                             outer_started,
+                            threshold_seconds=0.5,
+                        )
+                    hardening_started = time.monotonic()
+                    try:
+                        self._harden_database_artifacts()
+                    finally:
+                        log_if_slow(
+                            log,
+                            "sqlite_artifact_hardening",
+                            hardening_started,
                             threshold_seconds=0.5,
                         )
 

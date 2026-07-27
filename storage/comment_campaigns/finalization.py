@@ -46,7 +46,9 @@ class CommentFinalizationMixin(_MixinHost):
                     (int(slot_id),),
                 ).fetchone()
                 if row is None or row["status"] not in {"queued", "running"}:
-                    return False
+                    raise DatabaseError(
+                        "Comment slot is no longer queued/running during finalization"
+                    )
                 conn.execute(
                     """UPDATE comment_schedule
                        SET status=?, channel_id=?, post_id=?, result=?,
@@ -148,7 +150,9 @@ class CommentFinalizationMixin(_MixinHost):
                     (int(slot_id),),
                 ).fetchone()
                 if row is None or row["status"] not in {"queued", "running"}:
-                    return False
+                    raise DatabaseError(
+                        "Comment slot is no longer queued/running during finalization"
+                    )
 
                 if row["task_id"] is None or int(row["task_id"]) != int(task_id):
                     raise DatabaseError("Comment slot is bound to another queue task")
@@ -280,6 +284,11 @@ class CommentFinalizationMixin(_MixinHost):
                     raise DatabaseError(
                         "Queue task changed during comment finalization"
                     )
+                self.insert_log(
+                    "ERROR" if final_status in {"failed", "uncertain"} else "INFO",
+                    f"Итог слота: {result}",
+                    account_id=int(row["account_id"]),
+                )
                 return True
         except DatabaseError:
             raise

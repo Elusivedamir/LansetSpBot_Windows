@@ -818,7 +818,7 @@ def create_link_channels_handler(
             status = (
                 "Связанное обсуждение · только комментарии к постам"
                 if is_linked
-                else "Группа · локально определена как обычная"
+                else "Обычная группа · сообщение без привязки к посту"
             )
             group_update_kwargs = {
                 "is_linked": is_linked,
@@ -855,7 +855,7 @@ def create_link_channels_handler(
             "Связки подготовлены: "
             f"каналов {len(channel_ids)}, участие подтверждено {prepared_count}, "
             f"новых вступлений {joined_count}, локально заблокировано {banned_count}, "
-            "обычные группы не используются для прямых сообщений",
+            "обычные группы готовы к сообщениям без привязки к посту",
             activity=True,
         )
         payload.pop("_link_checkpoint", None)
