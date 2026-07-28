@@ -456,6 +456,33 @@ def create_comment_slot_handler(
                 f"Суточная кампания: {channel_title}",
                 account_id=campaign_account_id,
             )
+            if (
+                comment_mode != "direct_group"
+                and cached_post_id > 0
+                and linked_chat_id is not None
+                and worker_db.has_commented(
+                    channel_id,
+                    cached_post_id,
+                    account_id=campaign_account_id,
+                    linked_chat_id=linked_chat_id,
+                    campaign_id=campaign_id,
+                    action_type="campaign_comment",
+                )
+            ):
+                # A resumed slot already carries the exact durable route. Check
+                # the local delivery history before re-reading the source post
+                # and discussion from Telegram.
+                post_id = cached_post_id
+                final_message = "Пропущено: этот пост уже комментировали"
+                return
+
+            # Fail fast during quiet hours before post lookup, discussion lookup
+            # or OpenAI generation. CommentService repeats the same guard at the
+            # final send boundary in case the active window closes mid-task.
+            schedule_guard = getattr(comments, "activity_schedule", None)
+            if schedule_guard is not None:
+                schedule_guard.require_active()
+
             if comment_mode == "direct_group":
                 # An ordinary group is a standalone route. It never needs a
                 # channel post, discussion root or reply_to value.
@@ -967,6 +994,26 @@ def create_comment_slot_handler(
                 raise RuntimeError(
                     "Comment slot was no longer eligible for network deferral"
                 )
+            if deferred_code == "flood_wait_deferred" and campaign_account_id > 0:
+                cooldown_writer = getattr(
+                    worker_db, "set_account_rpc_cooldown", None
+                )
+                if callable(cooldown_writer):
+                    try:
+                        cooldown_writer(
+                            account_id=campaign_account_id,
+                            retry_at=retry_at,
+                            code=deferred_code,
+                            source_task_id=task_id,
+                            wait_seconds=wait,
+                        )
+                    except Exception:
+                        # The campaign/slot deferral is already durable. Preserve
+                        # that safe state even if the broader account cooldown
+                        # cannot be extended during a transient SQLite failure.
+                        log.exception(
+                            "Could not persist account FloodWait cooldown"
+                        )
             return
         except asyncio.CancelledError:
             if phase < CommentSlotPhase.SEND_STARTED:

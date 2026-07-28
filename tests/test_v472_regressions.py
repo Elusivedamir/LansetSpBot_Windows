@@ -116,7 +116,7 @@ async def test_long_flood_wait_defers_without_occupying_worker(monkeypatch):
     with pytest.raises(DeferredTelegramError) as raised:
         await service.execute(operation)
     assert raised.value.code == "flood_wait_deferred"
-    assert raised.value.retry_after == 110
+    assert raised.value.retry_after == 180
     assert calls == 1
 
 

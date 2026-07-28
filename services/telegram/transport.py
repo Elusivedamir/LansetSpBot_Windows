@@ -174,6 +174,54 @@ class TelegramTransportMixin(_MixinHost):
         await self._report_status("")
         return True
 
+    def _protected_flood_wait_seconds(self, raw_wait: int) -> int:
+        """Return a safe persisted retry delay for Telegram flood control.
+
+        A short FloodWait gets the requested human-like three-to-five-minute
+        pause. A longer server interval always wins and keeps the existing
+        randomized safety buffer, so automatic continuation never resumes
+        before Telegram allows it.
+        """
+
+        requested = max(0, int(raw_wait))
+        buffer_min = int(getattr(self, "FLOOD_WAIT_BUFFER_MIN_SECONDS", 30))
+        buffer_max = max(
+            buffer_min,
+            int(getattr(self, "FLOOD_WAIT_BUFFER_MAX_SECONDS", 45)),
+        )
+        auto_resume_min = int(
+            getattr(self, "FLOOD_WAIT_AUTO_RESUME_MIN_SECONDS", 3 * 60)
+        )
+        auto_resume_max = max(
+            auto_resume_min,
+            int(getattr(self, "FLOOD_WAIT_AUTO_RESUME_MAX_SECONDS", 5 * 60)),
+        )
+        buffer_seconds = max(
+            buffer_min,
+            min(
+                buffer_max,
+                int(
+                    random.randint(
+                        buffer_min,
+                        buffer_max,
+                    )
+                ),
+            ),
+        )
+        auto_resume_floor = max(
+            auto_resume_min,
+            min(
+                auto_resume_max,
+                int(
+                    random.randint(
+                        auto_resume_min,
+                        auto_resume_max,
+                    )
+                ),
+            ),
+        )
+        return max(requested + buffer_seconds, auto_resume_floor)
+
     async def connect(self) -> None:
         """Connect an already-authorized session without console prompts."""
         started = time.monotonic()
@@ -182,6 +230,8 @@ class TelegramTransportMixin(_MixinHost):
                 "Telegram API_ID/API_HASH are not configured",
                 code="telegram_not_configured",
             )
+        self._connected = False
+        self._authorized_user = None
         try:
             if not self.client.is_connected():
                 await self._await_interruptible(self.client.connect(), timeout=30.0)
@@ -227,6 +277,7 @@ class TelegramTransportMixin(_MixinHost):
                         "expected_account_id": expected_account_id,
                     },
                 )
+            self._authorized_user = me
             self._connected = True
             self._last_authorization_check = time.monotonic()
             log.info("Connected to Telegram using an authorized session")
@@ -294,9 +345,11 @@ class TelegramTransportMixin(_MixinHost):
             # Revoked/corrupted sessions then surface as authorization_required
             # rather than an unrelated generic RPC failure later in the task.
             identity_probe = getattr(self.client, "get_me", None)
-            if callable(identity_probe) and time.monotonic() - float(
+            identity_missing = getattr(self, "_authorized_user", None) is None
+            probe_due = time.monotonic() - float(
                 getattr(self, "_last_authorization_check", 0.0) or 0.0
-            ) >= float(getattr(self, "AUTHORIZATION_RECHECK_SECONDS", 300.0)):
+            ) >= float(getattr(self, "AUTHORIZATION_RECHECK_SECONDS", 900.0))
+            if callable(identity_probe) and (identity_missing or probe_due):
                 me = await self._await_interruptible(identity_probe(), timeout=40.0)
                 if me is None:
                     self._connected = False
@@ -320,12 +373,25 @@ class TelegramTransportMixin(_MixinHost):
                             "expected_account_id": expected_account_id,
                         },
                     )
+                self._authorized_user = me
                 self._last_authorization_check = time.monotonic()
             self._connected = True
             return
         self._connected = False
         log.warning("Telegram socket is disconnected; reconnecting")
         await self.connect()
+
+    async def get_connected_identity(self):
+        """Return the already-validated account without duplicate health RPCs."""
+
+        await self.ensure_connected()
+        identity = getattr(self, "_authorized_user", None)
+        if identity is None:
+            raise NonRetryableTelegramError(
+                "Telegram session identity is unavailable",
+                code="authorization_required",
+            )
+        return identity
 
     async def disconnect(self) -> None:
         try:
@@ -338,6 +404,7 @@ class TelegramTransportMixin(_MixinHost):
         finally:
             self._connected = False
             self._last_authorization_check = 0.0
+            self._authorized_user = None
 
     async def reconnect(self) -> None:
         await self.disconnect()
@@ -443,17 +510,15 @@ class TelegramTransportMixin(_MixinHost):
                 FloodTestPhoneWaitError,
             ) as exc:
                 raw_wait = max(0, int(exc.seconds))
-                wait_time = raw_wait + random.randint(
-                    self.FLOOD_WAIT_BUFFER_MIN_SECONDS,
-                    self.FLOOD_WAIT_BUFFER_MAX_SECONDS,
-                )
+                wait_time = self._protected_flood_wait_seconds(raw_wait)
                 log.warning(
                     "Telegram FloodWait: requested=%ss, protected_wait=%ss",
                     raw_wait,
                     wait_time,
                 )
                 await self._report_status(
-                    f"Ограничение Telegram: задача отложена на {wait_time} сек"
+                    "Ограничение Telegram: автоматическое продолжение через "
+                    f"{wait_time} сек"
                 )
                 # FloodWait is an explicit pre-execution rejection. Persist the
                 # retry time and release the global worker for unrelated tasks.
@@ -492,10 +557,7 @@ class TelegramTransportMixin(_MixinHost):
                             "rpc_message": str(exc),
                         },
                     ) from exc
-                wait_time = raw_wait + random.randint(
-                    self.FLOOD_WAIT_BUFFER_MIN_SECONDS,
-                    self.FLOOD_WAIT_BUFFER_MAX_SECONDS,
-                )
+                wait_time = self._protected_flood_wait_seconds(raw_wait)
                 log.warning(
                     "Telegram generic FloodError: requested=%ss, protected_wait=%ss",
                     raw_wait,
@@ -715,10 +777,7 @@ class TelegramTransportMixin(_MixinHost):
             ) as exc:
                 raw_wait = max(0, int(exc.seconds))
                 flood_attempts += 1
-                wait_time = raw_wait + random.randint(
-                    self.FLOOD_WAIT_BUFFER_MIN_SECONDS,
-                    self.FLOOD_WAIT_BUFFER_MAX_SECONDS,
-                )
+                wait_time = self._protected_flood_wait_seconds(raw_wait)
                 log.warning(
                     "Telegram pagination FloodWait #%s: requested=%ss, protected_wait=%ss",
                     flood_attempts,
@@ -752,10 +811,7 @@ class TelegramTransportMixin(_MixinHost):
                             "rpc_message": str(exc),
                         },
                     ) from exc
-                wait_time = raw_wait + random.randint(
-                    self.FLOOD_WAIT_BUFFER_MIN_SECONDS,
-                    self.FLOOD_WAIT_BUFFER_MAX_SECONDS,
-                )
+                wait_time = self._protected_flood_wait_seconds(raw_wait)
                 raise DeferredTelegramError(
                     "Telegram pagination generic FloodError",
                     code="flood_wait_deferred",

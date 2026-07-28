@@ -35,7 +35,9 @@ class TelegramService(
 
     FLOOD_WAIT_BUFFER_MIN_SECONDS = 30
     FLOOD_WAIT_BUFFER_MAX_SECONDS = 45
-    AUTHORIZATION_RECHECK_SECONDS = 5 * 60
+    FLOOD_WAIT_AUTO_RESUME_MIN_SECONDS = 3 * 60
+    FLOOD_WAIT_AUTO_RESUME_MAX_SECONDS = 5 * 60
+    AUTHORIZATION_RECHECK_SECONDS = 15 * 60
 
     def __init__(
         self,
@@ -94,6 +96,7 @@ class TelegramService(
         self._secure_session_file(telegram_session_base.with_suffix(".session"))
         self._connected = False
         self._last_authorization_check = 0.0
+        self._authorized_user = None
         self._status_callback = status_callback
         self._peer_references: dict[int, Any] = {}
 

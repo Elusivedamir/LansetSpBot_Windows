@@ -5,6 +5,7 @@ from typing import cast
 import logging
 
 from PySide6.QtCore import QThreadPool, Qt, QTimer
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -87,8 +88,16 @@ class CommentingView(QWidget):
         source_title = QLabel("Источник комментария")
         source_title.setObjectName("cardTitle")
         self.comment_source_combo = QComboBox()
+        self.comment_source_combo.setObjectName("commentSourceCombo")
         self.comment_source_combo.addItem("Готовые тексты", SOURCE_PREWRITTEN)
         self.comment_source_combo.addItem("OpenAI", SOURCE_OPENAI)
+        openai_index = self.comment_source_combo.findData(SOURCE_OPENAI)
+        if openai_index >= 0:
+            self.comment_source_combo.setItemData(
+                openai_index,
+                QColor("#39FF14"),
+                Qt.ItemDataRole.ForegroundRole,
+            )
         self.comment_source_combo.currentIndexChanged.connect(
             self._on_comment_source_changed
         )
@@ -203,7 +212,7 @@ class CommentingView(QWidget):
         self.openai_card.setObjectName("card")
         openai_layout = QVBoxLayout(self.openai_card)
         openai_title = QLabel("OpenAI · автоматическая генерация")
-        openai_title.setObjectName("cardTitle")
+        openai_title.setObjectName("openAiTitle")
         openai_note = QLabel(
             "Для каждой отправки берётся один вариант из вашего перемешанного набора "
             "и передаётся в OpenAI вместе с текстом поста. Модель пишет один "
@@ -402,8 +411,15 @@ class CommentingView(QWidget):
         self.comments_title.setText(
             "Варианты готовых комментариев"
             if prepared
-            else "Ваши комментарии · смысл для OpenAI"
+            else (
+                "Ваши комментарии · смысл для "
+                '<span style="color:#39FF14; font-weight:800;">OpenAI</span>'
+            )
         )
+        self.comment_source_combo.setProperty("openAiSelected", not prepared)
+        self.comment_source_combo.style().unpolish(self.comment_source_combo)
+        self.comment_source_combo.style().polish(self.comment_source_combo)
+        self.comment_source_combo.update()
         self.variant_count_label.setVisible(True)
         for row in self.variant_rows:
             row.setVisible(True)

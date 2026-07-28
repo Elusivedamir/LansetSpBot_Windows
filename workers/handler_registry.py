@@ -488,18 +488,15 @@ def create_worker_handlers(
         )
 
     async def telegram_health(_task: dict[str, Any]) -> dict[str, Any]:
-        await telegram.connect()
-        client = getattr(telegram, "client", None)
-        if client is None:
+        identity_reader = getattr(telegram, "get_connected_identity", None)
+        if not callable(identity_reader):
             raise NonRetryableTelegramError(
-                "Telegram client is unavailable", code="handler_missing"
+                "Telegram identity check is unavailable", code="handler_missing"
             )
-        if not await client.is_user_authorized():
-            raise NonRetryableTelegramError(
-                "Telegram session requires authorization",
-                code="authorization_required",
-            )
-        me = await client.get_me()
+        # ensure_connected() performs the only due authorization probe and then
+        # exposes its validated identity. Avoid repeating is_user_authorized()
+        # and get_me() for every health task.
+        me = await identity_reader()
         actual_id = int(getattr(me, "id", 0) or 0)
         expected_id = int(getattr(telegram, "account_id", 0) or 0)
         if actual_id <= 0 or (expected_id > 0 and actual_id != expected_id):

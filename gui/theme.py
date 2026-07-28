@@ -93,18 +93,18 @@ QListWidget#navigation {
     font-weight: 700;
 }
 QListWidget#navigation::item {
-    color: #B0B4BC;
+    color: #39FF14;
     padding: 15px 17px;
     margin: 4px 0;
     border-radius: 13px;
 }
 QListWidget#navigation::item:hover {
     background: rgba(48, 78, 103, 0.48);
-    color: #FFFFFF;
+    color: #39FF14;
 }
 QListWidget#navigation::item:selected {
     background: #15171B;
-    color: #FFFFFF;
+    color: #39FF14;
 }
 QPushButton#sidebarHelpButton {
     min-height: 25px;
@@ -192,6 +192,15 @@ QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {
 QComboBox::drop-down {
     border: none;
     width: 28px;
+}
+QComboBox#commentSourceCombo[openAiSelected="true"] {
+    color: #39FF14;
+    font-weight: 850;
+}
+QLabel#openAiTitle {
+    color: #39FF14;
+    font-size: 16px;
+    font-weight: 850;
 }
 /* Popups are separate top-level windows. Without their own rules they fall
    back to the system palette, which on this dark theme rendered near-white

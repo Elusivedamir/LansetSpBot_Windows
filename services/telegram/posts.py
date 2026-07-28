@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import logging
 from contextlib import nullcontext
@@ -188,14 +188,23 @@ class TelegramPostResolverMixin(_MixinHost):
             1, min(MAX_HISTORY_PAGE, int(limit or LATEST_POST_SCAN_LIMIT))
         )
 
-        async def scan_messages(scan_limit: int):
+        scanned_total = 0
+        newest: Any | None = None
+        grouped_id: Any | None = None
+        album_items: list[Any] = []
+        last_message_id: int | None = None
+
+        async def scan_messages(scan_limit: int, *, offset_id: int | None = None):
+            nonlocal scanned_total, newest, grouped_id, last_message_id
+            iterator_kwargs = {"limit": max(1, int(scan_limit))}
+            if offset_id is not None:
+                # Telethon excludes offset_id itself and continues with older
+                # rows, so the expanded scan does not re-read the first page.
+                iterator_kwargs["offset_id"] = int(offset_id)
             iterator = self.client.iter_messages(
-                channel_ref, limit=scan_limit
+                channel_ref, **iterator_kwargs
             ).__aiter__()
-            scanned = 0
-            newest = None
-            grouped_id = None
-            album_items = []
+            scanned_this_pass = 0
             observer = getattr(self.client, "observe_requests", None)
             observer_context = nullcontext()
             if dispatch_barrier is not None and callable(observer):
@@ -209,10 +218,14 @@ class TelegramPostResolverMixin(_MixinHost):
                         None if callable(observer) else dispatch_barrier
                     ),
                 ):
-                    scanned += 1
+                    scanned_this_pass += 1
+                    scanned_total += 1
+                    candidate_id = getattr(candidate, "id", None)
+                    if candidate_id is not None:
+                        last_message_id = int(candidate_id)
                     if (
                         getattr(candidate, "action", None) is not None
-                        or getattr(candidate, "id", None) is None
+                        or candidate_id is None
                     ):
                         continue
                     if newest is None:
@@ -227,19 +240,36 @@ class TelegramPostResolverMixin(_MixinHost):
                         continue
                     # The next real publication proves that the newest album is
                     # complete; service events between publications are ignored.
-                    return min(album_items, key=lambda item: int(item.id)), False
+                    return min(
+                        album_items,
+                        key=lambda item: int(item.id),
+                    ), False
 
             if newest is None:
-                return None, scanned >= scan_limit
-            message = min(album_items, key=lambda item: int(item.id))
-            return message, scanned >= scan_limit
+                return None, scanned_this_pass >= scan_limit
+            message = min(
+                album_items,
+                key=lambda item: int(item.id),
+            )
+            return message, scanned_this_pass >= scan_limit
 
         message, needs_expanded_scan = await scan_messages(fetch_limit)
         if needs_expanded_scan:
             # Telegram albums are small in normal operation, while this higher
             # ceiling also tolerates long runs of service events without an
             # unbounded history scan on malformed or service-only channels.
-            message, _ = await scan_messages(EXPANDED_POST_SCAN_LIMIT)
+            # Continue after the last inspected row instead of fetching the
+            # initial page a second time.
+            continuation_offset = last_message_id
+            remaining_limit = max(
+                1,
+                EXPANDED_POST_SCAN_LIMIT - scanned_total,
+            )
+            if continuation_offset is not None and remaining_limit > 0:
+                message, _ = await scan_messages(
+                    remaining_limit,
+                    offset_id=int(continuation_offset),
+                )
 
         if message is None:
             return LatestPostResult("no_post")

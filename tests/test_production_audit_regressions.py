@@ -221,7 +221,7 @@ async def test_periodic_auth_check_uses_fresh_identity_rpc() -> None:
     service.client = Client()
     service.settings = SimpleNamespace(expected_account_id=123)
     # Make the probe deterministically due even in a freshly started CI
-    # container whose monotonic clock is still below five minutes.
+    # container whose monotonic clock is still below the recheck interval.
     service._last_authorization_check = (
         time.monotonic() - service.AUTHORIZATION_RECHECK_SECONDS - 1.0
     )

@@ -246,6 +246,7 @@ async def test_latest_message_uses_one_discussion_request_only():
 @pytest.mark.asyncio
 async def test_latest_post_expands_past_four_service_events():
     limits = []
+    offsets = []
 
     class Client:
         def is_connected(self):
@@ -254,9 +255,10 @@ async def test_latest_post_expands_past_four_service_events():
         async def get_entity(self, channel_id):
             return channel_id
 
-        def iter_messages(self, entity, limit):
+        def iter_messages(self, entity, limit, offset_id=None):
             del entity
             limits.append(limit)
+            offsets.append(offset_id)
             # The run of service events must exceed the first-pass window so
             # the saturated-batch branch is still the code path under test.
             messages = [
@@ -264,6 +266,8 @@ async def test_latest_post_expands_past_four_service_events():
                 for value in range(60, 25, -1)
             ]
             messages.append(SimpleNamespace(id=25, action=None, grouped_id=None))
+            if offset_id is not None:
+                messages = [item for item in messages if item.id < offset_id]
             return _MessageIterator(messages[:limit])
 
         async def __call__(self, request):
@@ -287,12 +291,17 @@ async def test_latest_post_expands_past_four_service_events():
 
     assert result.status == "ok"
     assert result.message.id == 25
-    assert limits == [LATEST_POST_SCAN_LIMIT, EXPANDED_POST_SCAN_LIMIT]
+    assert limits == [
+        LATEST_POST_SCAN_LIMIT,
+        EXPANDED_POST_SCAN_LIMIT - LATEST_POST_SCAN_LIMIT,
+    ]
+    assert offsets == [None, 31]
 
 
 @pytest.mark.asyncio
 async def test_latest_album_expands_before_choosing_durable_post_id():
     limits = []
+    offsets = []
 
     class Client:
         def is_connected(self):
@@ -301,9 +310,10 @@ async def test_latest_album_expands_before_choosing_durable_post_id():
         async def get_entity(self, channel_id):
             return channel_id
 
-        def iter_messages(self, entity, limit):
+        def iter_messages(self, entity, limit, offset_id=None):
             del entity
             limits.append(limit)
+            offsets.append(offset_id)
             # Synthetically wider than any real Telegram album so the
             # truncated-prefix branch stays covered after the window change.
             messages = [
@@ -311,6 +321,8 @@ async def test_latest_album_expands_before_choosing_durable_post_id():
                 for value in range(60, 30, -1)
             ]
             messages.append(SimpleNamespace(id=30, action=None, grouped_id=None))
+            if offset_id is not None:
+                messages = [item for item in messages if item.id < offset_id]
             return _MessageIterator(messages[:limit])
 
         async def __call__(self, request):
@@ -334,7 +346,11 @@ async def test_latest_album_expands_before_choosing_durable_post_id():
 
     assert result.status == "ok"
     assert result.message.id == 31
-    assert limits == [LATEST_POST_SCAN_LIMIT, EXPANDED_POST_SCAN_LIMIT]
+    assert limits == [
+        LATEST_POST_SCAN_LIMIT,
+        EXPANDED_POST_SCAN_LIMIT - LATEST_POST_SCAN_LIMIT,
+    ]
+    assert offsets == [None, 31]
 
 
 @pytest.mark.asyncio
@@ -414,7 +430,7 @@ async def test_flood_wait_is_reported_to_runtime_status(monkeypatch):
     with pytest.raises(DeferredTelegramError) as raised:
         await service.execute(operation)
     assert raised.value.code == "flood_wait_deferred"
-    assert raised.value.retry_after == 22
+    assert raised.value.retry_after == 180
     assert calls == 1
     assert any("Ограничение Telegram" in item for item in statuses)
 

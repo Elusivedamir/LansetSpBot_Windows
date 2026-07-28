@@ -96,6 +96,8 @@ async def test_rate_limiter_keeps_independent_category_counters() -> None:
 def test_flood_wait_buffer_is_random_thirty_to_forty_five_seconds() -> None:
     assert TelegramService.FLOOD_WAIT_BUFFER_MIN_SECONDS == 30
     assert TelegramService.FLOOD_WAIT_BUFFER_MAX_SECONDS == 45
+    assert TelegramService.FLOOD_WAIT_AUTO_RESUME_MIN_SECONDS == 3 * 60
+    assert TelegramService.FLOOD_WAIT_AUTO_RESUME_MAX_SECONDS == 5 * 60
 
 
 def test_instruction_view_is_a_real_multi_step_slideshow() -> None:

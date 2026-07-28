@@ -215,10 +215,7 @@ class AccountManagerPanel(QFrame):
         state = str(account.get("runtime_state") or "disconnected")
         label = STATE_LABELS.get(state, state)
         self.state_text.setText(label)
-        self.details.setText(
-            f"Telegram ID: {self._selected_account_id} · "
-            f"Сессия: {account.get('session_name') or '—'}"
-        )
+        self.details.setText(f"Telegram ID: {self._selected_account_id}")
         self.state_dot.setObjectName(
             {
                 "connected": "accountStateOnline",

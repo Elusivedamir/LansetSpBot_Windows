@@ -121,8 +121,8 @@ class ChannelsView(QWidget):
         info_title.setObjectName("cardTitle")
         info = QLabel(
             "«Получить каналы и сохранить список» одним проходом обновляет рабочую базу и "
-            "запоминает публичные каналы и группы. После смены аккаунта нажмите «Вступить в сохранённые». "
-            "Вступления выполняются случайно согласно настроенному часовому лимиту и минимальному интервалу. "
+            "запоминает публичные каналы и группы. После смены аккаунта перенесите список "
+            "кнопкой «Импортировать каналы из предыдущего аккаунта» в разделе «Аккаунт». "
             "Приватные чаты без публичного username или сохранённой инвайт-ссылки останутся в списке, "
             "но автоматически вступить в них нельзя."
         )
@@ -140,6 +140,7 @@ class ChannelsView(QWidget):
         self.join_button = QPushButton("Вступить в сохранённые")
         self.join_button.setObjectName("primaryButton")
         self.join_button.clicked.connect(self.start_join_campaign)
+        self.join_button.hide()
         self.pause_join_button = QPushButton("Пауза")
         self.pause_join_button.setObjectName("secondaryButton")
         self.pause_join_button.clicked.connect(self.pause_join_campaign)
@@ -154,7 +155,6 @@ class ChannelsView(QWidget):
 
         self.buttons = [
             self.sync_button,
-            self.join_button,
             self.pause_join_button,
             self.stop_join_button,
             self.delete_button,
@@ -283,7 +283,9 @@ class ChannelsView(QWidget):
         else:
             for index, button in enumerate(self.buttons):
                 self.buttons_layout.addWidget(button, 0, index)
-        self.buttons_layout.setColumnStretch(5 if not compact else 1, 1)
+        self.buttons_layout.setColumnStretch(
+            len(self.buttons) if not compact else 1, 1
+        )
 
     def set_compact_mode(self, compact: bool) -> None:
         self._arrange_buttons(compact)

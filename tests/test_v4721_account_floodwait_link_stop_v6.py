@@ -321,7 +321,7 @@ async def test_additional_timed_flood_errors_use_protected_account_wait(
     with pytest.raises(DeferredTelegramError) as raised:
         await service.execute(operation)
     assert raised.value.code == "flood_wait_deferred"
-    assert raised.value.retry_after == 46
+    assert raised.value.retry_after == 180
 
 
 @pytest.mark.asyncio

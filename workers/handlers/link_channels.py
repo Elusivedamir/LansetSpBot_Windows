@@ -12,9 +12,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from datetime import timedelta
 from typing import Any, cast
 
 from core.account_restriction import get_account_restriction_state
+from core.campaign_schedule import utc_now
 from core.exceptions import (
     DeferredTelegramError,
     NonRetryableTelegramError,
@@ -138,10 +140,16 @@ def create_link_channels_handler(
             if row.get("channel_id") is not None
         }
 
-        join_delay_min = float(getattr(self.config, "link_join_delay_min_seconds", 15))
+        minimum_join_interval = max(
+            0.0,
+            float(getattr(self.config, "min_join_interval_seconds", 45)),
+        )
+        join_delay_min = max(
+            0.0,
+            float(getattr(self.config, "link_join_delay_min_seconds", 15)),
+        )
         join_delay_max = float(getattr(self.config, "link_join_delay_max_seconds", 25))
-        if join_delay_max < join_delay_min:
-            join_delay_max = join_delay_min
+        join_delay_max = max(join_delay_min, join_delay_max)
 
         check_delay_min = float(getattr(self.config, "link_check_delay_min_seconds", 3))
         check_delay_max = float(getattr(self.config, "link_check_delay_max_seconds", 7))
@@ -555,7 +563,71 @@ def create_link_channels_handler(
                         prepared_count += 1
                         status = "Связано · обсуждение уже в диалогах"
                     else:
-                        if join_attempt_count > 0:
+                        guard_reader = getattr(worker_db, "get_join_guard", None)
+                        guard = (
+                            guard_reader(
+                                max_joins=max(
+                                    1,
+                                    int(
+                                        getattr(
+                                            self.config,
+                                            "max_joins_per_hour",
+                                            40,
+                                        )
+                                    ),
+                                ),
+                                min_interval_seconds=minimum_join_interval,
+                                window_seconds=3600,
+                                account_id=account_id if account_id > 0 else None,
+                            )
+                            if callable(guard_reader)
+                            else {"allowed": True, "wait_seconds": 0}
+                        )
+                        # Lightweight tests and alternate repositories may expose
+                        # a generic mock here. Production always returns a mapping.
+                        if not isinstance(guard, dict):
+                            guard = {"allowed": True, "wait_seconds": 0}
+                        if not bool(guard.get("allowed", True)):
+                            wait = max(
+                                30,
+                                int(guard.get("wait_seconds") or 0)
+                                + random.randint(5, 20),
+                            )
+                            persist_checkpoint(phase="channels")
+                            set_runtime(
+                                task_id,
+                                "Локальный лимит вступлений: позиция сохранена; "
+                                f"автопродолжение через "
+                                f"{max(1, round(wait / 60))} мин",
+                                activity=True,
+                                level="INFO",
+                                account_id=account_id,
+                            )
+                            postponement = getattr(
+                                worker_db,
+                                "postpone_running_task_for_account_cooldown",
+                                None,
+                            )
+                            if not callable(postponement) or not postponement(
+                                task_id,
+                                retry_at=utc_now() + timedelta(seconds=wait),
+                                code=(
+                                    "local_join_rate_wait: локальный лимит "
+                                    f"вступлений, повтор через {wait} сек"
+                                ),
+                            ):
+                                raise RuntimeError(
+                                    "Could not postpone link task for local join limit"
+                                )
+                            return
+                        # Confirmed/uncertain joins are already spaced by the
+                        # durable guard. Keep the shorter humanized delay only
+                        # between attempts that produced no join event (for
+                        # example USER_ALREADY_PARTICIPANT).
+                        if (
+                            join_attempt_count > 0
+                            and int(guard.get("effective_count") or 0) <= 0
+                        ):
                             delay = random.uniform(join_delay_min, join_delay_max)
                             set_runtime(
                                 task_id,

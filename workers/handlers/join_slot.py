@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 from datetime import timedelta
 from enum import IntEnum
@@ -18,6 +19,8 @@ from core.exceptions import (
     NonRetryableTelegramError,
     TelegramOperationError,
 )
+
+log = logging.getLogger(__name__)
 
 
 class JoinSlotPhase(IntEnum):
@@ -369,6 +372,26 @@ def create_join_slot_handler(
                 raise RuntimeError(
                     "Join slot was no longer eligible for network deferral"
                 )
+            if code == "flood_wait_deferred" and account_id > 0:
+                cooldown_writer = getattr(
+                    worker_db, "set_account_rpc_cooldown", None
+                )
+                if callable(cooldown_writer):
+                    try:
+                        cooldown_writer(
+                            account_id=account_id,
+                            retry_at=retry_at,
+                            code=code,
+                            source_task_id=task_id,
+                            wait_seconds=wait,
+                        )
+                    except Exception:
+                        # The join campaign is already safely in network_wait.
+                        # Do not strand its slot if the broader cooldown write
+                        # loses a transient SQLite race.
+                        log.exception(
+                            "Could not persist account FloodWait cooldown"
+                        )
         except NonRetryableTelegramError as exc:
             code = getattr(exc, "code", "")
             if code == "network_unavailable":
