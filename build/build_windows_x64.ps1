@@ -109,16 +109,62 @@ if ($LASTEXITCODE -ne 0) {
 
 if (-not $SkipTests) {
     $env:QT_QPA_PLATFORM = "offscreen"
-    # Run under coverage using only locked dev dependencies: the hash-locked
-    # dev graph ships `coverage` and `pytest`, but not `pytest-cov`.
-    Write-BuildStage "Running pytest with coverage"
-& $BuildPython -m coverage run -m pytest -vv
-    if ($LASTEXITCODE -ne 0) { throw "pytest failed." }
+    $env:PYTHONFAULTHANDLER = "1"
+
+    # Run the non-GUI and GUI-heavy suites in separate interpreter processes.
+    # Each suite stops at its first assertion failure and prints a complete
+    # traceback. The watchdog terminates a single hung test after 180 seconds
+    # while dumping every Python thread to the live CI log.
+    & $BuildPython -m coverage erase
+    if ($LASTEXITCODE -ne 0) { throw "Could not reset coverage data." }
+
+    Write-BuildStage "Running core pytest diagnostics"
+    & $BuildPython -X faulthandler -m coverage run --parallel-mode -m pytest `
+        -vv --maxfail=1 --tb=long --showlocals -rA --durations=20 `
+        -p tools.pytest_ci_watchdog `
+        --junitxml "ci-proof\pytest-core.xml" `
+        --ignore "tests/test_gui_v45.py" tests 2>&1 |
+        Tee-Object -FilePath "ci-proof\pytest-core.log"
+    $coreTestsExit = $LASTEXITCODE
+
+    Write-BuildStage "Running GUI pytest diagnostics in isolated process"
+    & $BuildPython -X faulthandler -m coverage run --parallel-mode -m pytest `
+        -vv --maxfail=1 --tb=long --showlocals -rA --durations=20 `
+        -p tools.pytest_ci_watchdog `
+        --junitxml "ci-proof\pytest-gui.xml" `
+        "tests/test_gui_v45.py" 2>&1 |
+        Tee-Object -FilePath "ci-proof\pytest-gui.log"
+    $guiTestsExit = $LASTEXITCODE
+
+    # Preserve partial coverage even when either diagnostic suite fails. This is
+    # evidence only; the release gate below still fails closed on any test error.
+    & $BuildPython -m coverage combine
+    $coverageCombineExit = $LASTEXITCODE
+    if ($coverageCombineExit -eq 0) {
+        & $BuildPython -m coverage json -o coverage.json -q
+        $coverageJsonExit = $LASTEXITCODE
+    }
+    else {
+        $coverageJsonExit = 1
+    }
+
+    @(
+        "core_exit=$coreTestsExit"
+        "gui_exit=$guiTestsExit"
+        "coverage_combine_exit=$coverageCombineExit"
+        "coverage_json_exit=$coverageJsonExit"
+    ) | Set-Content -LiteralPath "ci-proof\pytest-diagnostics-summary.txt" -Encoding UTF8
+
+    if ($coreTestsExit -ne 0 -or $guiTestsExit -ne 0) {
+        throw "pytest diagnostics failed: core=$coreTestsExit gui=$guiTestsExit. See ci-proof pytest logs and JUnit reports."
+    }
+    if ($coverageCombineExit -ne 0 -or $coverageJsonExit -ne 0) {
+        throw "Coverage report generation failed after split pytest runs."
+    }
+
     # tools/check_critical_coverage.py enforces per-module minimums for the
     # release-critical code. It was previously shipped but never executed, so a
     # module could silently lose its test coverage between releases.
-    & $BuildPython -m coverage json -o coverage.json -q
-    if ($LASTEXITCODE -ne 0) { throw "Coverage report generation failed." }
     & $BuildPython tools\check_critical_coverage.py
     if ($LASTEXITCODE -ne 0) { throw "Critical coverage gate failed." }
     & $BuildPython -m compileall -q core services storage workers gui main.py tests tools build
@@ -126,16 +172,16 @@ if (-not $SkipTests) {
     & $BuildPython -m ruff check core services storage workers gui main.py tests tools build
     if ($LASTEXITCODE -ne 0) { throw "Ruff failed." }
     Write-BuildStage "Running Mypy"
-& $BuildPython -m mypy --config-file mypy.ini core services storage workers gui main.py
+    & $BuildPython -m mypy --config-file mypy.ini core services storage workers gui main.py
     if ($LASTEXITCODE -ne 0) { throw "Mypy failed." }
     Write-BuildStage "Running source self-test"
-& $BuildPython main.py --self-test
+    & $BuildPython main.py --self-test
     if ($LASTEXITCODE -ne 0) { throw "Source self-test failed." }
     # A lock generated on one interpreter installs there and fails the hash
     # check on the other, which the user sees as a tampering warning. Both
     # supported interpreters must resolve before a release ships.
     Write-BuildStage "Checking runtime lock coverage"
-& $BuildPython tools\check_lock_coverage.py
+    & $BuildPython tools\check_lock_coverage.py
     if ($LASTEXITCODE -ne 0) { throw "Runtime lock does not cover every supported Python version." }
 }
 

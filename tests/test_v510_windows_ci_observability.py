@@ -26,7 +26,8 @@ def test_release_build_announces_long_running_stages() -> None:
     assert "function Write-BuildStage" in text
     assert "[LansetSpBot build][stage]" in text
     assert 'Write-BuildStage "Installing runtime dependencies"' in text
-    assert 'Write-BuildStage "Running pytest with coverage"' in text
-    assert "coverage run -m pytest -vv" in text
+    assert 'Write-BuildStage "Running core pytest diagnostics"' in text
+    assert 'Write-BuildStage "Running GUI pytest diagnostics in isolated process"' in text
+    assert "coverage run --parallel-mode -m pytest" in text
     assert 'Write-BuildStage "Building Windows application with PyInstaller"' in text
     assert 'Write-BuildStage "Running packaged self-test"' in text
