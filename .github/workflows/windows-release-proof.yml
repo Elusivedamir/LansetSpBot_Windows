@@ -58,6 +58,22 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+
+          $head = (git rev-parse HEAD).Trim()
+          if ($head -ne "${{ github.sha }}") {
+            throw "Checked out commit $head does not match requested commit ${{ github.sha }}."
+          }
+
+          $dirtyCheckout = @(git status --porcelain=v1 --untracked-files=all)
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not inspect the checkout state."
+          }
+          if ($dirtyCheckout.Count -gt 0) {
+            Write-Host "Unexpected checkout changes:"
+            $dirtyCheckout | ForEach-Object { Write-Host "  $_" }
+            throw "Checkout is not clean before the proof run."
+          }
+
           New-Item -ItemType Directory -Path "ci-proof" -Force | Out-Null
 
           @(
@@ -83,14 +99,6 @@ jobs:
             Tee-Object -FilePath "ci-proof\python-313-proof.txt"
           if ($LASTEXITCODE -ne 0) {
             throw "Python 3.13 x64 is not available through py.exe."
-          }
-
-          $head = (git rev-parse HEAD).Trim()
-          if ($head -ne "${{ github.sha }}") {
-            throw "Checked out commit $head does not match requested commit ${{ github.sha }}."
-          }
-          if (git status --porcelain) {
-            throw "Checkout is not clean before the proof run."
           }
 
           python tools/generate_manifest.py --check 2>&1 |

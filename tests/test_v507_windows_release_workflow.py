@@ -33,3 +33,12 @@ def test_user_build_wrapper_still_points_to_the_release_script() -> None:
     wrapper = (ROOT / "BUILD_WINDOWS_X64.cmd").read_text(encoding="utf-8")
     assert r"build\build_windows_x64.ps1" in wrapper
     assert "exit /b %MARLEN_EXIT%" in wrapper
+
+def test_checkout_is_verified_before_ci_evidence_is_created() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    clean_check = text.index("git status --porcelain=v1 --untracked-files=all")
+    proof_directory = text.index(
+        'New-Item -ItemType Directory -Path "ci-proof" -Force'
+    )
+    assert clean_check < proof_directory
+    assert text.count("Checkout is not clean before the proof run.") == 1
