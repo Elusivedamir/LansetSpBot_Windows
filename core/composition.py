@@ -18,7 +18,9 @@ from services.telegram_service import TelegramService
 from services.account_sessions import (
     migrate_legacy_account_secrets,
     migrate_legacy_main_session,
+    recover_account_lifecycle,
     recover_interrupted_session_moves,
+    recover_session_residues,
 )
 from services.account_runtime_manager import create_multiaccount_handlers
 from storage.database import Database
@@ -42,6 +44,15 @@ class ApplicationContainer:
         self.session_recovery = recover_interrupted_session_moves(
             config.telegram.session_dir
         )
+        self.account_lifecycle_recovery = recover_account_lifecycle(
+            self.database,
+            self.secret_store,
+            config.telegram.session_dir,
+        )
+        self.session_residue_recovery = recover_session_residues(
+            self.database,
+            config.telegram.session_dir,
+        )
         self.session_migration = migrate_legacy_main_session(
             self.database, config.telegram.session_dir
         )
@@ -62,6 +73,7 @@ class ApplicationContainer:
             max_joins_per_hour=config.max_joins_per_hour,
             campaign_hours=config.campaign_hours,
             config=config,
+            secret_migration_verified=True,
         )
         self.adapter = GUIServiceAdapter(self.api)
 

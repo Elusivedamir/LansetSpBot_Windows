@@ -95,6 +95,7 @@ class ServiceAPI(
         max_joins_per_hour: int = 40,
         campaign_hours: int = 24,
         config=None,
+        secret_migration_verified: bool = False,
     ) -> None:
         super().__init__()
         self.database = database
@@ -106,22 +107,32 @@ class ServiceAPI(
         self.secret_store = secret_store or SecretStore()
         self._secret_lock = threading.RLock()
         self._secret_migration_required = threading.Event()
-        # Fail closed from construction until the migration thread verifies that
-        # no legacy SQLite secret copies remain.
-        self._secret_migration_required.set()
         self._secret_migration_thread = threading.Thread(
-            target=type(self)._migrate_legacy_secrets,
-            args=(
-                self.database,
-                self.secret_store,
-                self.SECRET_SETTING_KEYS,
-                self._secret_lock,
-                self._secret_migration_required,
-            ),
-            name="marlen-secret-migration",
+            target=lambda: None,
+            name="marlen-secret-migration-complete",
             daemon=False,
         )
-        self._secret_migration_thread.start()
+        if secret_migration_verified:
+            # ApplicationContainer performs the migration synchronously before
+            # the queue exists. Do not start a second racing migration thread.
+            self._secret_migration_required.clear()
+        else:
+            # Direct/test construction remains fail-closed until its own
+            # compatibility migration verifies that no SQLite secret copies remain.
+            self._secret_migration_required.set()
+            self._secret_migration_thread = threading.Thread(
+                target=type(self)._migrate_legacy_secrets,
+                args=(
+                    self.database,
+                    self.secret_store,
+                    self.SECRET_SETTING_KEYS,
+                    self._secret_lock,
+                    self._secret_migration_required,
+                ),
+                name="marlen-secret-migration",
+                daemon=False,
+            )
+            self._secret_migration_thread.start()
         self._secret_migration_retry_at = 0.0
         self._scheduler_failures = 0
         self._scheduler_error_present = bool(

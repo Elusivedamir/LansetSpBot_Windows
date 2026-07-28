@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import secrets
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -11,12 +12,15 @@ from services.account_context import (
     account_secret_key,
 )
 from services.account_sessions import (
+    clear_account_lifecycle_journal,
     discard_pending_session,
     finalize_pending_session,
     replace_pending_session,
     rollback_finalized_session,
     stage_account_session_removal,
+    update_account_lifecycle_journal,
     validate_session_name,
+    write_account_lifecycle_journal,
 )
 from storage.db_common import DatabaseError
 
@@ -210,14 +214,32 @@ class AccountsAPIMixin(_MixinHost):
             with self._secret_lock:
                 old_secrets = {
                     key: self._strict_account_secret(telegram_id, key)
-                    for key in secret_updates
+                    for key in SECRET_SETTING_KEYS
                 }
+            swap_name = f".swap_account_{telegram_id}_{secrets.token_hex(12)}"
+            journal = write_account_lifecycle_journal(
+                self.secret_store,
+                account_id=telegram_id,
+                operation="reauthorize",
+                pending_session_name=pending,
+                final_session_name=f"account_{telegram_id}",
+                swap_name=swap_name,
+                old_account=dict(existing),
+                old_public=dict(old_public),
+                old_secrets=dict(old_secrets),
+                selected_before=self.get_selected_account_id(),
+                secret_keys=sorted(SECRET_SETTING_KEYS),
+            )
             try:
                 with replace_pending_session(
                     self.config.telegram.session_dir,
                     pending_session_name=pending,
                     telegram_account_id=telegram_id,
+                    swap_name=swap_name,
                 ) as final_name:
+                    journal = update_account_lifecycle_journal(
+                        self.secret_store, journal, phase="session_swapped"
+                    )
                     with self.database.get_connection():
                         self.database.register_telegram_account(
                             telegram_account_id=telegram_id,
@@ -244,20 +266,37 @@ class AccountsAPIMixin(_MixinHost):
                                 self._set_account_secret(telegram_id, key, value)
                         self.database.resume_account_work(telegram_id)
                         selected = self.database.select_telegram_account(telegram_id)
+                    journal = update_account_lifecycle_journal(
+                        self.secret_store, journal, phase="committed"
+                    )
             except BaseException:
+                rollback_error = None
                 try:
                     self.database.replace_account_settings(
                         telegram_id, old_public
                     )
-                except Exception:
-                    pass
-                with self._secret_lock:
-                    for key, value in old_secrets.items():
-                        self._set_account_secret(telegram_id, key, value)
-                discard_pending_session(
-                    self.config.telegram.session_dir, pending
-                )
-                raise
+                except Exception as exc:
+                    rollback_error = exc
+                try:
+                    with self._secret_lock:
+                        for key, value in old_secrets.items():
+                            self._set_account_secret(telegram_id, key, value)
+                    discard_pending_session(
+                        self.config.telegram.session_dir, pending
+                    )
+                except Exception as exc:
+                    if rollback_error is None:
+                        rollback_error = exc
+                if rollback_error is None:
+                    clear_account_lifecycle_journal(
+                        self.secret_store, telegram_id
+                    )
+                    raise
+                raise RuntimeError(
+                    "Telegram account rollback is incomplete; "
+                    "startup recovery journal was retained"
+                ) from rollback_error
+            clear_account_lifecycle_journal(self.secret_store, telegram_id)
             selected["created"] = False
             selected["duplicate"] = True
             selected["reauthorized"] = True
@@ -269,6 +308,15 @@ class AccountsAPIMixin(_MixinHost):
             raise ValueError(str(check["message"]))
 
         final_name = f"account_{telegram_id}"
+        journal = write_account_lifecycle_journal(
+            self.secret_store,
+            account_id=telegram_id,
+            operation="register",
+            pending_session_name=pending,
+            final_session_name=final_name,
+            selected_before=self.get_selected_account_id(),
+            secret_keys=sorted(secret_updates),
+        )
         moved = False
         created = False
         try:
@@ -279,6 +327,9 @@ class AccountsAPIMixin(_MixinHost):
                 telegram_account_id=telegram_id,
             )
             moved = True
+            journal = update_account_lifecycle_journal(
+                self.secret_store, journal, phase="session_moved"
+            )
             with self.database.get_connection():
                 _row, created = self.database.register_telegram_account(
                     telegram_account_id=telegram_id,
@@ -296,6 +347,10 @@ class AccountsAPIMixin(_MixinHost):
                     for key, value in secret_updates.items():
                         self._set_account_secret(telegram_id, key, value)
                 selected = self.database.select_telegram_account(telegram_id)
+            journal = update_account_lifecycle_journal(
+                self.secret_store, journal, phase="committed"
+            )
+            clear_account_lifecycle_journal(self.secret_store, telegram_id)
             selected["created"] = created
             return selected
         except BaseException:
@@ -315,6 +370,7 @@ class AccountsAPIMixin(_MixinHost):
             discard_pending_session(
                 self.config.telegram.session_dir, pending
             )
+            clear_account_lifecycle_journal(self.secret_store, telegram_id)
             raise
 
     def update_authorized_account_metadata(
@@ -415,26 +471,49 @@ class AccountsAPIMixin(_MixinHost):
         session_name = validate_session_name(
             account.get("session_name") or f"account_{owner}"
         )
+        old_public = self.database.get_account_settings(owner)
         with self._secret_lock:
             secret_snapshots = {
                 key: self._strict_account_secret(owner, key)
                 for key in SECRET_SETTING_KEYS
             }
+        tombstone_name = f".delete_{session_name}_{secrets.token_hex(12)}"
+        journal = write_account_lifecycle_journal(
+            self.secret_store,
+            account_id=owner,
+            operation="delete",
+            final_session_name=session_name,
+            tombstone_name=tombstone_name,
+            old_account=dict(account),
+            old_public=dict(old_public),
+            old_secrets=dict(secret_snapshots),
+            selected_before=self.get_selected_account_id(),
+            secret_keys=sorted(SECRET_SETTING_KEYS),
+        )
         try:
             with stage_account_session_removal(
                 self.config.telegram.session_dir,
                 session_name=session_name,
+                tombstone_name=tombstone_name,
             ) as cleanup_state:
+                journal = update_account_lifecycle_journal(
+                    self.secret_store, journal, phase="session_staged"
+                )
                 with self._secret_lock:
                     for key in SECRET_SETTING_KEYS:
                         self._set_account_secret(owner, key, None)
                 result = self.database.delete_telegram_account_data(owner)
+                journal = update_account_lifecycle_journal(
+                    self.secret_store, journal, phase="committed"
+                )
         except BaseException:
             with self._secret_lock:
                 for key, value in secret_snapshots.items():
                     self._set_account_secret(owner, key, value)
+            clear_account_lifecycle_journal(self.secret_store, owner)
             raise
 
+        clear_account_lifecycle_journal(self.secret_store, owner)
         worker = self.queue_worker
         if worker is not None:
             worker.clear_scope_cancellation("account", owner)

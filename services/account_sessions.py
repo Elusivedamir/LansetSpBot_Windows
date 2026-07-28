@@ -8,7 +8,7 @@ import secrets
 import time
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 from core.local_security import ensure_private_directory, harden_private_file
 
@@ -24,6 +24,87 @@ LEGACY_ACCOUNT_SECRET_KEYS = (
     "telegram.proxy_secret",
     "openai.api_key",
 )
+
+ACCOUNT_LIFECYCLE_JOURNAL_PREFIX = "internal.account_lifecycle."
+LIFECYCLE_OPERATIONS = frozenset({"register", "reauthorize", "delete"})
+LIFECYCLE_PHASES = frozenset(
+    {"prepared", "session_moved", "session_swapped", "session_staged", "committed"}
+)
+HIDDEN_SESSION_BASE_RE = re.compile(
+    r"^\.(?:swap|delete)_account_[1-9][0-9]*_[a-f0-9]{24}$"
+)
+SWAP_SESSION_RE = re.compile(
+    r"^\.swap_(account_[1-9][0-9]*)_[a-f0-9]{24}\.session$"
+)
+DELETE_SESSION_RE = re.compile(
+    r"^\.delete_(account_[1-9][0-9]*)_[a-f0-9]{24}\.session$"
+)
+PENDING_SESSION_FILE_RE = re.compile(
+    r"^(pending_[a-f0-9]{16,64})\.session$"
+)
+ACCOUNT_SESSION_FILE_RE = re.compile(r"^(account_[1-9][0-9]*)\.session$")
+
+
+def lifecycle_journal_key(account_id: int) -> str:
+    owner = int(account_id)
+    if owner <= 0:
+        raise ValueError("Account lifecycle journal requires a positive account id")
+    return f"{ACCOUNT_LIFECYCLE_JOURNAL_PREFIX}{owner}"
+
+
+def write_account_lifecycle_journal(
+    secret_store,
+    *,
+    account_id: int,
+    operation: str,
+    phase: str = "prepared",
+    **payload: Any,
+) -> dict[str, Any]:
+    owner = int(account_id)
+    operation = str(operation or "").strip().lower()
+    phase = str(phase or "").strip().lower()
+    if operation not in LIFECYCLE_OPERATIONS:
+        raise ValueError(f"Unsupported account lifecycle operation: {operation!r}")
+    if phase not in LIFECYCLE_PHASES:
+        raise ValueError(f"Unsupported account lifecycle phase: {phase!r}")
+    document: dict[str, Any] = {
+        "version": 1,
+        "account_id": owner,
+        "operation": operation,
+        "phase": phase,
+    }
+    document.update(payload)
+    secret_store.set(
+        lifecycle_journal_key(owner),
+        json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+    )
+    return document
+
+
+def update_account_lifecycle_journal(
+    secret_store,
+    journal: dict[str, Any],
+    *,
+    phase: str,
+    **updates: Any,
+) -> dict[str, Any]:
+    document = dict(journal)
+    document.update(updates)
+    return write_account_lifecycle_journal(
+        secret_store,
+        account_id=int(document["account_id"]),
+        operation=str(document["operation"]),
+        phase=phase,
+        **{
+            key: value
+            for key, value in document.items()
+            if key not in {"version", "account_id", "operation", "phase"}
+        },
+    )
+
+
+def clear_account_lifecycle_journal(secret_store, account_id: int) -> None:
+    secret_store.delete(lifecycle_journal_key(account_id))
 
 
 def migrate_legacy_account_secrets(
@@ -473,6 +554,7 @@ def replace_pending_session(
     *,
     pending_session_name: str,
     telegram_account_id: int,
+    swap_name: str | None = None,
 ) -> Iterator[str]:
     """Atomically swap a verified pending session for an existing account session."""
 
@@ -483,9 +565,15 @@ def replace_pending_session(
     if not pending_file.exists():
         raise RuntimeError("Authorized temporary Telegram session is missing")
 
-    swap = destination.parent / (
-        f".swap_{destination.name}_{secrets.token_hex(12)}"
+    chosen_swap = str(
+        swap_name or f".swap_{destination.name}_{secrets.token_hex(12)}"
     )
+    if (
+        not HIDDEN_SESSION_BASE_RE.fullmatch(chosen_swap)
+        or not chosen_swap.startswith(f".swap_{destination.name}_")
+    ):
+        raise ValueError("Unsafe Telegram session swap name")
+    swap = destination.parent / chosen_swap
     had_previous = destination.with_suffix(".session").exists()
     if had_previous:
         _move_session_family(destination, swap)
@@ -519,13 +607,20 @@ def stage_account_session_removal(
     session_dir: Path,
     *,
     session_name: str,
+    tombstone_name: str | None = None,
 ) -> Iterator[dict[str, object]]:
     """Hide local authorization material until the database deletion commits."""
 
     source = session_base(Path(session_dir), session_name)
-    tombstone = source.parent / (
-        f".delete_{source.name}_{secrets.token_hex(12)}"
+    chosen_tombstone = str(
+        tombstone_name or f".delete_{source.name}_{secrets.token_hex(12)}"
     )
+    if (
+        not HIDDEN_SESSION_BASE_RE.fullmatch(chosen_tombstone)
+        or not chosen_tombstone.startswith(f".delete_{source.name}_")
+    ):
+        raise ValueError("Unsafe Telegram session tombstone name")
+    tombstone = source.parent / chosen_tombstone
     cleanup: dict[str, object] = {"removed": False, "warning": ""}
     moved = source.with_suffix(".session").exists()
     if moved:
@@ -583,3 +678,223 @@ def discard_pending_session(session_dir: Path, pending_session_name: str) -> Non
     for suffix in ("-wal", "-shm", "-journal"):
         _unlink_with_retry(Path(f"{session_file}{suffix}"))
     _unlink_with_retry(session_file)
+
+
+def _hidden_session_base(root: Path, name: object) -> Path:
+    clean = str(name or "").strip()
+    if not HIDDEN_SESSION_BASE_RE.fullmatch(clean):
+        raise RuntimeError(f"Unsafe hidden Telegram session name: {clean!r}")
+    candidate = (root / clean).resolve()
+    if candidate.parent != root:
+        raise RuntimeError("Hidden Telegram session path escapes its directory")
+    return candidate
+
+
+def _restore_account_row(database, account_id: int, payload: dict[str, Any]) -> None:
+    old = dict(payload.get("old_account") or {})
+    if not old:
+        return
+    with database.get_connection() as conn:
+        cursor = conn.execute(
+            """UPDATE telegram_accounts
+               SET session_name=?, display_name=?, username=?, phone_masked=?,
+                   authorized=?, runtime_state=?, stopped=?, last_error=?,
+                   updated_at=CURRENT_TIMESTAMP
+               WHERE telegram_account_id=?""",
+            (
+                str(old.get("session_name") or f"account_{account_id}"),
+                str(old.get("display_name") or "Telegram Account"),
+                str(old.get("username") or "") or None,
+                str(old.get("phone_masked") or ""),
+                1 if old.get("authorized") else 0,
+                str(old.get("runtime_state") or "stopped"),
+                1 if old.get("stopped") else 0,
+                str(old.get("last_error") or "") or None,
+                int(account_id),
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError("Could not restore Telegram account row")
+
+
+def _restore_account_snapshot(database, secret_store, payload: dict[str, Any]) -> None:
+    from services.account_context import account_secret_key
+
+    owner = int(payload["account_id"])
+    _restore_account_row(database, owner, payload)
+    database.replace_account_settings(owner, dict(payload.get("old_public") or {}))
+    for key, value in dict(payload.get("old_secrets") or {}).items():
+        secret_store.set(account_secret_key(owner, str(key)), value)
+    selected = int(payload.get("selected_before") or 0)
+    if selected > 0 and database.get_telegram_account(selected):
+        database.select_telegram_account(selected)
+
+
+def _delete_account_secrets(secret_store, owner: int, keys: list[str]) -> None:
+    from services.account_context import account_secret_key
+
+    for key in keys:
+        secret_store.delete(account_secret_key(owner, str(key)))
+
+
+def recover_account_lifecycle(
+    database,
+    secret_store,
+    session_dir: Path,
+) -> dict[str, object]:
+    """Recover cross-resource account operations from encrypted SecretStore."""
+
+    root = Path(session_dir).expanduser().resolve()
+    ensure_private_directory(root)
+    snapshot = secret_store.export_snapshot()
+    journals = sorted(
+        (key, value)
+        for key, value in snapshot.items()
+        if str(key).startswith(ACCOUNT_LIFECYCLE_JOURNAL_PREFIX)
+    )
+    recovered = 0
+    for key, raw in journals:
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Unreadable account lifecycle journal: {key}") from exc
+        if not isinstance(payload, dict) or int(payload.get("version") or 0) != 1:
+            raise RuntimeError(f"Unsupported account lifecycle journal: {key}")
+        owner = int(payload.get("account_id") or 0)
+        operation = str(payload.get("operation") or "")
+        phase = str(payload.get("phase") or "")
+        if key != lifecycle_journal_key(owner):
+            raise RuntimeError(f"Account lifecycle journal owner mismatch: {key}")
+        if operation not in LIFECYCLE_OPERATIONS or phase not in LIFECYCLE_PHASES:
+            raise RuntimeError(f"Invalid account lifecycle journal state: {key}")
+
+        pending_name = str(payload.get("pending_session_name") or "")
+        final_name = str(payload.get("final_session_name") or f"account_{owner}")
+        final_base = session_base(root, final_name)
+        pending_base = session_base(root, pending_name) if pending_name else None
+        account = database.get_telegram_account(owner)
+
+        if operation == "register":
+            if (
+                phase == "committed"
+                and account is not None
+                and final_base.with_suffix(".session").exists()
+            ):
+                clear_account_lifecycle_journal(secret_store, owner)
+                recovered += 1
+                continue
+            if account is not None and not database.rollback_new_telegram_account(
+                owner, expected_session_name=final_name
+            ):
+                raise RuntimeError(
+                    "Interrupted registration owns durable account data; "
+                    "automatic rollback was refused"
+                )
+            _delete_account_secrets(
+                secret_store,
+                owner,
+                [str(item) for item in payload.get("secret_keys") or []],
+            )
+            _purge_session_family(final_base)
+            if pending_base is not None:
+                _purge_session_family(pending_base)
+
+        elif operation == "reauthorize":
+            swap = _hidden_session_base(root, payload.get("swap_name"))
+            if phase == "committed":
+                _purge_session_family(swap)
+                if pending_base is not None:
+                    _purge_session_family(pending_base)
+            else:
+                if swap.with_suffix(".session").exists():
+                    if final_base.with_suffix(".session").exists():
+                        _purge_session_family(final_base)
+                    _move_session_family(swap, final_base)
+                if pending_base is not None:
+                    _purge_session_family(pending_base)
+                if account is None:
+                    raise RuntimeError(
+                        "Cannot restore interrupted reauthorization: account is missing"
+                    )
+                _restore_account_snapshot(database, secret_store, payload)
+
+        elif operation == "delete":
+            tombstone = _hidden_session_base(root, payload.get("tombstone_name"))
+            if phase == "committed" or account is None:
+                _purge_session_family(tombstone)
+                _purge_session_family(final_base)
+                _delete_account_secrets(
+                    secret_store,
+                    owner,
+                    [str(item) for item in payload.get("secret_keys") or []],
+                )
+            else:
+                if not final_base.with_suffix(".session").exists() and tombstone.with_suffix(
+                    ".session"
+                ).exists():
+                    _move_session_family(tombstone, final_base)
+                _restore_account_snapshot(database, secret_store, payload)
+
+        clear_account_lifecycle_journal(secret_store, owner)
+        recovered += 1
+    return {"recovered": recovered, "directory": str(root)}
+
+
+def recover_session_residues(database, session_dir: Path) -> dict[str, object]:
+    """Remove or restore hidden session families after lifecycle recovery."""
+
+    root = Path(session_dir).expanduser().resolve()
+    ensure_private_directory(root)
+    accounts = list(database.list_telegram_accounts())
+    live_names = {
+        validate_session_name(account.get("session_name") or "")
+        for account in accounts
+    }
+    restored = 0
+    purged = 0
+
+    for session_file in sorted(root.glob(".delete_account_*.session")):
+        match = DELETE_SESSION_RE.fullmatch(session_file.name)
+        if not match:
+            continue
+        live_name = match.group(1)
+        hidden = session_file.with_suffix("")
+        live = session_base(root, live_name)
+        if live_name in live_names and not live.with_suffix(".session").exists():
+            _move_session_family(hidden, live)
+            restored += 1
+        else:
+            _purge_session_family(hidden)
+            purged += 1
+
+    for session_file in sorted(root.glob(".swap_account_*.session")):
+        match = SWAP_SESSION_RE.fullmatch(session_file.name)
+        if not match:
+            continue
+        live_name = match.group(1)
+        hidden = session_file.with_suffix("")
+        live = session_base(root, live_name)
+        if live_name in live_names and not live.with_suffix(".session").exists():
+            _move_session_family(hidden, live)
+            restored += 1
+        else:
+            _purge_session_family(hidden)
+            purged += 1
+
+    for session_file in sorted(root.glob("pending_*.session")):
+        match = PENDING_SESSION_FILE_RE.fullmatch(session_file.name)
+        if match:
+            _purge_session_family(session_base(root, match.group(1)))
+            purged += 1
+
+    for session_file in sorted(root.glob("account_*.session")):
+        match = ACCOUNT_SESSION_FILE_RE.fullmatch(session_file.name)
+        if match and match.group(1) not in live_names:
+            _purge_session_family(session_base(root, match.group(1)))
+            purged += 1
+
+    return {
+        "restored": restored,
+        "purged": purged,
+        "directory": str(root),
+    }
