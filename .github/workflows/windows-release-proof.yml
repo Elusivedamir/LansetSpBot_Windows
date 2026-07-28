@@ -35,6 +35,13 @@ jobs:
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
     steps:
+      - name: Configure byte-preserving Git checkout
+        shell: pwsh
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+          git config --global core.safecrlf true
+
       - name: Checkout exact commit
         uses: actions/checkout@v4
         with:
@@ -101,10 +108,18 @@ jobs:
             throw "Python 3.13 x64 is not available through py.exe."
           }
 
-          python tools/generate_manifest.py --check 2>&1 |
-            Tee-Object -FilePath "ci-proof\manifest-before-build.txt"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Source manifest validation failed."
+          $manifestOutput = @(python tools/generate_manifest.py --check 2>&1)
+          $manifestExit = $LASTEXITCODE
+          $manifestOutput | Tee-Object -FilePath "ci-proof\manifest-before-build.txt"
+          if ($manifestExit -ne 0) {
+            Copy-Item -LiteralPath "SHA256SUMS.txt" `
+              -Destination "ci-proof\SHA256SUMS.expected.txt" -Force
+            python tools/generate_manifest.py 2>&1 |
+              Tee-Object -FilePath "ci-proof\manifest-regeneration.txt"
+            Copy-Item -LiteralPath "SHA256SUMS.txt" `
+              -Destination "ci-proof\SHA256SUMS.actual.txt" -Force
+            git checkout -- SHA256SUMS.txt
+            throw "Source manifest validation failed. Expected and actual manifests were saved in the failure artifact."
           }
 
       - name: Run complete Windows release pipeline

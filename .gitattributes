@@ -1,0 +1,3 @@
+# SHA256SUMS.txt protects exact file bytes across Windows, Linux and archives.
+# Never let Git rewrite LF/CRLF during checkout.
+* -text

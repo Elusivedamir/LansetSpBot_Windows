@@ -42,3 +42,22 @@ def test_checkout_is_verified_before_ci_evidence_is_created() -> None:
     )
     assert clean_check < proof_directory
     assert text.count("Checkout is not clean before the proof run.") == 1
+
+def test_git_checkout_preserves_exact_manifest_bytes() -> None:
+    attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "* -text" in attributes
+
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    configure = workflow.index("Configure byte-preserving Git checkout")
+    checkout = workflow.index("Checkout exact commit")
+    assert configure < checkout
+    assert "git config --global core.autocrlf false" in workflow
+    assert "git config --global core.safecrlf true" in workflow
+
+
+def test_manifest_failure_keeps_expected_and_actual_evidence() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert "SHA256SUMS.expected.txt" in workflow
+    assert "SHA256SUMS.actual.txt" in workflow
+    assert "manifest-regeneration.txt" in workflow
+    assert "git checkout -- SHA256SUMS.txt" in workflow
