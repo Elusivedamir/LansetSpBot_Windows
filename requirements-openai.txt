@@ -1,3 +1,6 @@
-# Source pin for regenerating the complete Windows OpenAI lock.
+# Source pins for regenerating the complete Windows OpenAI lock.
 # Do not install this file directly; runtime launchers use requirements-openai.lock.
+# colorama is a Windows-only tqdm dependency. Cross-platform pip resolution does
+# not reliably evaluate target sys_platform markers when run from Linux/Termux.
+colorama==0.4.6
 openai==2.48.0

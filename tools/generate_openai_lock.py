@@ -25,6 +25,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "requirements-openai.txt"
 LOCK = ROOT / "requirements-openai.lock"
 SUPPORTED_TARGETS = (("3.14", "cp314"), ("3.13", "cp313"))
+# pip download --platform selects target wheels but environment markers can still
+# be evaluated against the host interpreter. Keep Windows-only transitive
+# dependencies explicit and fail closed if a required pin disappears.
+REQUIRED_WINDOWS_SOURCE_PINS = {"colorama": "0.4.6"}
 _PIN_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)\s*==\s*([^\s\\]+)\s*$")
 _LOCK_RE = re.compile(r"^([A-Za-z0-9_.-]+)==([^\s]+)(.*)$")
 _HASH_RE = re.compile(r"--hash=sha256:([0-9a-f]{64})")
@@ -36,6 +40,7 @@ def _canonicalize(name: str) -> str:
 
 def _read_source_pins(path: Path = SOURCE) -> list[str]:
     pins: list[str] = []
+    seen: dict[str, str] = {}
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.split("#", 1)[0].strip()
         if not line:
@@ -43,9 +48,24 @@ def _read_source_pins(path: Path = SOURCE) -> list[str]:
         match = _PIN_RE.fullmatch(line)
         if match is None:
             raise RuntimeError(f"Unsupported OpenAI source requirement: {raw!r}")
-        pins.append(f"{match.group(1)}=={match.group(2)}")
+        name, version = match.groups()
+        normalized = _canonicalize(name)
+        previous = seen.get(normalized)
+        if previous is not None:
+            raise RuntimeError(
+                f"Duplicate OpenAI source pin: {name}=={version} "
+                f"(already pinned to {previous})"
+            )
+        seen[normalized] = version
+        pins.append(f"{name}=={version}")
     if not pins:
         raise RuntimeError("requirements-openai.txt contains no exact source pin")
+    for name, version in REQUIRED_WINDOWS_SOURCE_PINS.items():
+        actual = seen.get(_canonicalize(name))
+        if actual != version:
+            raise RuntimeError(
+                f"Missing required Windows OpenAI source pin: {name}=={version}"
+            )
     return pins
 
 
