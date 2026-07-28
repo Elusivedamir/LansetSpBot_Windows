@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
+import secrets
 import time
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 from core.local_security import ensure_private_directory
+
+
+log = logging.getLogger(__name__)
 
 
 LEGACY_ACCOUNT_SECRET_KEYS = (
@@ -99,6 +106,13 @@ def _unlink_with_retry(path: Path) -> None:
             time.sleep(0.08 * (attempt + 1))
 
 
+def _purge_session_family(base: Path) -> None:
+    session_file = base.with_suffix(".session")
+    for suffix in ("-wal", "-shm", "-journal"):
+        _unlink_with_retry(Path(f"{session_file}{suffix}"))
+    _unlink_with_retry(session_file)
+
+
 def _move_session_family(source_base: Path, destination_base: Path) -> None:
     source_file = source_base.with_suffix(".session")
     destination_file = destination_base.with_suffix(".session")
@@ -179,8 +193,104 @@ def finalize_pending_session(
     destination = session_base(Path(session_dir), destination_name)
     if pending == destination:
         return destination_name
+    if not pending.with_suffix(".session").exists():
+        raise RuntimeError("Authorized temporary Telegram session is missing")
     _move_session_family(pending, destination)
+    if not destination.with_suffix(".session").exists():
+        raise RuntimeError("Authorized Telegram session was not finalized")
     return destination_name
+
+
+@contextmanager
+def replace_pending_session(
+    session_dir: Path,
+    *,
+    pending_session_name: str,
+    telegram_account_id: int,
+) -> Iterator[str]:
+    """Atomically swap a verified pending session for an existing account session."""
+
+    pending = session_base(Path(session_dir), pending_session_name)
+    destination_name = f"account_{int(telegram_account_id)}"
+    destination = session_base(Path(session_dir), destination_name)
+    pending_file = pending.with_suffix(".session")
+    if not pending_file.exists():
+        raise RuntimeError("Authorized temporary Telegram session is missing")
+
+    swap = destination.parent / (
+        f".swap_{destination.name}_{secrets.token_hex(12)}"
+    )
+    had_previous = destination.with_suffix(".session").exists()
+    if had_previous:
+        _move_session_family(destination, swap)
+    try:
+        _move_session_family(pending, destination)
+        if not destination.with_suffix(".session").exists():
+            raise RuntimeError("Authorized Telegram session replacement failed")
+        yield destination_name
+    except BaseException:
+        if destination.with_suffix(".session").exists() and not pending_file.exists():
+            _move_session_family(destination, pending)
+        else:
+            _purge_session_family(destination)
+        if had_previous and swap.with_suffix(".session").exists():
+            _move_session_family(swap, destination)
+        raise
+    else:
+        try:
+            _purge_session_family(swap)
+        except Exception:
+            # The new session and database state are already authoritative.
+            # Do not report the reauthorization as failed and roll unrelated
+            # secrets back merely because an obsolete hidden file is locked.
+            log.exception(
+                "Could not purge revoked previous Telegram session %s", swap
+            )
+
+
+@contextmanager
+def stage_account_session_removal(
+    session_dir: Path,
+    *,
+    session_name: str,
+) -> Iterator[dict[str, object]]:
+    """Hide local authorization material until the database deletion commits."""
+
+    source = session_base(Path(session_dir), session_name)
+    tombstone = source.parent / (
+        f".delete_{source.name}_{secrets.token_hex(12)}"
+    )
+    cleanup: dict[str, object] = {"removed": False, "warning": ""}
+    moved = source.with_suffix(".session").exists()
+    if moved:
+        _move_session_family(source, tombstone)
+    try:
+        yield cleanup
+    except BaseException:
+        if moved and tombstone.with_suffix(".session").exists():
+            _move_session_family(tombstone, source)
+        raise
+    else:
+        try:
+            _purge_session_family(tombstone)
+            session_file = source.with_suffix(".session")
+            for pattern in (
+                f"{session_file.name}.corrupt.*",
+                f".{session_file.name}.restore.*.tmp",
+            ):
+                for artifact in session_file.parent.glob(pattern):
+                    if artifact.is_file():
+                        _unlink_with_retry(artifact)
+            cleanup["removed"] = True
+        except Exception as exc:
+            # The account row is already deleted. Treat the random hidden file as
+            # revoked residue and surface a warning without restoring secrets for
+            # an account that no longer exists.
+            cleanup["warning"] = str(exc)
+            log.exception(
+                "Could not purge revoked Telegram session residue %s",
+                tombstone,
+            )
 
 
 def rollback_finalized_session(

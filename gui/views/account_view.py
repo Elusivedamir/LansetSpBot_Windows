@@ -51,6 +51,8 @@ class AccountView(QWidget):
         self._cached_account_values: dict = {}
         self._adding_account = False
         self._pending_session_name = ""
+        self._reauthorizing_account_id = 0
+        self._auth_settings_snapshot: dict = {}
         self._account_catalog_generation = 0
         self._active_auth_mode = ""
         self._background_jobs: set[BackgroundCall] = set()
@@ -281,6 +283,10 @@ class AccountView(QWidget):
         self.account_manager.add_requested.connect(self._begin_add_account)
         self.account_manager.stop_requested.connect(self._stop_account)
         self.account_manager.resume_requested.connect(self._resume_account)
+        self.account_manager.reauthorize_requested.connect(
+            self._reauthorize_account
+        )
+        self.account_manager.delete_requested.connect(self._delete_account)
         self.account_manager.import_comments_requested.connect(
             self._import_comments_from_previous
         )
@@ -471,6 +477,8 @@ class AccountView(QWidget):
             QMessageBox.warning(self, APP_NAME, "Авторизация уже выполняется")
             return
         self._adding_account = True
+        self._reauthorizing_account_id = 0
+        self._auth_settings_snapshot = {}
         self._pending_session_name = f"pending_{secrets.token_hex(16)}"
         self.api_id.clear()
         self.api_hash.clear()
@@ -531,6 +539,112 @@ class AccountView(QWidget):
             on_error=lambda message: QMessageBox.warning(
                 self, "Аккаунт", message
             ),
+        )
+
+    def _reauthorize_account(self, account_id: int) -> None:
+        owner = int(account_id or 0)
+        if owner <= 0:
+            return
+        if self.auth_worker is not None and self.auth_worker.isRunning():
+            QMessageBox.warning(self, APP_NAME, "Авторизация уже выполняется")
+            return
+        if self._account_blocking_jobs:
+            QMessageBox.warning(
+                self,
+                APP_NAME,
+                "Дождитесь завершения сохранения состояния Telegram-аккаунта",
+            )
+            return
+        if owner != int(self.adapter.get_selected_account_id() or 0):
+            QMessageBox.warning(
+                self,
+                "Переподключение",
+                "Сначала дождитесь завершения переключения на выбранный аккаунт.",
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "Переподключить Telegram-аккаунт?",
+            "Работа только этого аккаунта будет остановлена. После ввода кода "
+            "новая подтверждённая session заменит старую. Остальные аккаунты "
+            "продолжат работу.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.status_label.setText("Подготовка переподключения…")
+
+        def stopped(_result) -> None:
+            self._adding_account = True
+            self._reauthorizing_account_id = owner
+            self._auth_settings_snapshot = {}
+            self._pending_session_name = f"pending_{secrets.token_hex(16)}"
+            self._set_code_card_visible(False)
+            self.status_label.setText("Переподключение Telegram-аккаунта")
+            self.account_label.setText(
+                "Проверьте API, телефон и proxy, затем запросите новый код Telegram"
+            )
+            self.connect_button.setText("Отправить код Telegram")
+            self.api_id.setFocus()
+
+        self._run_background(
+            lambda: self.adapter.stop_telegram_account(owner),
+            on_success=stopped,
+            on_error=lambda message: QMessageBox.warning(
+                self, "Переподключение", message
+            ),
+            blocks_account_change=True,
+        )
+
+    def _delete_account(self, account_id: int) -> None:
+        owner = int(account_id or 0)
+        if owner <= 0:
+            return
+        if self.auth_worker is not None and self.auth_worker.isRunning():
+            QMessageBox.warning(self, APP_NAME, "Авторизация уже выполняется")
+            return
+        if self._account_blocking_jobs:
+            QMessageBox.warning(
+                self,
+                APP_NAME,
+                "Дождитесь завершения операции с Telegram-аккаунтом",
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "Удалить Telegram-аккаунт?",
+            "Будут остановлены задачи этого аккаунта и безвозвратно удалены его "
+            "локальная session, proxy/API-секреты, каналы, кампании, расписания, "
+            "история и журналы. Другие аккаунты не изменятся.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.status_label.setText("Удаление Telegram-аккаунта…")
+
+        def deleted(result) -> None:
+            self._adding_account = False
+            self._reauthorizing_account_id = 0
+            self._pending_session_name = ""
+            self._auth_settings_snapshot = {}
+            self._set_code_card_visible(False)
+            self.load_settings()
+            self.account_changed.emit()
+            QMessageBox.information(
+                self,
+                "Аккаунт удалён",
+                str(result.get("message") or "Локальные данные аккаунта удалены."),
+            )
+
+        self._run_background(
+            lambda: self.adapter.delete_telegram_account(owner),
+            on_success=deleted,
+            on_error=lambda message: QMessageBox.warning(
+                self, "Удаление аккаунта", message
+            ),
+            blocks_account_change=True,
         )
 
     def _import_comments_from_previous(self) -> None:
@@ -635,11 +749,28 @@ class AccountView(QWidget):
         if self.proxy_enabled.isChecked():
             self._refresh_dynamic_layout()
 
+    def _set_auth_identity_fields_enabled(self, enabled: bool) -> None:
+        for widget in (
+            self.api_id,
+            self.api_hash,
+            self.phone,
+            self.proxy_enabled,
+            self.proxy_type,
+            self.proxy_host,
+            self.proxy_port,
+            self.proxy_login,
+            self.proxy_password,
+            self.proxy_secret,
+        ):
+            widget.setEnabled(bool(enabled))
+
     def _set_account_controls_busy(self, busy: bool) -> None:
         enabled = not busy
         self.connect_button.setEnabled(enabled)
         self.confirm_button.setEnabled(enabled)
         self.logout_button.setEnabled(enabled)
+        self.account_manager.setEnabled(enabled)
+        self._set_auth_identity_fields_enabled(enabled)
         # Factory reset is independent from account/campaign ownership. It may
         # be requested while authorization or a local save is finishing; the
         # application controller will stop/wait for those jobs before deletion.
@@ -667,6 +798,11 @@ class AccountView(QWidget):
         self._set_account_controls_busy(busy)
         if not busy:
             self.adapter.set_auth_in_progress(False)
+            if self.phone_code_hash:
+                self._set_auth_identity_fields_enabled(False)
+                self.connect_button.setEnabled(False)
+                self.logout_button.setEnabled(False)
+                self.confirm_button.setEnabled(True)
 
     def _run_background(
         self,
@@ -805,6 +941,13 @@ class AccountView(QWidget):
         if values.get("telegram.account_name"):
             self._cached_account_values = dict(values)
             self._set_authorized_ui(values)
+        else:
+            self._cached_account_values = {}
+            self._set_status_dot(False)
+            self.status_label.setText("Аккаунт не подключён")
+            self.account_label.setText("Введите данные нового Telegram-аккаунта")
+            self.connect_button.setText("Подключить аккаунт")
+            self._set_code_card_visible(False)
         self.connect_button.setEnabled(True)
 
     def _schedule_settings(self) -> dict[str, str]:
@@ -995,6 +1138,7 @@ class AccountView(QWidget):
     def _show_pending_code_request(self) -> None:
         """Show the challenge immediately instead of waiting on the network."""
 
+        self._set_auth_identity_fields_enabled(False)
         self.code.setEnabled(False)
         self.two_fa.setEnabled(False)
         self.confirm_button.setEnabled(False)
@@ -1002,6 +1146,7 @@ class AccountView(QWidget):
         self._set_code_card_visible(True, focus_widget=self.code)
 
     def _activate_code_entry(self) -> None:
+        self._set_auth_identity_fields_enabled(False)
         self.code.setEnabled(True)
         self.two_fa.setEnabled(True)
         self.code.setPlaceholderText("Код из сообщения Telegram")
@@ -1015,11 +1160,22 @@ class AccountView(QWidget):
         if self.auth_worker is not None and self.auth_worker.isRunning():
             QMessageBox.warning(self, APP_NAME, "Авторизация уже выполняется")
             return
+        if not self._pending_session_name:
+            state = self.adapter.can_add_telegram_account()
+            if not state.get("allowed"):
+                QMessageBox.warning(
+                    self, "Лимит аккаунтов", state.get("message") or ""
+                )
+                return
+            self._adding_account = True
+            self._reauthorizing_account_id = 0
+            self._pending_session_name = f"pending_{secrets.token_hex(16)}"
         try:
             settings = self._settings()
         except ValueError as exc:
             QMessageBox.warning(self, "Проверьте данные", str(exc))
             return
+        self._auth_settings_snapshot = dict(settings)
         self.connect_button.setEnabled(False)
         self._show_pending_code_request()
         self.status_label.setText("Запрос кода Telegram…")
@@ -1029,10 +1185,13 @@ class AccountView(QWidget):
         if self.auth_worker is not None and self.auth_worker.isRunning():
             QMessageBox.warning(self, APP_NAME, "Авторизация уже выполняется")
             return
-        try:
-            settings = self._settings()
-        except ValueError as exc:
-            QMessageBox.warning(self, "Проверьте данные", str(exc))
+        settings = dict(self._auth_settings_snapshot)
+        if not settings:
+            QMessageBox.warning(
+                self,
+                "Авторизация",
+                "Запросите новый код Telegram перед подтверждением входа.",
+            )
             return
         self._start_worker(
             "sign_in",
@@ -1114,14 +1273,19 @@ class AccountView(QWidget):
         if not account.get("id"):
             self._failed("Telegram не вернул идентификатор аккаунта")
             return
-        settings = self._settings()
+        settings = dict(self._auth_settings_snapshot)
+        if not settings:
+            self._failed("Параметры авторизации потеряны. Запросите новый код Telegram")
+            return
         pending_name = str(
             account.get("_session_name") or self._pending_session_name or ""
         )
 
         def registered(values) -> None:
             self._adding_account = False
+            self._reauthorizing_account_id = 0
             self._pending_session_name = ""
+            self._auth_settings_snapshot = {}
             compatibility = {
                 "telegram.account_id": values.get("telegram_account_id"),
                 "telegram.account_name": values.get("display_name"),
@@ -1202,6 +1366,7 @@ class AccountView(QWidget):
         failed_mode = self._active_auth_mode
         had_code_request = bool(self.phone_code_hash)
         self._clear_temporary_auth_fields()
+        self._auth_settings_snapshot = {}
         if failed_mode == "request_code" and not had_code_request:
             self._set_code_card_visible(False)
         elif self.code_card.isVisible():

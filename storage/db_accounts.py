@@ -507,6 +507,223 @@ class AccountRepositoryMixin(_MixinHost):
         except Exception as exc:
             raise DatabaseError(f"Failed to save account settings: {exc}") from exc
 
+    def replace_account_settings(
+        self, account_id: object, values: dict[str, Any]
+    ) -> None:
+        """Replace the complete public settings snapshot for one account."""
+
+        owner = _positive_account_id(account_id)
+        if not isinstance(values, dict):
+            raise DatabaseError("Account settings must be an object")
+        try:
+            with self.get_connection() as conn:
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
+                if self._account_row(conn, owner) is None:
+                    raise DatabaseError("Telegram account does not exist")
+                conn.execute(
+                    "DELETE FROM account_settings WHERE account_id=?",
+                    (owner,),
+                )
+                for key, value in values.items():
+                    conn.execute(
+                        """INSERT INTO account_settings(
+                               account_id, key, value, updated_at)
+                           VALUES(?, ?, ?, CURRENT_TIMESTAMP)""",
+                        (owner, str(key), None if value is None else str(value)),
+                    )
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError(
+                f"Failed to replace account settings: {exc}"
+            ) from exc
+
+    def delete_telegram_account_data(
+        self, account_id: object
+    ) -> dict[str, Any]:
+        """Delete every account-scoped database row without touching other accounts."""
+
+        owner = _positive_account_id(account_id)
+        safe_name = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+        try:
+            with self.get_connection() as conn:
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
+                account = self._account_row(conn, owner)
+                if account is None:
+                    raise DatabaseError("Telegram account does not exist")
+                session_name = str(account["session_name"] or "")
+                selected = self.get_selected_account_id()
+                previous = self.get_previous_selected_account_id()
+
+                table_rows = conn.execute(
+                    """SELECT name FROM sqlite_master
+                       WHERE type='table' AND name NOT LIKE 'sqlite_%'"""
+                ).fetchall()
+                account_tables: list[str] = []
+                tables = {str(row[0]) for row in table_rows}
+                for table in sorted(tables):
+                    if table == "telegram_accounts" or not safe_name.fullmatch(table):
+                        continue
+                    columns = {
+                        str(column[1])
+                        for column in conn.execute(f'PRAGMA table_info("{table}")')
+                    }
+                    if "account_id" in columns:
+                        account_tables.append(table)
+
+                # Schedule rows are account-owned through their campaigns rather
+                # than through a direct account_id column.
+                if {"comment_schedule", "comment_campaigns"} <= tables:
+                    conn.execute(
+                        """DELETE FROM comment_schedule
+                           WHERE campaign_id IN (
+                               SELECT id FROM comment_campaigns WHERE account_id=?
+                           )""",
+                        (owner,),
+                    )
+                if {"join_schedule", "join_campaigns"} <= tables:
+                    conn.execute(
+                        """DELETE FROM join_schedule
+                           WHERE campaign_id IN (
+                               SELECT id FROM join_campaigns WHERE account_id=?
+                           )""",
+                        (owner,),
+                    )
+
+                remaining = list(account_tables)
+                while remaining:
+                    deferred: list[str] = []
+                    progress = False
+                    for table in remaining:
+                        try:
+                            conn.execute(
+                                f'DELETE FROM "{table}" WHERE account_id=?',
+                                (owner,),
+                            )
+                            progress = True
+                        except sqlite3.IntegrityError:
+                            deferred.append(table)
+                    if not deferred:
+                        break
+                    if not progress:
+                        raise DatabaseError(
+                            "Account data has unresolved foreign-key dependencies: "
+                            + ", ".join(sorted(deferred))
+                        )
+                    remaining = deferred
+
+                deleted = conn.execute(
+                    """DELETE FROM telegram_accounts
+                       WHERE telegram_account_id=?""",
+                    (owner,),
+                )
+                if deleted.rowcount != 1:
+                    raise DatabaseError("Telegram account row was not deleted")
+
+                remaining_ids = [
+                    int(row[0])
+                    for row in conn.execute(
+                        """SELECT telegram_account_id FROM telegram_accounts
+                           ORDER BY id ASC"""
+                    ).fetchall()
+                ]
+                selected_exists = selected in remaining_ids
+                previous_exists = previous in remaining_ids
+                next_selected = (
+                    selected
+                    if selected_exists
+                    else previous
+                    if previous_exists
+                    else remaining_ids[0]
+                    if remaining_ids
+                    else 0
+                )
+                next_previous = (
+                    previous
+                    if previous_exists and previous != next_selected
+                    else 0
+                )
+                for key, value in (
+                    ("ui.selected_account_id", next_selected),
+                    ("ui.previous_selected_account_id", next_previous),
+                ):
+                    conn.execute(
+                        """INSERT INTO settings(key, value, updated_at)
+                           VALUES(?, ?, CURRENT_TIMESTAMP)
+                           ON CONFLICT(key) DO UPDATE SET
+                               value=excluded.value, updated_at=CURRENT_TIMESTAMP""",
+                        (key, str(value) if value > 0 else ""),
+                    )
+
+                if selected == owner:
+                    conn.execute(
+                        """DELETE FROM settings
+                           WHERE key LIKE 'telegram.%'
+                              OR key LIKE 'automation.%'
+                              OR key LIKE 'commenting.%'
+                              OR key LIKE 'openai.%'
+                              OR key LIKE 'scheduler.%'"""
+                    )
+                    if next_selected > 0:
+                        next_row = self._account_row(conn, next_selected)
+                        if next_row is None:
+                            raise DatabaseError(
+                                "Replacement selected account disappeared"
+                            )
+                        compatibility = {
+                            "telegram.account_id": str(next_selected),
+                            "telegram.account_name": str(
+                                next_row["display_name"] or "Telegram Account"
+                            ),
+                            "telegram.account_username": str(
+                                next_row["username"] or ""
+                            ),
+                            "telegram.authorized": (
+                                "1" if bool(next_row["authorized"]) else "0"
+                            ),
+                        }
+                        for key, value in compatibility.items():
+                            conn.execute(
+                                """INSERT INTO settings(key, value, updated_at)
+                                   VALUES(?, ?, CURRENT_TIMESTAMP)
+                                   ON CONFLICT(key) DO UPDATE SET
+                                       value=excluded.value,
+                                       updated_at=CURRENT_TIMESTAMP""",
+                                (key, value),
+                            )
+                        rows = conn.execute(
+                            """SELECT key, value FROM account_settings
+                               WHERE account_id=?""",
+                            (next_selected,),
+                        ).fetchall()
+                        for setting in rows:
+                            key = str(setting["key"])
+                            if key.startswith(ACCOUNT_SETTING_PREFIXES):
+                                conn.execute(
+                                    """INSERT INTO settings(
+                                           key, value, updated_at)
+                                       VALUES(?, ?, CURRENT_TIMESTAMP)
+                                       ON CONFLICT(key) DO UPDATE SET
+                                           value=excluded.value,
+                                           updated_at=CURRENT_TIMESTAMP""",
+                                    (key, setting["value"]),
+                                )
+
+                return {
+                    "deleted_account_id": owner,
+                    "session_name": session_name,
+                    "selected_account_id": next_selected,
+                    "remaining_accounts": len(remaining_ids),
+                }
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError(
+                f"Failed to delete Telegram account data: {exc}"
+            ) from exc
+
     def delete_account_setting(self, account_id: object, key: str) -> None:
         owner = _positive_account_id(account_id)
         try:

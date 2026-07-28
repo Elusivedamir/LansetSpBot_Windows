@@ -13,7 +13,9 @@ from services.account_context import (
 from services.account_sessions import (
     discard_pending_session,
     finalize_pending_session,
+    replace_pending_session,
     rollback_finalized_session,
+    stage_account_session_removal,
     validate_session_name,
 )
 from storage.db_common import DatabaseError
@@ -169,25 +171,105 @@ class AccountsAPIMixin(_MixinHost):
         pending = validate_session_name(pending_session_name)
         if not PENDING_SESSION_RE.fullmatch(pending):
             raise ValueError("Новый аккаунт должен использовать временную сессию")
-        check = self.can_add_telegram_account()
+
+        public = dict(settings)
+        secret_updates = {
+            key: public.pop(key)
+            for key in SECRET_SETTING_KEYS
+            if key in public
+        }
+        for identity_key in (
+            "telegram.account_id",
+            "telegram.account_name",
+            "telegram.account_username",
+            "telegram.authorized",
+            "telegram.session_name",
+            "telegram.runtime_state",
+        ):
+            public.pop(identity_key, None)
+
         existing = self.database.get_telegram_account(telegram_id)
-        if not existing and not bool(check["allowed"]):
-            discard_pending_session(
-                self.config.telegram.session_dir, pending
-            )
-            raise ValueError(str(check["message"]))
         if existing:
-            discard_pending_session(
-                self.config.telegram.session_dir, pending
-            )
-            selected = self.database.select_telegram_account(telegram_id)
+            safe_states = {
+                "stopped",
+                "authorization_required",
+                "error",
+                "disconnected",
+            }
+            if (
+                not bool(existing.get("stopped"))
+                and str(existing.get("runtime_state") or "") not in safe_states
+            ):
+                discard_pending_session(self.config.telegram.session_dir, pending)
+                raise RuntimeError(
+                    "Сначала остановите работу аккаунта перед переподключением"
+                )
+            old_public = self.database.get_account_settings(telegram_id)
+            with self._secret_lock:
+                old_secrets = {
+                    key: self._strict_account_secret(telegram_id, key)
+                    for key in secret_updates
+                }
+            try:
+                with replace_pending_session(
+                    self.config.telegram.session_dir,
+                    pending_session_name=pending,
+                    telegram_account_id=telegram_id,
+                ) as final_name:
+                    with self.database.get_connection():
+                        self.database.register_telegram_account(
+                            telegram_account_id=telegram_id,
+                            session_name=final_name,
+                            display_name=str(
+                                account.get("name")
+                                or existing.get("display_name")
+                                or "Telegram Account"
+                            ),
+                            username=(
+                                str(account.get("username") or "").strip() or None
+                            ),
+                            phone=str(account.get("phone") or ""),
+                            authorized=True,
+                        )
+                        self.database.update_account_session_name(
+                            telegram_id, final_name
+                        )
+                        self.database.replace_account_settings(
+                            telegram_id, public
+                        )
+                        with self._secret_lock:
+                            for key, value in secret_updates.items():
+                                self._set_account_secret(telegram_id, key, value)
+                        self.database.resume_account_work(telegram_id)
+                        selected = self.database.select_telegram_account(telegram_id)
+            except BaseException:
+                try:
+                    self.database.replace_account_settings(
+                        telegram_id, old_public
+                    )
+                except Exception:
+                    pass
+                with self._secret_lock:
+                    for key, value in old_secrets.items():
+                        self._set_account_secret(telegram_id, key, value)
+                discard_pending_session(
+                    self.config.telegram.session_dir, pending
+                )
+                raise
             selected["created"] = False
             selected["duplicate"] = True
+            selected["reauthorized"] = True
             return selected
+
+        check = self.can_add_telegram_account()
+        if not bool(check["allowed"]):
+            discard_pending_session(self.config.telegram.session_dir, pending)
+            raise ValueError(str(check["message"]))
 
         final_name = f"account_{telegram_id}"
         moved = False
-        if pending != final_name:
+        created = False
+        try:
             final_name = finalize_pending_session(
                 self.database,
                 self.config.telegram.session_dir,
@@ -195,38 +277,23 @@ class AccountsAPIMixin(_MixinHost):
                 telegram_account_id=telegram_id,
             )
             moved = True
-
-        public = dict(settings)
-        secrets = {
-            key: public.pop(key)
-            for key in SECRET_SETTING_KEYS
-            if key in public
-        }
-        created = False
-        try:
-            row, created = self.database.register_telegram_account(
-                telegram_account_id=telegram_id,
-                session_name=final_name,
-                display_name=str(account.get("name") or "Telegram Account"),
-                username=(
-                    str(account.get("username") or "").strip() or None
-                ),
-                phone=str(account.get("phone") or ""),
-                authorized=True,
-            )
-            self.database.update_account_session_name(telegram_id, final_name)
-            for identity_key in (
-                "telegram.account_id",
-                "telegram.account_name",
-                "telegram.account_username",
-                "telegram.authorized",
-            ):
-                public.pop(identity_key, None)
-            self.database.set_account_settings(telegram_id, public)
-            with self._secret_lock:
-                for key, value in secrets.items():
-                    self._set_account_secret(telegram_id, key, value)
-            selected = self.database.select_telegram_account(telegram_id)
+            with self.database.get_connection():
+                _row, created = self.database.register_telegram_account(
+                    telegram_account_id=telegram_id,
+                    session_name=final_name,
+                    display_name=str(account.get("name") or "Telegram Account"),
+                    username=str(account.get("username") or "").strip() or None,
+                    phone=str(account.get("phone") or ""),
+                    authorized=True,
+                )
+                self.database.update_account_session_name(
+                    telegram_id, final_name
+                )
+                self.database.replace_account_settings(telegram_id, public)
+                with self._secret_lock:
+                    for key, value in secret_updates.items():
+                        self._set_account_secret(telegram_id, key, value)
+                selected = self.database.select_telegram_account(telegram_id)
             selected["created"] = created
             return selected
         except BaseException:
@@ -235,7 +302,7 @@ class AccountsAPIMixin(_MixinHost):
                     telegram_id, expected_session_name=final_name
                 )
             with self._secret_lock:
-                for key in secrets:
+                for key in secret_updates:
                     self._set_account_secret(telegram_id, key, None)
             if moved:
                 rollback_finalized_session(
@@ -330,6 +397,57 @@ class AccountsAPIMixin(_MixinHost):
         if worker is not None:
             worker.clear_scope_cancellation("account", owner)
         return self.database.get_telegram_account(owner) or {}
+
+    def delete_telegram_account(
+        self, account_id: int, *, timeout_seconds: float = 20.0
+    ) -> dict[str, Any]:
+        owner = int(account_id)
+        account = self.database.get_telegram_account(owner)
+        if not account:
+            raise ValueError("Telegram-аккаунт не найден")
+        self.stop_telegram_account(
+            owner, timeout_seconds=timeout_seconds
+        )
+        account = self.database.get_telegram_account(owner) or account
+
+        session_name = validate_session_name(
+            account.get("session_name") or f"account_{owner}"
+        )
+        with self._secret_lock:
+            secret_snapshots = {
+                key: self._strict_account_secret(owner, key)
+                for key in SECRET_SETTING_KEYS
+            }
+        try:
+            with stage_account_session_removal(
+                self.config.telegram.session_dir,
+                session_name=session_name,
+            ) as cleanup_state:
+                with self._secret_lock:
+                    for key in SECRET_SETTING_KEYS:
+                        self._set_account_secret(owner, key, None)
+                result = self.database.delete_telegram_account_data(owner)
+        except BaseException:
+            with self._secret_lock:
+                for key, value in secret_snapshots.items():
+                    self._set_account_secret(owner, key, value)
+            raise
+
+        worker = self.queue_worker
+        if worker is not None:
+            worker.clear_scope_cancellation("account", owner)
+        warning = str(cleanup_state.get("warning") or "")
+        result["session_cleanup_warning"] = warning
+        result["message"] = (
+            "Аккаунт и все его локальные данные безвозвратно удалены."
+            + (
+                " Остаточный скрытый файл session не удалось удалить; "
+                "перезапустите приложение и повторите очистку профиля."
+                if warning
+                else ""
+            )
+        )
+        return result
 
     def check_telegram_account_runtime(
         self, account_id: int, *, timeout_seconds: float = 20.0

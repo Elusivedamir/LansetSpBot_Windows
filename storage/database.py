@@ -122,6 +122,7 @@ class Database(
         self._artifact_security_identities: dict[Path, tuple[int, int, int]] = {}
         self._artifact_security_markers: dict[Path, bytes] = {}
         self._artifact_security_last_check = 0.0
+        self._artifact_security_failure: BaseException | None = None
         raw_version = self._raw_user_version()
         self._harden_database_artifacts(force=True)
         if raw_version > self.SCHEMA_VERSION:
@@ -641,9 +642,22 @@ class Database(
         depth = int(getattr(state, "transaction_depth", 0))
         outer_started = time.monotonic() if depth == 0 else None
         if depth == 0:
+            pending_security_failure = getattr(
+                self, "_artifact_security_failure", None
+            )
+            if pending_security_failure is not None:
+                try:
+                    self._harden_database_artifacts(force=True)
+                except Exception as exc:
+                    raise DatabaseError(
+                        "SQLite artifact security check failed before transaction: "
+                        f"{exc}"
+                    ) from exc
+                self._artifact_security_failure = None
             state.rollback_only = False
         state.transaction_depth = depth + 1
         active_error = False
+        committed = False
         try:
             yield conn
         except sqlite3.Error as exc:
@@ -664,6 +678,7 @@ class Database(
                         conn.rollback()
                     else:
                         conn.commit()
+                        committed = True
                 except sqlite3.Error as exc:
                     try:
                         conn.rollback()
@@ -682,16 +697,42 @@ class Database(
                             outer_started,
                             threshold_seconds=0.5,
                         )
-                    hardening_started = time.monotonic()
-                    try:
-                        self._harden_database_artifacts()
-                    finally:
-                        log_if_slow(
-                            log,
-                            "sqlite_artifact_hardening",
-                            hardening_started,
-                            threshold_seconds=0.5,
+
+                hardening_started = time.monotonic()
+                try:
+                    self._harden_database_artifacts()
+                except Exception as exc:
+                    self._artifact_security_failure = exc
+                    if committed:
+                        # The transaction is already durable. Reporting it as a
+                        # failed write would make callers repeat non-idempotent
+                        # state changes or roll back external files incorrectly.
+                        # Block the next transaction at its entry instead.
+                        log.critical(
+                            "SQLite transaction committed, but artifact security "
+                            "verification failed; future transactions are blocked",
+                            exc_info=True,
                         )
+                    elif not active_error:
+                        raise DatabaseError(
+                            "SQLite artifact security verification failed: "
+                            f"{exc}"
+                        ) from exc
+                    else:
+                        log.error(
+                            "SQLite artifact security verification also failed "
+                            "while rolling back another error",
+                            exc_info=True,
+                        )
+                else:
+                    self._artifact_security_failure = None
+                finally:
+                    log_if_slow(
+                        log,
+                        "sqlite_artifact_hardening",
+                        hardening_started,
+                        threshold_seconds=0.5,
+                    )
 
     def close_thread_connection(self) -> None:
         state = getattr(self, "_thread_connections", None)
