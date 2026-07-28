@@ -68,6 +68,27 @@ LINE_GROUP_THRESHOLDS = {
         ),
         70.0,
     ),
+    "multiaccount_runtime": (
+        (
+            "services/account_context.py",
+            "services/account_runtime_manager.py",
+            "services/account_sessions.py",
+            "services/multiaccount_scheduler.py",
+            "services/api_parts/accounts.py",
+            "storage/account_database_view.py",
+            "storage/db_accounts.py",
+            "storage/migrations/multiaccount_v31.py",
+        ),
+        10.0,
+    ),
+    "account_gui_lifecycle": (
+        (
+            "gui/account_manager_panel.py",
+            "gui/gui_service_adapter.py",
+            "gui/views/account_view.py",
+        ),
+        5.0,
+    ),
 }
 
 # The most stateful modules must exercise decision paths, not only execute lines.

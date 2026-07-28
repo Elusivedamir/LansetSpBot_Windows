@@ -14,7 +14,7 @@ $VenvPythonw = Join-Path $VenvPath "Scripts\pythonw.exe"
 $MarkerPath = Join-Path $VenvPath ".marlen-runtime-lock.sha256"
 $RuntimeLock = Join-Path $ProjectRoot "requirements-runtime.lock"
 $BootstrapLock = Join-Path $ProjectRoot "requirements-bootstrap.txt"
-$OpenAIRequirements = Join-Path $ProjectRoot "requirements-openai.txt"
+$OpenAILock = Join-Path $ProjectRoot "requirements-openai.lock"
 $MainScript = Join-Path $ProjectRoot "main.py"
 $PyLauncher = if ($env:WINDIR) { Join-Path $env:WINDIR "py.exe" } else { "py.exe" }
 
@@ -31,7 +31,7 @@ function Assert-LastExitCode([string]$Message) {
 if (-not [Environment]::Is64BitOperatingSystem) {
     throw "LansetSpBot requires 64-bit Windows 10 or Windows 11."
 }
-foreach ($required in @($RuntimeLock, $BootstrapLock, $OpenAIRequirements, $MainScript)) {
+foreach ($required in @($RuntimeLock, $BootstrapLock, $OpenAILock, $MainScript)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "Missing required project file: $required"
     }
@@ -51,7 +51,7 @@ Assert-LastExitCode "Python 3.14 could not be started."
 $expectedMarker = @(
     (Get-FileHash -Algorithm SHA256 -LiteralPath $RuntimeLock).Hash,
     (Get-FileHash -Algorithm SHA256 -LiteralPath $BootstrapLock).Hash,
-    (Get-FileHash -Algorithm SHA256 -LiteralPath $OpenAIRequirements).Hash,
+    (Get-FileHash -Algorithm SHA256 -LiteralPath $OpenAILock).Hash,
     "windows-direct-python-314-v1"
 ) -join "`n"
 
@@ -88,8 +88,10 @@ if ($RecreateVenv -or -not $venvUsable -or -not $markerMatches) {
     Write-Step "Installing verified LansetSpBot runtime dependencies"
     & $VenvPython -m pip install --disable-pip-version-check --require-hashes --no-build-isolation --retries 8 --timeout 60 -r $RuntimeLock
     Assert-LastExitCode "Runtime dependency installation failed."
-    & $VenvPython -m pip install --disable-pip-version-check --retries 8 --timeout 60 -r $OpenAIRequirements
+    & $VenvPython -m pip install --disable-pip-version-check --require-hashes --no-build-isolation --retries 8 --timeout 60 -r $OpenAILock
     Assert-LastExitCode "OpenAI SDK installation failed."
+    & $VenvPython (Join-Path $ProjectRoot "tools\generate_openai_lock.py") --output $OpenAILock --check
+    Assert-LastExitCode "OpenAI lock verification failed."
 
     Set-Content -LiteralPath $MarkerPath -Value $expectedMarker -Encoding Ascii -NoNewline
 }

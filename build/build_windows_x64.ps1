@@ -56,8 +56,10 @@ if ($LASTEXITCODE -ne 0) { throw "ensurepip failed." }
 if ($LASTEXITCODE -ne 0) { throw "Bootstrap dependency installation failed." }
 & $BuildPython -m pip install --disable-pip-version-check --require-hashes --no-build-isolation --retries 8 --timeout 60 -r requirements-runtime.lock
 if ($LASTEXITCODE -ne 0) { throw "Runtime dependency installation failed." }
-& $BuildPython -m pip install --disable-pip-version-check --retries 8 --timeout 60 -r requirements-openai.txt
+& $BuildPython -m pip install --disable-pip-version-check --require-hashes --no-build-isolation --retries 8 --timeout 60 -r requirements-openai.lock
 if ($LASTEXITCODE -ne 0) { throw "OpenAI SDK installation failed." }
+& $BuildPython tools\generate_openai_lock.py --output requirements-openai.lock --check
+if ($LASTEXITCODE -ne 0) { throw "OpenAI lock verification failed." }
 & $BuildPython -m pip install --disable-pip-version-check --require-hashes --retries 8 --timeout 60 -r requirements-build-windows-x64.lock
 if ($LASTEXITCODE -ne 0) { throw "Build dependency installation failed." }
 if (-not $SkipTests) {
@@ -173,7 +175,7 @@ Copy-Item -Path (Join-Path $BuiltDir "*") -Destination $ReleaseRoot -Recurse -Fo
 Copy-Item -LiteralPath $ReleaseReadme -Destination (Join-Path $ReleaseRoot "WINDOWS_X64_README.txt")
 Set-Content -LiteralPath (Join-Path $ReleaseRoot "1_START_LANSETSPBOT.bat") -Encoding Ascii -Value "@echo off`r`ncd /d `"%~dp0`"`r`nstart `"`" `"%~dp0$AppName.exe`"`r`n"
 
-& $BuildPython build\generate_sbom.py --version $AppVersion --requirements requirements-runtime.lock --requirements requirements-openai.txt --name $AppName --output $SbomPath
+& $BuildPython build\generate_sbom.py --version $AppVersion --requirements requirements-runtime.lock --requirements requirements-openai.lock --name $AppName --output $SbomPath
 if ($LASTEXITCODE -ne 0) { throw "SBOM generation failed." }
 Copy-Item -LiteralPath $SbomPath -Destination $ReleaseRoot
 Compress-Archive -LiteralPath $ReleaseRoot -DestinationPath $ZipPath -CompressionLevel Optimal

@@ -14,7 +14,7 @@ $VenvPythonw = Join-Path $VenvPath "Scripts\pythonw.exe"
 $MarkerPath = Join-Path $VenvPath ".marlen-runtime-lock.sha256"
 $RuntimeLock = Join-Path $ProjectRoot "requirements-runtime.lock"
 $BootstrapLock = Join-Path $ProjectRoot "requirements-bootstrap.txt"
-$OpenAIRequirements = Join-Path $ProjectRoot "requirements-openai.txt"
+$OpenAILock = Join-Path $ProjectRoot "requirements-openai.lock"
 $MainScript = Join-Path $ProjectRoot "main.py"
 $script:PythonProbeErrors = New-Object System.Collections.Generic.List[string]
 
@@ -211,6 +211,9 @@ if (-not (Test-Path -LiteralPath $RuntimeLock -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $BootstrapLock -PathType Leaf)) {
     throw "Missing requirements-bootstrap.txt. Extract the complete archive first."
 }
+if (-not (Test-Path -LiteralPath $OpenAILock -PathType Leaf)) {
+    throw "Missing requirements-openai.lock. Extract the complete archive first."
+}
 if (-not (Test-Path -LiteralPath $MainScript -PathType Leaf)) {
     throw "Missing main.py. Extract the complete archive first."
 }
@@ -238,7 +241,7 @@ Write-Step "Using Python $($Python.Version) x64 via $($Python.Label): $($Python.
 $expectedMarker = @(
     (Get-FileHash -Algorithm SHA256 -LiteralPath $RuntimeLock).Hash,
     (Get-FileHash -Algorithm SHA256 -LiteralPath $BootstrapLock).Hash,
-    (Get-FileHash -Algorithm SHA256 -LiteralPath $OpenAIRequirements).Hash,
+    (Get-FileHash -Algorithm SHA256 -LiteralPath $OpenAILock).Hash,
     "windows-source-launcher-v5-python-$($Python.Version)"
 ) -join "`n"
 
@@ -273,8 +276,10 @@ if ($RecreateVenv -or -not $venvUsable -or -not $markerMatches) {
     if ($LASTEXITCODE -ne 0) { throw "Bootstrap dependency installation failed." }
     & $VenvPython -m pip install --disable-pip-version-check --require-hashes --no-build-isolation --retries 8 --timeout 60 -r $RuntimeLock
     if ($LASTEXITCODE -ne 0) { throw "Runtime dependency installation failed." }
-    & $VenvPython -m pip install --disable-pip-version-check --retries 8 --timeout 60 -r $OpenAIRequirements
+    & $VenvPython -m pip install --disable-pip-version-check --require-hashes --no-build-isolation --retries 8 --timeout 60 -r $OpenAILock
     if ($LASTEXITCODE -ne 0) { throw "OpenAI SDK installation failed." }
+    & $VenvPython (Join-Path $ProjectRoot "tools\generate_openai_lock.py") --output $OpenAILock --check
+    if ($LASTEXITCODE -ne 0) { throw "OpenAI lock verification failed." }
 
     Set-Content -LiteralPath $MarkerPath -Value $expectedMarker -Encoding Ascii -NoNewline
 }

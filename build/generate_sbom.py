@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a compact CycloneDX 1.5 SBOM from pinned requirements."""
+"""Generate a compact CycloneDX 1.5 SBOM from complete pinned locks."""
 
 from __future__ import annotations
 
@@ -16,14 +16,39 @@ def _canonicalize(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+def _logical_requirement_lines(path: Path) -> list[str]:
+    lines: list[str] = []
+    current = ""
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.endswith(chr(92)):
+            current += line[:-1].strip() + " "
+            continue
+        current += line
+        lines.append(current.strip())
+        current = ""
+    if current:
+        raise RuntimeError(f"Unterminated requirement continuation in {path}")
+    return lines
+
+
 def _read_requirements(paths: list[Path]) -> dict[str, tuple[str, str]]:
     requirements: dict[str, tuple[str, str]] = {}
     for path in paths:
-        for raw_line in path.read_text(encoding="utf-8").splitlines():
-            match = _REQUIREMENT_RE.match(raw_line)
-            if match:
-                name, version = match.groups()
-                requirements[_canonicalize(name)] = (name, version)
+        for line in _logical_requirement_lines(path):
+            match = _REQUIREMENT_RE.match(line)
+            if match is None:
+                continue
+            name, version = match.groups()
+            normalized = _canonicalize(name)
+            existing = requirements.get(normalized)
+            if existing is not None and existing[1] != version:
+                raise RuntimeError(
+                    f"Conflicting pinned versions for {name}: {existing[1]} and {version}"
+                )
+            requirements[normalized] = (name, version)
     return requirements
 
 
@@ -56,7 +81,7 @@ def main() -> int:
         action="append",
         default=[],
         type=Path,
-        help="Include exact package/version pairs from this pinned requirements file.",
+        help="Include exact package/version pairs from this complete pinned lock.",
     )
     parser.add_argument(
         "--include",
@@ -68,23 +93,34 @@ def main() -> int:
 
     installed = _installed_distributions()
     pinned = _read_requirements(args.requirements)
+    if not pinned:
+        raise SystemExit("SBOM generation requires at least one exact pinned lock")
 
+    failures: list[str] = []
     components_by_name: dict[str, dict[str, str]] = {}
-    if pinned:
-        for normalized, (name, version) in pinned.items():
-            components_by_name[normalized] = _component(name, version)
-    else:
-        for normalized, distribution in installed.items():
-            name = distribution.metadata.get("Name") or normalized
-            components_by_name[normalized] = _component(name, distribution.version)
+    for normalized, (name, version) in pinned.items():
+        distribution = installed.get(normalized)
+        if distribution is None:
+            failures.append(f"not installed: {name}=={version}")
+            continue
+        if distribution.version != version:
+            failures.append(
+                f"version mismatch: {name} {distribution.version} != {version}"
+            )
+            continue
+        components_by_name[normalized] = _component(name, version)
 
     for requested_name in args.include:
         normalized = _canonicalize(requested_name)
         distribution = installed.get(normalized)
         if distribution is None:
+            failures.append(f"included package is not installed: {requested_name}")
             continue
         name = distribution.metadata.get("Name") or requested_name
         components_by_name[normalized] = _component(name, distribution.version)
+
+    if failures:
+        raise SystemExit("SBOM environment does not match the locks:\n - " + "\n - ".join(failures))
 
     payload = {
         "bomFormat": "CycloneDX",

@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """Regenerate SHA256SUMS.txt from the files the project actually ships.
 
-The manifest exists so a user can prove their copy is intact. That only works
-if it lists exactly the tracked source files - no build-machine caches, which
-are absent from a fresh checkout and would report as missing.
-
-Usage:
-    python tools/generate_manifest.py           # rewrite SHA256SUMS.txt
-    python tools/generate_manifest.py --check   # verify without writing
+A Git checkout uses ``git ls-files`` as the authoritative set. A source ZIP has
+no ``.git`` directory, so it reuses the already committed manifest path set.
+This keeps Windows ZIP builds reproducible without silently adding caches or
+other machine-local files.
 """
 
 from __future__ import annotations
@@ -15,27 +12,71 @@ from __future__ import annotations
 import argparse
 import hashlib
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = PROJECT_ROOT / "SHA256SUMS.txt"
 MANIFEST_NAME = MANIFEST.name
 
 
-def tracked_files() -> list[str]:
-    """The shipped file set, as git sees it."""
+def _safe_relative_name(value: str) -> str:
+    normalized = str(value or "").replace("\\", "/").strip()
+    path = PurePosixPath(normalized)
+    if (
+        not normalized
+        or normalized == MANIFEST_NAME
+        or path.is_absolute()
+        or ".." in path.parts
+        or "." in path.parts
+    ):
+        raise RuntimeError(f"Manifest contains an unsafe project path: {value!r}")
+    return path.as_posix()
 
+
+def _git_tracked_files() -> list[str]:
     completed = subprocess.run(  # noqa: S603 - fixed, internal command
         ["git", "ls-files", "-z"],
         cwd=str(PROJECT_ROOT),
         capture_output=True,
         check=True,
     )
-    names = [
-        name
+    return [
+        _safe_relative_name(name)
         for name in completed.stdout.decode("utf-8").split("\0")
         if name and name != MANIFEST_NAME
     ]
+
+
+def _manifest_path_set() -> list[str]:
+    if not MANIFEST.is_file():
+        raise RuntimeError(
+            "Git metadata is unavailable and SHA256SUMS.txt is missing; "
+            "extract the complete source archive"
+        )
+    names: list[str] = []
+    for raw in MANIFEST.read_text(encoding="utf-8").splitlines():
+        parts = raw.strip().split(None, 1)
+        if len(parts) != 2:
+            raise RuntimeError(f"Malformed SHA256SUMS.txt entry: {raw!r}")
+        relative = _safe_relative_name(parts[1])
+        target = PROJECT_ROOT / relative
+        if not target.is_file():
+            raise RuntimeError(f"Manifest path is missing from the source archive: {relative}")
+        names.append(relative)
+    if not names:
+        raise RuntimeError("SHA256SUMS.txt contains no project files")
+    if len(names) != len(set(names)):
+        raise RuntimeError("SHA256SUMS.txt contains duplicate project paths")
+    return names
+
+
+def tracked_files() -> list[str]:
+    """Return the authoritative shipped file set with a ZIP-safe fallback."""
+
+    try:
+        names = _git_tracked_files()
+    except (FileNotFoundError, subprocess.CalledProcessError, UnicodeDecodeError, OSError):
+        names = _manifest_path_set()
     return sorted(names)
 
 
@@ -56,7 +97,11 @@ def main() -> int:
     )
     arguments = parser.parse_args()
 
-    expected = render_manifest()
+    try:
+        expected = render_manifest()
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}")
+        return 2
     if arguments.check:
         current = MANIFEST.read_text(encoding="utf-8") if MANIFEST.is_file() else ""
         if current != expected:

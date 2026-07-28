@@ -1,2 +1,2 @@
 -r requirements-runtime.lock
--r requirements-openai.txt
+-r requirements-openai.lock
