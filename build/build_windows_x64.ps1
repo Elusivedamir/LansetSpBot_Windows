@@ -27,7 +27,7 @@ if ($null -eq $py) {
     throw "Python Launcher was not found. Install Python 3.13 x64."
 }
 $PythonArgs = @("-3.13-64")
-$probe = 'import struct,sys; assert sys.version_info[:2] == (3,13); assert 8*struct.calcsize("P") == 64; print(sys.executable)'
+$probe = "import struct,sys; assert sys.version_info[:2] == (3,13); assert 8*struct.calcsize('P') == 64; print(sys.executable)"
 $PythonExecutable = & $py.Source @PythonArgs -c $probe
 if ($LASTEXITCODE -ne 0 -or -not $PythonExecutable) {
     throw "Python 3.13 x64 is required for the reproducible Windows build."
