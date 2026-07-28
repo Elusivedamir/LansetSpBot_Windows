@@ -126,6 +126,32 @@ def _close_test_database_connections(monkeypatch):
 
     monkeypatch.setattr(Database, "__init__", tracked_init)
     yield
+
+    # GUI tests create short-lived BackgroundCall jobs (activity snapshots,
+    # account catalog/settings reads and maintenance calls).  On Windows the Qt
+    # global thread pool may still be inside SQLCipher/ACL work when the next
+    # test starts tearing down a Database object.  That race previously ended in
+    # a native ``Windows fatal exception: access violation`` instead of a normal
+    # pytest failure.  Drain only already-submitted jobs before closing their
+    # thread-local database connections.
+    try:
+        from PySide6.QtCore import QThreadPool
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+        pool = QThreadPool.globalInstance()
+        pool.waitForDone(10_000)
+        if app is not None:
+            app.processEvents()
+        # Signal delivery can enqueue one final follow-up refresh.
+        pool.waitForDone(2_000)
+    except Exception:
+        # Connection cleanup below remains the fail-safe even in tests that
+        # deliberately replace or destroy Qt globals.
+        pass
+
     for database in reversed(instances):
         try:
             database.close_thread_connection()

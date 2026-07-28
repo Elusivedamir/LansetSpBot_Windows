@@ -207,7 +207,7 @@ def test_unsaved_comment_text_is_not_overwritten_by_periodic_reload(
     container.shutdown()
 
 
-def test_account_switch_is_blocked_while_persistent_campaign_is_active(
+def test_adding_account_is_not_blocked_by_another_account_campaign(
     monkeypatch, tmp_path
 ):
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "account-campaign-lock.db"))
@@ -217,25 +217,39 @@ def test_account_switch_is_blocked_while_persistent_campaign_is_active(
     window = MarlenApp(container.adapter, container.queue_worker, config)
     view = window.account_view
 
-    monkeypatch.setattr(container.adapter, "is_queue_running", lambda: False)
+    # Multi-account authorization is intentionally isolated: starting login for
+    # a new account must not stop or inspect a campaign owned by another account.
+    view._adding_account = True
+    view._pending_session_name = "pending_" + ("a" * 32)
+    view.api_id.setText("123456")
+    view.api_hash.setText("hash")
+    view.phone.setText("+79990000000")
+    view.timezone_name.setText("UTC")
+    monkeypatch.setattr(container.adapter, "get_selected_account_id", lambda: 0)
     monkeypatch.setattr(
         container.adapter,
         "get_comment_campaign_state",
-        lambda: {"id": 1, "status": "paused"},
+        lambda *args, **kwargs: {"id": 1, "status": "paused", "account_id": 77},
     )
-    monkeypatch.setattr(container.adapter, "get_join_campaign_state", lambda: None)
+    monkeypatch.setattr(
+        container.adapter,
+        "get_join_campaign_state",
+        lambda *args, **kwargs: None,
+    )
     warnings = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
     started = []
     monkeypatch.setattr(
-        view, "_start_worker", lambda *args, **kwargs: started.append(True)
+        view,
+        "_start_worker",
+        lambda *args, **kwargs: started.append((args, kwargs)),
     )
 
     view.request_code()
 
-    assert warnings
-    assert "остановите активную кампанию" in str(warnings[0][2]).lower()
-    assert started == []
+    assert warnings == []
+    assert len(started) == 1
+    assert started[0][0][0] == "request_code"
     window._tray.hide()
     window.deleteLater()
     app.processEvents()
