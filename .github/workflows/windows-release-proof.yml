@@ -123,14 +123,15 @@ jobs:
           }
 
       - name: Run complete Windows release pipeline
+        id: windows_build
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
           & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
-            -File ".\build\build_windows_x64.ps1" *> "ci-proof\build.log"
+            -File ".\build\build_windows_x64.ps1" 2>&1 |
+            Tee-Object -FilePath "ci-proof\build.log"
           $buildExit = $LASTEXITCODE
 
-          Get-Content -LiteralPath "ci-proof\build.log"
           if ($buildExit -ne 0) {
             throw "Windows release build failed with exit code $buildExit."
           }
@@ -210,7 +211,7 @@ jobs:
           compression-level: 0
 
       - name: Upload failure evidence
-        if: failure()
+        if: ${{ failure() || cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: LansetSpBot-Windows-failure-${{ github.sha }}

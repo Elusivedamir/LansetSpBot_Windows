@@ -34,6 +34,12 @@ if ($LASTEXITCODE -ne 0 -or -not $PythonExecutable) {
 }
 Write-Host "[LansetSpBot build] Python: $PythonExecutable" -ForegroundColor Cyan
 
+function Write-BuildStage {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    Write-Host "[LansetSpBot build][stage] $Name" -ForegroundColor Cyan
+}
+
+
 $BuildVenv = Join-Path $ProjectRoot ".venv-build-windows-x64"
 $BuildPython = Join-Path $BuildVenv "Scripts\python.exe"
 if (Test-Path -LiteralPath $BuildVenv) {
@@ -50,12 +56,15 @@ if (-not (Test-Path -LiteralPath $BuildPython -PathType Leaf)) {
     if ($LASTEXITCODE -ne 0) { throw "Could not create the build environment." }
 }
 
+Write-BuildStage "Preparing isolated build environment"
 & $BuildPython -m ensurepip --upgrade
 if ($LASTEXITCODE -ne 0) { throw "ensurepip failed." }
 & $BuildPython -m pip install --disable-pip-version-check --require-hashes --retries 8 --timeout 60 -r requirements-bootstrap.txt
 if ($LASTEXITCODE -ne 0) { throw "Bootstrap dependency installation failed." }
+Write-BuildStage "Installing runtime dependencies"
 & $BuildPython -m pip install --disable-pip-version-check --require-hashes --no-build-isolation --retries 8 --timeout 60 -r requirements-runtime.lock
 if ($LASTEXITCODE -ne 0) { throw "Runtime dependency installation failed." }
+Write-BuildStage "Installing OpenAI dependencies"
 & $BuildPython -m pip install --disable-pip-version-check --require-hashes --no-build-isolation --retries 8 --timeout 60 -r requirements-openai.lock
 if ($LASTEXITCODE -ne 0) { throw "OpenAI SDK installation failed." }
 & $BuildPython tools\generate_openai_lock.py --output requirements-openai.lock --check
@@ -102,7 +111,8 @@ if (-not $SkipTests) {
     $env:QT_QPA_PLATFORM = "offscreen"
     # Run under coverage using only locked dev dependencies: the hash-locked
     # dev graph ships `coverage` and `pytest`, but not `pytest-cov`.
-    & $BuildPython -m coverage run -m pytest -q
+    Write-BuildStage "Running pytest with coverage"
+& $BuildPython -m coverage run -m pytest -vv
     if ($LASTEXITCODE -ne 0) { throw "pytest failed." }
     # tools/check_critical_coverage.py enforces per-module minimums for the
     # release-critical code. It was previously shipped but never executed, so a
@@ -115,14 +125,17 @@ if (-not $SkipTests) {
     if ($LASTEXITCODE -ne 0) { throw "compileall failed." }
     & $BuildPython -m ruff check core services storage workers gui main.py tests tools build
     if ($LASTEXITCODE -ne 0) { throw "Ruff failed." }
-    & $BuildPython -m mypy --config-file mypy.ini core services storage workers gui main.py
+    Write-BuildStage "Running Mypy"
+& $BuildPython -m mypy --config-file mypy.ini core services storage workers gui main.py
     if ($LASTEXITCODE -ne 0) { throw "Mypy failed." }
-    & $BuildPython main.py --self-test
+    Write-BuildStage "Running source self-test"
+& $BuildPython main.py --self-test
     if ($LASTEXITCODE -ne 0) { throw "Source self-test failed." }
     # A lock generated on one interpreter installs there and fails the hash
     # check on the other, which the user sees as a tampering warning. Both
     # supported interpreters must resolve before a release ships.
-    & $BuildPython tools\check_lock_coverage.py
+    Write-BuildStage "Checking runtime lock coverage"
+& $BuildPython tools\check_lock_coverage.py
     if ($LASTEXITCODE -ne 0) { throw "Runtime lock does not cover every supported Python version." }
 }
 
@@ -138,6 +151,7 @@ $BuiltDir = Join-Path $ProjectRoot ("dist\" + $AppName)
 $BuiltExe = Join-Path $BuiltDir ($AppName + ".exe")
 Remove-Item -LiteralPath $BuiltDir, "build\windows-work" -Recurse -Force -ErrorAction SilentlyContinue
 
+Write-BuildStage "Building Windows application with PyInstaller"
 & $BuildPython -m PyInstaller --clean --noconfirm --workpath "build\windows-work" "build\LansetSpBot.windows.spec"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $BuiltExe -PathType Leaf)) {
     throw "PyInstaller did not create $BuiltExe"
@@ -147,6 +161,7 @@ $oldQt = [Environment]::GetEnvironmentVariable("QT_QPA_PLATFORM", "Process")
 $RelocationRoot = $null
 try {
     $env:QT_QPA_PLATFORM = "offscreen"
+    Write-BuildStage "Running packaged self-test"
     & $BuiltExe --self-test
     if ($LASTEXITCODE -ne 0) { throw "Packaged self-test failed." }
 
@@ -154,6 +169,7 @@ try {
     $RelocatedDir = Join-Path $RelocationRoot $AppName
     New-Item -ItemType Directory -Path $RelocatedDir -Force | Out-Null
     Copy-Item -Path (Join-Path $BuiltDir "*") -Destination $RelocatedDir -Recurse -Force
+    Write-BuildStage "Running relocated packaged self-test"
     & (Join-Path $RelocatedDir ($AppName + ".exe")) --self-test
     if ($LASTEXITCODE -ne 0) { throw "Relocated packaged self-test failed." }
 }
@@ -178,6 +194,7 @@ Set-Content -LiteralPath (Join-Path $ReleaseRoot "1_START_LANSETSPBOT.bat") -Enc
 & $BuildPython build\generate_sbom.py --version $AppVersion --requirements requirements-runtime.lock --requirements requirements-openai.lock --name $AppName --output $SbomPath
 if ($LASTEXITCODE -ne 0) { throw "SBOM generation failed." }
 Copy-Item -LiteralPath $SbomPath -Destination $ReleaseRoot
+Write-BuildStage "Creating release archive"
 Compress-Archive -LiteralPath $ReleaseRoot -DestinationPath $ZipPath -CompressionLevel Optimal
 if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) { throw "Release ZIP was not created." }
 $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ZipPath).Hash.ToLowerInvariant()
