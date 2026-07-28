@@ -96,6 +96,7 @@ def create_worker_handlers(
             "sync_saved_dialogs": secret_store_unavailable,
             "join_saved_slot": secret_store_unavailable,
             "openai_test": secret_store_unavailable,
+            "telegram_health": secret_store_unavailable,
         }, None
 
     def openai_api_key_provider() -> str | None:
@@ -149,7 +150,7 @@ def create_worker_handlers(
             "sync_saved_dialogs": telegram_not_configured,
             "join_saved_slot": telegram_not_configured,
             "openai_test": openai_test,
-        "telegram_health": telegram_health,
+            "telegram_health": telegram_not_configured,
         }, None
 
     limiter = RateLimiter(self.config.rate_limit)
@@ -526,5 +527,6 @@ def create_worker_handlers(
         "sync_saved_dialogs": sync_saved_dialogs,
         "join_saved_slot": join_saved_slot,
         "openai_test": openai_test,
+        "telegram_health": telegram_health,
     }
     return handlers, telegram.disconnect
