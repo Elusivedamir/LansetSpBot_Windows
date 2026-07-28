@@ -9,7 +9,7 @@ from PySide6.QtCore import QObject, QThreadPool, QTimer, Slot
 
 from core.config import DEFAULT_MAX_CHANNELS_PER_RUN
 from core.secret_store import SecretStore
-from services.account_context import account_secret_key
+from services.account_sessions import migrate_legacy_account_secrets
 from gui.background import BackgroundCall
 from services.api_parts import (
     AccountRestrictionAPIMixin,
@@ -106,6 +106,9 @@ class ServiceAPI(
         self.secret_store = secret_store or SecretStore()
         self._secret_lock = threading.RLock()
         self._secret_migration_required = threading.Event()
+        # Fail closed from construction until the migration thread verifies that
+        # no legacy SQLite secret copies remain.
+        self._secret_migration_required.set()
         self._secret_migration_thread = threading.Thread(
             target=type(self)._migrate_legacy_secrets,
             args=(
@@ -247,63 +250,21 @@ class ServiceAPI(
         secret_lock,
         migration_required: threading.Event | None = None,
     ) -> None:
-        """Move old plaintext SQLite secrets off the GUI thread."""
+        """Move every legacy SQLite secret copy into protected storage."""
         unresolved = False
         try:
-            for key in keys:
-                try:
-                    # Keep each read/migrate/delete transaction mutually exclusive
-                    # with GUI writes.  Without this lock, a late migration could
-                    # overwrite a freshly entered API hash with the old SQLite value.
-                    with secret_lock:
-                        legacy = database.get_setting(key, "")
-                        if not legacy:
-                            continue
-                        if migration_required is not None:
-                            migration_required.set()
-                        strict_method = getattr(
-                            type(secret_store), "get_strict_optional", None
-                        )
-                        owner_getter = getattr(
-                            database, "get_selected_account_id", None
-                        )
-                        owner = (
-                            int(owner_getter() or 0)
-                            if callable(owner_getter)
-                            else 0
-                        )
-                        target_key = (
-                            account_secret_key(owner, key)
-                            if owner > 0
-                            else key
-                        )
-                        if callable(strict_method):
-                            current = secret_store.get_strict_optional(target_key)
-                        else:
-                            current = secret_store.get(target_key, "") or None
-                        if current is None:
-                            secret_store.set(target_key, legacy)
-                            if callable(strict_method):
-                                verified = secret_store.get_strict_optional(
-                                    target_key
-                                )
-                                if verified != str(legacy):
-                                    raise RuntimeError(
-                                        f"Protected secret verification failed for {key}"
-                                    )
-                        database.delete_setting(key)
-                except Exception:
-                    unresolved = True
-                    log.exception("Could not migrate legacy secret %s", key)
+            migrate_legacy_account_secrets(
+                database,
+                secret_store,
+                keys=keys,
+                secret_lock=secret_lock,
+            )
+        except Exception:
+            unresolved = True
+            log.exception("Could not complete protected account-secret migration")
         finally:
             if migration_required is not None:
-                try:
-                    remaining = any(database.get_setting(key, "") for key in keys)
-                except Exception:
-                    remaining = True
-                    unresolved = True
-                    log.exception("Could not verify legacy secret migration state")
-                if unresolved or remaining:
+                if unresolved:
                     migration_required.set()
                 else:
                     migration_required.clear()

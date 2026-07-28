@@ -90,6 +90,8 @@ class AccountsAPIMixin(_MixinHost):
         if not account:
             return {}
         values = self.database.get_account_settings(owner)
+        for key in SECRET_SETTING_KEYS:
+            values.pop(key, None)
         values.update(
             {
                 "telegram.account_id": str(owner),

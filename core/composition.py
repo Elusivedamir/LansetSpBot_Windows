@@ -18,6 +18,7 @@ from services.telegram_service import TelegramService
 from services.account_sessions import (
     migrate_legacy_account_secrets,
     migrate_legacy_main_session,
+    recover_interrupted_session_moves,
 )
 from services.account_runtime_manager import create_multiaccount_handlers
 from storage.database import Database
@@ -38,6 +39,9 @@ class ApplicationContainer:
         self.database = Database(config.database_path, busy_timeout_ms=1_000)
         reconcile_pending_account_state(self.database)
         self.secret_store = SecretStore()
+        self.session_recovery = recover_interrupted_session_moves(
+            config.telegram.session_dir
+        )
         self.session_migration = migrate_legacy_main_session(
             self.database, config.telegram.session_dir
         )

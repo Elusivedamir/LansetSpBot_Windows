@@ -41,6 +41,16 @@ ACCOUNT_SETTING_PREFIXES = (
     "openai.",
     "scheduler.",
 )
+SECRET_ACCOUNT_SETTING_KEYS = frozenset(
+    {
+        "telegram.api_hash",
+        "telegram.phone",
+        "telegram.proxy_username",
+        "telegram.proxy_password",
+        "telegram.proxy_secret",
+        "openai.api_key",
+    }
+)
 
 
 def _positive_account_id(value: object) -> int:
@@ -426,7 +436,10 @@ class AccountRepositoryMixin(_MixinHost):
                 ).fetchall()
                 for setting in account_rows:
                     key = str(setting["key"])
-                    if not key.startswith(ACCOUNT_SETTING_PREFIXES):
+                    if (
+                        key in SECRET_ACCOUNT_SETTING_KEYS
+                        or not key.startswith(ACCOUNT_SETTING_PREFIXES)
+                    ):
                         continue
                     conn.execute(
                         """INSERT INTO settings(key, value, updated_at)
@@ -477,7 +490,11 @@ class AccountRepositoryMixin(_MixinHost):
                            WHERE account_id=? ORDER BY key""",
                         (owner,),
                     ).fetchall()
-                return {str(row["key"]): row["value"] for row in rows}
+                return {
+                    str(row["key"]): row["value"]
+                    for row in rows
+                    if str(row["key"]) not in SECRET_ACCOUNT_SETTING_KEYS
+                }
         except DatabaseError:
             raise
         except Exception as exc:
@@ -489,6 +506,16 @@ class AccountRepositoryMixin(_MixinHost):
         owner = _positive_account_id(account_id)
         if not isinstance(values, dict):
             raise DatabaseError("Account settings must be an object")
+        secret_keys = sorted(
+            str(key)
+            for key in values
+            if str(key) in SECRET_ACCOUNT_SETTING_KEYS
+        )
+        if secret_keys:
+            raise DatabaseError(
+                "Secret account settings must be stored in SecretStore: "
+                + ", ".join(secret_keys)
+            )
         try:
             with self.get_connection() as conn:
                 if self._account_row(conn, owner) is None:
@@ -515,6 +542,16 @@ class AccountRepositoryMixin(_MixinHost):
         owner = _positive_account_id(account_id)
         if not isinstance(values, dict):
             raise DatabaseError("Account settings must be an object")
+        secret_keys = sorted(
+            str(key)
+            for key in values
+            if str(key) in SECRET_ACCOUNT_SETTING_KEYS
+        )
+        if secret_keys:
+            raise DatabaseError(
+                "Secret account settings must be stored in SecretStore: "
+                + ", ".join(secret_keys)
+            )
         try:
             with self.get_connection() as conn:
                 if not conn.in_transaction:

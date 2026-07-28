@@ -29,6 +29,16 @@ ACCOUNT_SETTING_PREFIXES = (
     "openai.",
     "scheduler.",
 )
+SECRET_ACCOUNT_SETTING_KEYS = frozenset(
+    {
+        "telegram.api_hash",
+        "telegram.phone",
+        "telegram.proxy_username",
+        "telegram.proxy_password",
+        "telegram.proxy_secret",
+        "openai.api_key",
+    }
+)
 
 
 def _tables(conn: SQLiteConnection) -> set[str]:
@@ -223,7 +233,10 @@ def migrate_multiaccount_v31(
                     "telegram.authorized",
                 }:
                     continue
-                if not key.startswith(ACCOUNT_SETTING_PREFIXES):
+                if (
+                    key in SECRET_ACCOUNT_SETTING_KEYS
+                    or not key.startswith(ACCOUNT_SETTING_PREFIXES)
+                ):
                     continue
                 conn.execute(
                     """INSERT INTO account_settings(

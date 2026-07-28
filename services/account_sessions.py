@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 import secrets
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Iterator
 
-from core.local_security import ensure_private_directory
+from core.local_security import ensure_private_directory, harden_private_file
 
 
 log = logging.getLogger(__name__)
@@ -25,39 +26,118 @@ LEGACY_ACCOUNT_SECRET_KEYS = (
 )
 
 
-def migrate_legacy_account_secrets(database, secret_store) -> dict[str, object]:
-    """Move former single-account secrets into the first account namespace."""
+def migrate_legacy_account_secrets(
+    database,
+    secret_store,
+    *,
+    keys=None,
+    secret_lock=None,
+) -> dict[str, object]:
+    """Move every legacy SQLite/unnamespaced secret into protected account storage."""
 
-    owner = int(database.get_selected_account_id() or 0)
-    if owner <= 0 or not database.get_telegram_account(owner):
-        return {"migrated": 0, "reason": "no_selected_account"}
+    selected = int(database.get_selected_account_id() or 0)
+    selected_exists = bool(
+        selected > 0 and database.get_telegram_account(selected)
+    )
+    selected_owner = selected if selected_exists else 0
+    key_list = tuple(sorted(str(key) for key in (keys or LEGACY_ACCOUNT_SECRET_KEYS)))
     getter = getattr(type(secret_store), "get_strict_optional", None)
+    lock = secret_lock if secret_lock is not None else nullcontext()
     migrated = 0
-    for key in LEGACY_ACCOUNT_SECRET_KEYS:
-        target = f"account.{owner}.{key}"
-        current = (
-            secret_store.get_strict_optional(target)
-            if callable(getter)
-            else secret_store.get(target, "") or None
-        )
-        legacy = (
-            secret_store.get_strict_optional(key)
-            if callable(getter)
-            else secret_store.get(key, "") or None
-        )
-        if current is None and legacy not in (None, ""):
+    deleted = 0
+
+    def strict_get(key: str):
+        if callable(getter):
+            return secret_store.get_strict_optional(key)
+        return secret_store.get(key, "") or None
+
+    def migrate_value(
+        target: str,
+        legacy: object,
+        *,
+        delete_source,
+        label: str,
+    ) -> None:
+        nonlocal migrated, deleted
+        if legacy in (None, ""):
+            return
+        current = strict_get(target)
+        if current is None:
             secret_store.set(target, str(legacy))
-            verified = (
-                secret_store.get_strict_optional(target)
-                if callable(getter)
-                else secret_store.get(target, "") or None
-            )
+            verified = strict_get(target)
             if verified != str(legacy):
-                raise RuntimeError(f"Could not verify migrated secret {key}")
+                raise RuntimeError(
+                    f"Could not verify protected secret migration for {label}"
+                )
             migrated += 1
-        if legacy not in (None, ""):
-            secret_store.delete(key)
-    return {"migrated": migrated, "account_id": owner}
+        delete_source()
+        deleted += 1
+
+    # The global SQLite compatibility mirror is the newest legacy source for the
+    # selected account, so migrate it before older account_settings copies.
+    for key in key_list:
+        with lock:
+            legacy = database.get_setting(key, "")
+            target = f"account.{selected_owner}.{key}" if selected_owner > 0 else key
+            migrate_value(
+                target,
+                legacy,
+                delete_source=lambda key=key: database.delete_setting(key),
+                label=f"settings:{key}",
+            )
+
+    # Older releases stored the same values under unnamespaced SecretStore keys.
+    if selected_owner > 0:
+        for key in key_list:
+            with lock:
+                legacy = strict_get(key)
+                migrate_value(
+                    f"account.{selected_owner}.{key}",
+                    legacy,
+                    delete_source=lambda key=key: secret_store.delete(key),
+                    label=f"secret-store:{key}",
+                )
+
+    accounts = list(database.list_telegram_accounts())
+    for account in accounts:
+        owner = int(account.get("telegram_account_id") or 0)
+        if owner <= 0:
+            continue
+        for key in key_list:
+            with lock:
+                legacy = database.get_account_setting(owner, key, "")
+                migrate_value(
+                    f"account.{owner}.{key}",
+                    legacy,
+                    delete_source=lambda owner=owner, key=key: (
+                        database.delete_account_setting(owner, key)
+                    ),
+                    label=f"account_settings:{owner}:{key}",
+                )
+
+    remaining_global = [
+        key for key in key_list if database.get_setting(key, "") not in (None, "")
+    ]
+    remaining_accounts = [
+        (int(account.get("telegram_account_id") or 0), key)
+        for account in accounts
+        for key in key_list
+        if int(account.get("telegram_account_id") or 0) > 0
+        and database.get_account_setting(
+            int(account.get("telegram_account_id") or 0), key, ""
+        )
+        not in (None, "")
+    ]
+    if remaining_global or remaining_accounts:
+        raise RuntimeError(
+            "Legacy SQLite secrets remain after protected migration"
+        )
+    return {
+        "migrated": migrated,
+        "deleted": deleted,
+        "account_id": selected_owner,
+        "accounts_checked": len(accounts),
+    }
 
 
 SESSION_NAME_RE = re.compile(
@@ -113,6 +193,164 @@ def _purge_session_family(base: Path) -> None:
     _unlink_with_retry(session_file)
 
 
+SESSION_FAMILY_SUFFIXES = ("", "-wal", "-shm", "-journal")
+MOVE_JOURNAL_RE = re.compile(r"^\.session_move_[a-f0-9]{24}\.json$")
+MOVE_BASE_RE = re.compile(r"^[A-Za-z0-9_.-]{1,180}$")
+
+
+def _fsync_directory(directory: Path) -> None:
+    if os.name == "nt":
+        return
+    try:
+        descriptor = os.open(str(directory), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _write_move_journal(source_base: Path, destination_base: Path) -> Path:
+    source = Path(source_base).resolve()
+    destination = Path(destination_base).resolve()
+    if source.parent != destination.parent:
+        raise RuntimeError("Telegram session move must stay in one directory")
+    if not MOVE_BASE_RE.fullmatch(source.name) or not MOVE_BASE_RE.fullmatch(
+        destination.name
+    ):
+        raise RuntimeError("Unsafe Telegram session move journal name")
+    journal = source.parent / f".session_move_{secrets.token_hex(12)}.json"
+    payload = {
+        "version": 1,
+        "source": source.name,
+        "destination": destination.name,
+    }
+    with journal.open("x", encoding="utf-8", newline="\n") as stream:
+        json.dump(payload, stream, ensure_ascii=True, sort_keys=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    if not harden_private_file(journal):
+        journal.unlink(missing_ok=True)
+        raise RuntimeError("Could not protect Telegram session move journal")
+    _fsync_directory(journal.parent)
+    return journal
+
+
+def _remove_move_journal(journal: Path) -> None:
+    _unlink_with_retry(Path(journal))
+    _fsync_directory(Path(journal).parent)
+
+
+def _session_artifact(base: Path, suffix: str) -> Path:
+    session_file = Path(base).with_suffix(".session")
+    return session_file if not suffix else Path(f"{session_file}{suffix}")
+
+
+def _recover_move_journal(journal: Path) -> None:
+    if not harden_private_file(journal):
+        raise RuntimeError(
+            f"Could not protect Telegram session move journal: {journal.name}"
+        )
+    try:
+        payload = json.loads(journal.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"Unreadable Telegram session move journal: {journal.name}"
+        ) from exc
+    if not isinstance(payload, dict) or int(payload.get("version") or 0) != 1:
+        raise RuntimeError(
+            f"Unsupported Telegram session move journal: {journal.name}"
+        )
+    source_name = str(payload.get("source") or "")
+    destination_name = str(payload.get("destination") or "")
+    if not MOVE_BASE_RE.fullmatch(source_name) or not MOVE_BASE_RE.fullmatch(
+        destination_name
+    ):
+        raise RuntimeError(
+            f"Unsafe Telegram session move journal: {journal.name}"
+        )
+    root = journal.parent.resolve()
+    source = (root / source_name).resolve()
+    destination = (root / destination_name).resolve()
+    if source.parent != root or destination.parent != root:
+        raise RuntimeError(
+            f"Telegram session recovery escapes its directory: {journal.name}"
+        )
+
+    source_main = _session_artifact(source, "")
+    destination_main = _session_artifact(destination, "")
+    source_exists = source_main.exists()
+    destination_exists = destination_main.exists()
+    if source_exists and destination_exists:
+        raise RuntimeError(
+            "Conflicting Telegram session files require manual recovery: "
+            f"{source_main.name}, {destination_main.name}"
+        )
+
+    if destination_exists:
+        for suffix in SESSION_FAMILY_SUFFIXES[1:]:
+            current = _session_artifact(source, suffix)
+            target = _session_artifact(destination, suffix)
+            if current.exists() and target.exists():
+                raise RuntimeError(
+                    "Conflicting Telegram session sidecars require manual recovery: "
+                    f"{current.name}, {target.name}"
+                )
+            if current.exists():
+                _replace_with_retry(current, target)
+        from services.telegram_service import TelegramService
+
+        TelegramService._secure_session_file(destination_main)
+    elif source_exists:
+        for suffix in SESSION_FAMILY_SUFFIXES[1:]:
+            current = _session_artifact(destination, suffix)
+            target = _session_artifact(source, suffix)
+            if current.exists() and target.exists():
+                raise RuntimeError(
+                    "Conflicting Telegram session sidecars require manual recovery: "
+                    f"{current.name}, {target.name}"
+                )
+            if current.exists():
+                _replace_with_retry(current, target)
+        from services.telegram_service import TelegramService
+
+        TelegramService._secure_session_file(source_main)
+    else:
+        residues = [
+            _session_artifact(base, suffix)
+            for base in (source, destination)
+            for suffix in SESSION_FAMILY_SUFFIXES[1:]
+            if _session_artifact(base, suffix).exists()
+        ]
+        detail = (
+            ": " + ", ".join(path.name for path in residues)
+            if residues
+            else ""
+        )
+        raise RuntimeError(
+            "Telegram session move journal refers to two missing main databases"
+            + detail
+        )
+
+    _remove_move_journal(journal)
+
+
+def recover_interrupted_session_moves(session_dir: Path) -> dict[str, object]:
+    """Complete or roll back interrupted session-family renames before Telethon starts."""
+
+    root = Path(session_dir).expanduser().resolve()
+    ensure_private_directory(root)
+    recovered = 0
+    for journal in sorted(root.glob(".session_move_*.json")):
+        if not MOVE_JOURNAL_RE.fullmatch(journal.name):
+            continue
+        _recover_move_journal(journal)
+        recovered += 1
+    return {"recovered": recovered, "directory": str(root)}
+
+
 def _move_session_family(source_base: Path, destination_base: Path) -> None:
     source_file = source_base.with_suffix(".session")
     destination_file = destination_base.with_suffix(".session")
@@ -122,9 +360,10 @@ def _move_session_family(source_base: Path, destination_base: Path) -> None:
         raise RuntimeError(
             f"Target Telegram session already exists: {destination_file.name}"
         )
-    _replace_with_retry(source_file, destination_file)
+    journal = _write_move_journal(source_base, destination_base)
     moved: list[tuple[Path, Path]] = []
     try:
+        _replace_with_retry(source_file, destination_file)
         for suffix in ("-wal", "-shm", "-journal"):
             source_sidecar = Path(f"{source_file}{suffix}")
             destination_sidecar = Path(f"{destination_file}{suffix}")
@@ -134,13 +373,40 @@ def _move_session_family(source_base: Path, destination_base: Path) -> None:
         from services.telegram_service import TelegramService
 
         TelegramService._secure_session_file(destination_file)
-    except Exception:
-        for current, original in reversed(moved):
-            if current.exists() and not original.exists():
-                _replace_with_retry(current, original)
-        if destination_file.exists() and not source_file.exists():
-            _replace_with_retry(destination_file, source_file)
+    except BaseException:
+        rollback_complete = True
+        try:
+            for current, original in reversed(moved):
+                if current.exists() and not original.exists():
+                    _replace_with_retry(current, original)
+            if destination_file.exists() and not source_file.exists():
+                _replace_with_retry(destination_file, source_file)
+        except Exception:
+            rollback_complete = False
+            log.exception(
+                "Telegram session move rollback was interrupted; journal retained: %s",
+                journal,
+            )
+        if rollback_complete:
+            try:
+                _remove_move_journal(journal)
+            except Exception:
+                log.exception(
+                    "Could not remove rolled-back Telegram session journal %s",
+                    journal,
+                )
         raise
+    else:
+        try:
+            _remove_move_journal(journal)
+        except Exception:
+            # The family move already completed and is authoritative. Keep the
+            # journal for idempotent startup cleanup instead of reporting a false
+            # operation failure to the account/database layer.
+            log.exception(
+                "Telegram session move completed; cleanup journal retained: %s",
+                journal,
+            )
 
 
 def migrate_legacy_main_session(database, session_dir: Path) -> dict[str, object]:
