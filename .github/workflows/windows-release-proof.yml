@@ -1,0 +1,200 @@
+name: Windows Release Proof
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/windows-release-proof.yml"
+      - "**/*.py"
+      - "**/*.ps1"
+      - "**/*.cmd"
+      - "**/*.bat"
+      - "requirements*.txt"
+      - "requirements*.lock"
+      - "SHA256SUMS.txt"
+      - "build/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove-windows-release:
+    name: Build and prove Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 120
+
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python 3.13 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: "x64"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements-bootstrap.txt
+            requirements-runtime.lock
+            requirements-openai.lock
+            requirements-build-windows-x64.lock
+            requirements-dev-windows-x64.lock
+
+      - name: Record runner and source proof
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Path "ci-proof" -Force | Out-Null
+
+          @(
+            "repository=${{ github.repository }}"
+            "commit=${{ github.sha }}"
+            "ref=${{ github.ref }}"
+            "runner_os=${{ runner.os }}"
+            "runner_arch=${{ runner.arch }}"
+            "os_version=$([Environment]::OSVersion.VersionString)"
+            "is_64_bit_os=$([Environment]::Is64BitOperatingSystem)"
+            "powershell=$($PSVersionTable.PSVersion)"
+          ) | Set-Content -LiteralPath "ci-proof\runner.txt" -Encoding UTF8
+
+          python -c "import platform,struct,sys; print(sys.version); print(sys.executable); print(platform.platform()); assert struct.calcsize('P') * 8 == 64" |
+            Tee-Object -FilePath "ci-proof\python-setup.txt"
+
+          py -0p 2>&1 | Tee-Object -FilePath "ci-proof\python-launcher-inventory.txt"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Python Launcher inventory failed."
+          }
+
+          py -3.13-64 -c "import struct,sys; print(sys.version); print(sys.executable); assert sys.version_info[:2] == (3,13); assert struct.calcsize('P') * 8 == 64" |
+            Tee-Object -FilePath "ci-proof\python-313-proof.txt"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Python 3.13 x64 is not available through py.exe."
+          }
+
+          $head = (git rev-parse HEAD).Trim()
+          if ($head -ne "${{ github.sha }}") {
+            throw "Checked out commit $head does not match requested commit ${{ github.sha }}."
+          }
+          if (git status --porcelain) {
+            throw "Checkout is not clean before the proof run."
+          }
+
+          python tools/generate_manifest.py --check 2>&1 |
+            Tee-Object -FilePath "ci-proof\manifest-before-build.txt"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Source manifest validation failed."
+          }
+
+      - name: Run complete Windows release pipeline
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+            -File ".\build\build_windows_x64.ps1" *> "ci-proof\build.log"
+          $buildExit = $LASTEXITCODE
+
+          Get-Content -LiteralPath "ci-proof\build.log"
+          if ($buildExit -ne 0) {
+            throw "Windows release build failed with exit code $buildExit."
+          }
+
+      - name: Verify release evidence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $zip = Get-ChildItem -LiteralPath "dist" -File -Filter "*-Windows-x64.zip" |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+          $checksums = Get-ChildItem -LiteralPath "dist" -File -Filter "*-Windows-x64-SHA256SUMS.txt" |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+          $sbom = Get-ChildItem -LiteralPath "dist" -File -Filter "*-Windows-x64-SBOM.cdx.json" |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+
+          if ($null -eq $zip) { throw "Release ZIP was not produced." }
+          if ($null -eq $checksums) { throw "Release checksum file was not produced." }
+          if ($null -eq $sbom) { throw "Release SBOM was not produced." }
+          if (-not (Test-Path -LiteralPath "coverage.json" -PathType Leaf)) {
+            throw "coverage.json was not produced."
+          }
+
+          $checksumLine = (Get-Content -LiteralPath $checksums.FullName -Raw).Trim()
+          $expectedHash = ($checksumLine -split "\s+", 2)[0].ToLowerInvariant()
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip.FullName).Hash.ToLowerInvariant()
+          if ($expectedHash -ne $actualHash) {
+            throw "Release ZIP checksum mismatch."
+          }
+
+          $sbomDocument = Get-Content -LiteralPath $sbom.FullName -Raw | ConvertFrom-Json
+          $components = @($sbomDocument.components)
+          if ($components.Count -lt 10) {
+            throw "SBOM is unexpectedly incomplete: $($components.Count) components."
+          }
+          if (-not ($components | Where-Object { $_.name -eq "openai" })) {
+            throw "SBOM does not contain the OpenAI SDK."
+          }
+
+          @(
+            "zip=$($zip.Name)"
+            "zip_sha256=$actualHash"
+            "zip_bytes=$($zip.Length)"
+            "checksums=$($checksums.Name)"
+            "sbom=$($sbom.Name)"
+            "sbom_components=$($components.Count)"
+            "coverage=coverage.json"
+          ) | Set-Content -LiteralPath "ci-proof\release-evidence.txt" -Encoding UTF8
+
+          @"
+          ## Windows release proof passed
+
+          - Commit: `${{ github.sha }}`
+          - Runner: Windows Server 2022 x64
+          - Release ZIP: `$($zip.Name)`
+          - ZIP SHA-256: `$actualHash`
+          - SBOM components: `$($components.Count)`
+          - Full pytest, coverage, Ruff, Mypy, SQLCipher, PyInstaller and packaged self-tests completed.
+          "@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
+
+      - name: Upload verified release
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LansetSpBot-Windows-x64-${{ github.sha }}
+          path: |
+            dist/*-Windows-x64.zip
+            dist/*-Windows-x64-SHA256SUMS.txt
+            dist/*-Windows-x64-SBOM.cdx.json
+            coverage.json
+            ci-proof/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LansetSpBot-Windows-failure-${{ github.sha }}
+          path: |
+            ci-proof/**
+            coverage.json
+            SHA256SUMS.txt
+            dist/**
+          if-no-files-found: warn
+          retention-days: 14
