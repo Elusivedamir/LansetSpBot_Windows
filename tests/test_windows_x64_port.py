@@ -3,6 +3,13 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from gui.instruction_assets import (
+    SCREENSHOT_NAMES,
+    instruction_assets_ready,
+    mark_instruction_assets_stale,
+    write_instruction_asset_metadata,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -69,6 +76,12 @@ def test_windows_build_pipeline_has_native_self_tests_and_release_zip() -> None:
     assert "$BuiltExe --self-test" in build
     assert "LansetSpBot Проверка" in build
     assert "Compress-Archive" in build
+    assert '$ReleaseReadme = Join-Path $ProjectRoot "README.txt"' in build
+    assert "Test-Path -LiteralPath $ReleaseReadme -PathType Leaf" in build
+    assert (
+        'Copy-Item -LiteralPath $ReleaseReadme -Destination '
+        '(Join-Path $ReleaseRoot "WINDOWS_X64_README.txt")'
+    ) in build
 
 
 def test_windows_version_generator_is_valid_python() -> None:
@@ -102,3 +115,30 @@ def test_windows_direct_python314_fallback_avoids_native_c_probe() -> None:
     assert " -c " not in launcher
     assert "windows-direct-python-314-v1" in launcher
     assert "$VenvPython $MainScript --self-test" in launcher
+
+
+def test_instruction_screenshot_metadata_fails_closed_on_source_drift(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    assets = project / "gui" / "assets" / "instructions"
+    (project / "core").mkdir(parents=True)
+    (project / "tools").mkdir(parents=True)
+    assets.mkdir(parents=True)
+    (project / "gui" / "view.py").write_text("STATE = 'current'\n", encoding="utf-8")
+    (project / "core" / "version.py").write_text("VERSION = '1'\n", encoding="utf-8")
+    (project / "tools" / "capture_instruction_screenshots.py").write_text(
+        "CAPTURE = True\n",
+        encoding="utf-8",
+    )
+    for name in SCREENSHOT_NAMES:
+        (assets / name).write_bytes(f"png:{name}".encode())
+
+    mark_instruction_assets_stale(assets)
+    assert instruction_assets_ready(assets, project_root=project) is False
+
+    write_instruction_asset_metadata(assets, project)
+    assert instruction_assets_ready(assets, project_root=project) is True
+
+    (project / "gui" / "view.py").write_text("STATE = 'changed'\n", encoding="utf-8")
+    assert instruction_assets_ready(assets, project_root=project) is False

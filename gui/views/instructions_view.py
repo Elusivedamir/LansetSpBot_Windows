@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.version import __version__
+from gui.instruction_assets import METADATA_FILENAME, instruction_assets_ready
 
 from ..resources import asset_path
 
@@ -199,12 +200,12 @@ class InstructionsView(QWidget):
         (
             "Смена Telegram-аккаунта",
             "01_account.png",
-            "Перед сменой аккаунта программа останавливает фоновые операции и не разрешает "
-            "переключение при активной задаче. Каналы, маршруты, кампании, история, варианты "
-            "комментариев, ограничения и «Живой журнал» изолированы по Telegram account_id. "
-            "После входа в другой аккаунт интерфейс показывает только его данные. Рабочую "
-            "сессию повреждённого аккаунта восстановить из копии нельзя — потребуется новая "
-            "авторизация по коду и 2FA.",
+            "Смена строки меняет отображаемый аккаунт, но не останавливает его фоновые "
+            "кампании: каждый runtime продолжает работу через собственную сессию. Каналы, "
+            "маршруты, кампании, история, варианты комментариев, ограничения и «Живой "
+            "журнал» изолированы по Telegram account_id. После выбора другого аккаунта "
+            "интерфейс показывает только его данные. Рабочую сессию повреждённого аккаунта "
+            "восстановить из копии нельзя — потребуется новая авторизация по коду и 2FA.",
         ),
         (
             "Каналы и сохранённый список",
@@ -318,10 +319,15 @@ class InstructionsView(QWidget):
         self.guide_version = QLabel(f"Инструкция для версии {__version__}")
         self.guide_version.setObjectName("activityBadge")
         self.guide_version.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        asset_directory = self._asset_path(METADATA_FILENAME).parent
+        self._screenshots_ready = instruction_assets_ready(asset_directory)
         self.guide_version.setToolTip(
-            "Снимки экрана собираются из самого интерфейса "
-            "(tools/capture_instruction_screenshots.py), поэтому показывают "
-            "текущие экраны, а не прежнюю версию."
+            (
+                "Снимки проверены по исходникам и хешам текущей сборки."
+                if self._screenshots_ready
+                else "Старые снимки скрыты. Windows-сборка автоматически "
+                "переснимет текущий интерфейс и проверит хеши."
+            )
         )
 
         self.progress_label = QLabel()
@@ -393,10 +399,17 @@ class InstructionsView(QWidget):
         image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         image.setMinimumHeight(220)
         image.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
-        pixmap = QPixmap(str(self._asset_path(image_name)))
+        pixmap = (
+            QPixmap(str(self._asset_path(image_name)))
+            if self._screenshots_ready
+            else QPixmap()
+        )
         image.setProperty("sourcePixmap", pixmap)
         if pixmap.isNull():
-            image.setText("Скриншот недоступен")
+            image.setText(
+                "Скриншот временно скрыт: его соответствие текущему интерфейсу "
+                "не подтверждено. Windows-сборка обновит изображение автоматически."
+            )
             image.setCursor(Qt.CursorShape.ArrowCursor)
             image.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         else:

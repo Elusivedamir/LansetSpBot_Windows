@@ -28,6 +28,12 @@ def _run_collector(tmp_path: Path, profile: Path, *extra: str) -> tuple[int, str
     environment = {
         **dict(__import__("os").environ),
         "MARLEN_DATA_DIR": str(profile),
+        "APPDATA": str(
+            tmp_path
+            / "LansetAuditSensitiveUser42"
+            / "AppData"
+            / "Roaming"
+        ),
         "QT_QPA_PLATFORM": "offscreen",
     }
     completed = subprocess.run(
@@ -78,6 +84,18 @@ def test_the_report_carries_no_planted_secret(tmp_path: Path) -> None:
     assert "main.session" not in report
     assert "TELEGRAM-SESSION-BYTES" not in report
     assert "ENCRYPTED-SECRET-BLOB" not in report
+
+
+def test_the_report_redacts_user_project_and_profile_paths(tmp_path: Path) -> None:
+    profile = _profile_with_secrets(tmp_path)
+    _, report = _run_collector(tmp_path, profile, "--skip-self-test")
+
+    assert "LansetAuditSensitiveUser42" not in report
+    assert str(profile) not in report
+    assert str(ROOT) not in report
+    assert "<APP_PROFILE>" in report
+    assert "<APPDATA>" in report
+    assert "<PROJECT_ROOT>" in report
 
 
 def test_the_report_states_whether_the_database_is_encrypted_without_reading_it(

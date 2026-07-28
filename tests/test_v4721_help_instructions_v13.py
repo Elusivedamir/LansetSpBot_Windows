@@ -8,6 +8,7 @@ from core.composition import ApplicationContainer
 from core.config import Config
 from core.version import BUILD_ID
 from gui.app import MarlenApp
+from gui.instruction_assets import METADATA_FILENAME
 from gui.views.instructions_view import InstructionsView
 
 
@@ -99,6 +100,7 @@ def test_instruction_slideshow_documents_current_gui_routes_and_help() -> None:
         path = view._asset_path(asset)
         assert path.is_file(), f"{asset} is referenced but not shipped"
         assert path.stat().st_size > 10_000
+    assert view._asset_path(METADATA_FILENAME).is_file()
 
     last_index = view.stack.count() - 1
     view.stack.setCurrentIndex(last_index)
@@ -128,3 +130,8 @@ def test_windows_build_regenerates_guide_assets_before_release_checks() -> None:
     assert build.index(manifest) < build.index(pytest_gate)
     assert build.index(manifest) < build.index(package)
     assert "Instruction screenshot regeneration failed." in build
+    capture_source = (
+        root / "tools" / "capture_instruction_screenshots.py"
+    ).read_text(encoding="utf-8")
+    assert "mark_instruction_assets_stale" in capture_source
+    assert "write_instruction_asset_metadata" in capture_source

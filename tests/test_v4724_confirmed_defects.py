@@ -333,7 +333,7 @@ def test_v23_delivery_routes_collapse_to_one_source_receipt(tmp_path: Path) -> N
         conn.close()
 
     migrated = Database(path)
-    assert migrated.get_version() == Database.SCHEMA_VERSION == 30
+    assert migrated.get_version() == Database.SCHEMA_VERSION
     with migrated.get_connection() as active:
         rows = active.execute(
             """SELECT linked_chat_id, status FROM comment_deliveries

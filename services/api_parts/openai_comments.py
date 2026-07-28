@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
-from typing import Any, TYPE_CHECKING, cast
+from contextlib import nullcontext
+from typing import TYPE_CHECKING, Any, cast
 
 from core.openai_settings import (
     DEFAULT_OPENAI_SYSTEM_PROMPT,
@@ -42,6 +43,27 @@ class OpenAICommentAPIMixin(_MixinHost):
         owner = int(self.get_current_account_id() or 0)
         return self.database.for_account(owner) if owner > 0 else self.database
 
+    def _openai_configuration_result(
+        self,
+        *,
+        settings: CommentGenerationSettings,
+        prompt: str,
+        source: str,
+        api_key: str | None,
+    ) -> dict[str, Any]:
+        return {
+            "comment_source": source,
+            "model": settings.model,
+            "system_prompt": prompt,
+            "max_words": settings.max_words,
+            "temperature": settings.temperature,
+            "timeout_seconds": settings.timeout_seconds,
+            "max_generation_attempts": settings.max_generation_attempts,
+            "manual_approval_required": False,
+            "has_api_key": bool(api_key),
+            "api_key_mask": self._mask_api_key(api_key),
+        }
+
     def get_openai_configuration(self) -> dict[str, Any]:
         database = self._openai_database()
         public = dict(database.get_settings("openai."))
@@ -53,18 +75,12 @@ class OpenAICommentAPIMixin(_MixinHost):
             public.get("openai.comment_source") or "prepared"
         )
         key = self._strict_openai_key()
-        return {
-            "comment_source": source,
-            "model": settings.model,
-            "system_prompt": prompt,
-            "max_words": settings.max_words,
-            "temperature": settings.temperature,
-            "timeout_seconds": settings.timeout_seconds,
-            "max_generation_attempts": settings.max_generation_attempts,
-            "manual_approval_required": False,
-            "has_api_key": bool(key),
-            "api_key_mask": self._mask_api_key(key),
-        }
+        return self._openai_configuration_result(
+            settings=settings,
+            prompt=prompt,
+            source=source,
+            api_key=key,
+        )
 
     def save_openai_configuration(self, values: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(values, dict):
@@ -107,11 +123,13 @@ class OpenAICommentAPIMixin(_MixinHost):
                 "openai.manual_approval_required": "0",
             }
         )
-        database.set_settings(public)
 
         raw_key = values.get("api_key")
-        if raw_key is not None:
-            key = str(raw_key).strip()
+        clear_key = bool(values.get("clear_api_key"))
+        update_key = raw_key is not None or clear_key
+        key: str | None = None
+        if update_key:
+            key = str(raw_key or "").strip()
             if key:
                 if (
                     len(key) < 20
@@ -119,10 +137,51 @@ class OpenAICommentAPIMixin(_MixinHost):
                     or any(ch.isspace() for ch in key)
                 ):
                     raise ValueError("API-ключ OpenAI имеет некорректный формат")
-                self._set_account_secret(owner, OPENAI_API_KEY_SECRET, key)
-            elif bool(values.get("clear_api_key")):
-                self._set_account_secret(owner, OPENAI_API_KEY_SECRET, None)
-        return self.get_openai_configuration()
+            elif not clear_key:
+                update_key = False
+
+        lock = getattr(self, "_secret_lock", nullcontext())
+        with lock:
+            strict_reader = getattr(self, "_strict_account_secret", None)
+            previous_key = (
+                strict_reader(owner, OPENAI_API_KEY_SECRET)
+                if callable(strict_reader)
+                else self._strict_openai_key()
+            )
+            secret_touched = False
+            try:
+                if update_key:
+                    # Write the compensatable secret first. The following
+                    # account-scoped SQLite batch is atomic by itself.
+                    secret_touched = True
+                    self._set_account_secret(
+                        owner,
+                        OPENAI_API_KEY_SECRET,
+                        key,
+                    )
+                database.set_settings(public)
+            except BaseException as exc:
+                if secret_touched:
+                    try:
+                        self._set_account_secret(
+                            owner,
+                            OPENAI_API_KEY_SECRET,
+                            previous_key,
+                        )
+                    except Exception as rollback_exc:
+                        raise RuntimeError(
+                            "Настройки OpenAI не сохранены; откат API-ключа "
+                            f"также завершился ошибкой: {rollback_exc}"
+                        ) from exc
+                raise
+
+        effective_key = key if update_key else previous_key
+        return self._openai_configuration_result(
+            settings=settings,
+            prompt=system_prompt,
+            source=source,
+            api_key=effective_key,
+        )
 
     def submit_openai_test(self, post_text: str | None = None) -> Future[Any]:
         worker = self.queue_worker

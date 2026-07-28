@@ -735,6 +735,13 @@ def create_comment_slot_handler(
                     final_message = campaign_pause_reason
                     return
 
+                # Telegram route resolution can take long enough for the active
+                # window to close after the pre-RPC guard above. Re-check before
+                # drawing a variant or sending post text to OpenAI. The
+                # CommentService keeps its separate final guard at Telegram send.
+                if schedule_guard is not None:
+                    schedule_guard.require_active()
+
                 # One variant is drawn from the account's shuffled bag for every
                 # send, exactly as in prepared mode, and handed to the model as
                 # the meaning to preserve. Rotation without repeats therefore

@@ -255,6 +255,65 @@ def test_account_view_clears_one_time_code_hash_and_2fa_after_success(tmp_path):
     app.processEvents()
 
 
+def test_rapid_account_selection_is_serialized_and_last_intent_wins(monkeypatch):
+    app = _app()
+    selected_calls: list[int] = []
+
+    class Adapter:
+        @staticmethod
+        def select_telegram_account(account_id):
+            selected_calls.append(int(account_id))
+            return {"telegram_account_id": int(account_id)}
+
+    monkeypatch.setattr(AccountView, "load_settings", lambda self: None)
+    view = AccountView(Adapter(), SimpleNamespace())
+    view.account_manager.reload(
+        [
+            {
+                "telegram_account_id": account_id,
+                "display_name": f"Account {account_id}",
+                "runtime_state": "connected",
+            }
+            for account_id in (1001, 1002, 1003)
+        ],
+        selected_account_id=1001,
+        previous_account_id=0,
+    )
+
+    jobs: list[dict] = []
+
+    def capture_job(callback, *, on_success=None, on_error=None, **_kwargs):
+        jobs.append(
+            {
+                "callback": callback,
+                "on_success": on_success,
+                "on_error": on_error,
+            }
+        )
+        return object()
+
+    view._run_background = capture_job
+    for account_id in (1002, 1003, 1001):
+        view.account_manager.selector.setCurrentIndex(
+            view.account_manager.selector.findData(account_id)
+        )
+
+    # Only the first durable write starts immediately; intermediate intents are
+    # coalesced to the latest click, even when that click returns to account 1001.
+    assert len(jobs) == 1
+    first_result = jobs[0]["callback"]()
+    jobs[0]["on_success"](first_result)
+    assert len(jobs) == 2
+    second_result = jobs[1]["callback"]()
+    jobs[1]["on_success"](second_result)
+
+    assert selected_calls == [1002, 1001]
+    assert view.account_manager._selected_account_id == 1001
+    assert view._account_selection_in_flight is False
+    view.deleteLater()
+    app.processEvents()
+
+
 def test_links_view_does_not_rebuild_10000_row_table_for_same_progress():
     app = _app()
     channels = [

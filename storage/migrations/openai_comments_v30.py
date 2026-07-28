@@ -1,7 +1,23 @@
 from __future__ import annotations
 
-from storage.sqlcipher_driver import dbapi as sqlite3
 from pathlib import Path
+
+from storage.sqlcipher_driver import dbapi as sqlite3
+
+
+def _execute_script(conn, script: str) -> None:
+    """Execute statements without sqlite3.executescript's implicit COMMIT."""
+
+    statement = ""
+    for line in script.splitlines():
+        statement += line + "\n"
+        if sqlite3.complete_statement(statement):
+            sql = statement.strip()
+            if sql:
+                conn.execute(sql)
+            statement = ""
+    if statement.strip():
+        raise sqlite3.OperationalError("Incomplete migration SQL statement")
 
 
 def migrate_openai_comments_v30(
@@ -17,7 +33,8 @@ def migrate_openai_comments_v30(
         conn.execute(f"PRAGMA busy_timeout = {max(100, int(busy_timeout_ms))}")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("BEGIN IMMEDIATE")
-        conn.executescript(
+        _execute_script(
+            conn,
             """
             CREATE TABLE IF NOT EXISTS campaign_comment_settings(
                 campaign_id INTEGER PRIMARY KEY,
@@ -65,7 +82,7 @@ def migrate_openai_comments_v30(
                 ON generated_comment_drafts(account_id, status, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_generated_drafts_campaign
                 ON generated_comment_drafts(campaign_id, updated_at DESC);
-            """
+            """,
         )
         migrations = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='migrations'"

@@ -20,6 +20,13 @@ _FORBIDDEN_META = (
 
 # Headroom reserved for hidden reasoning tokens on reasoning-capable models.
 REASONING_TOKEN_ALLOWANCE = 2048
+NON_RETRYABLE_ERROR_CODES = frozenset(
+    {
+        "invalid_api_key",
+        "insufficient_balance",
+        "invalid_request",
+    }
+)
 
 
 class OpenAICommentError(RuntimeError):
@@ -353,6 +360,11 @@ class OpenAICommentService:
                                 "Не удалось получить корректный ответ OpenAI",
                                 code="provider_error",
                             )
+                    if (
+                        last_error is not None
+                        and last_error.code in NON_RETRYABLE_ERROR_CODES
+                    ):
+                        break
                     if attempt < attempts:
                         await asyncio.sleep(min(2.0, 0.5 * attempt))
             finally:

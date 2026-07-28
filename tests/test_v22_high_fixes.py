@@ -228,7 +228,7 @@ def test_v26_migrates_existing_cooldown_with_conservative_fallback(tmp_path):
         )
 
     migrated = Database(path)
-    assert migrated.get_version() == Database.SCHEMA_VERSION == 30
+    assert migrated.get_version() == Database.SCHEMA_VERSION
     row = migrated.get_account_rpc_cooldown(account_id=701)
     assert "boot_id" in row
     assert "steady_deadline" in row
@@ -304,7 +304,7 @@ def test_v26_migration_scrubs_secrets_already_persisted_by_v25(tmp_path):
             logs,
         ]
     )
-    assert migrated.get_version() == Database.SCHEMA_VERSION == 30
+    assert migrated.get_version() == Database.SCHEMA_VERSION
     assert secret not in combined
     assert session_path not in combined
     assert "alice" not in combined

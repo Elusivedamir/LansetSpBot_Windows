@@ -189,9 +189,13 @@ class AccountManagerPanel(QFrame):
 
     def _selection_changed(self, _index: int) -> None:
         account_id = int(self.selector.currentData() or 0)
-        if account_id <= 0 or account_id == self._selected_account_id:
+        if account_id <= 0:
             self._render_selected()
             return
+        # Signals are blocked for every programmatic reload/set. Therefore an
+        # actual index change here is always a user intent, including switching
+        # back to the currently committed account while another selection is
+        # still queued.
         self.account_selected.emit(account_id)
 
     def set_selected_account_id(self, account_id: int) -> None:

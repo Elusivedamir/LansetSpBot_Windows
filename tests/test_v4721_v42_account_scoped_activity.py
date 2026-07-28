@@ -9,9 +9,9 @@ from storage.migrations.activity_log_account_scope_v29 import (
 from tests.conftest import open_project_database
 
 
-def test_new_database_uses_schema_v29_and_account_scoped_logs(tmp_path):
+def test_new_database_uses_current_schema_and_account_scoped_logs(tmp_path):
     db = Database(tmp_path / "fresh.db")
-    assert db.get_version() == 30
+    assert db.get_version() == Database.SCHEMA_VERSION
     with db.get_connection() as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(logs)")}
         indexes = {row[1] for row in conn.execute("PRAGMA index_list(logs)")}

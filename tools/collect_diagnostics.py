@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import os
 import platform
+import re
 import struct
 import subprocess
 import sys
@@ -62,10 +63,46 @@ _WITHHELD = (
 )
 
 
+def _private_path_aliases() -> tuple[tuple[str, str], ...]:
+    candidates = (
+        (str(PROJECT_ROOT), "<PROJECT_ROOT>"),
+        (os.environ.get("MARLEN_DATA_DIR", ""), "<APP_PROFILE>"),
+        (os.environ.get("APPDATA", ""), "<APPDATA>"),
+        (os.environ.get("USERPROFILE", ""), "<USER_PROFILE>"),
+        (str(Path.home()), "<USER_PROFILE>"),
+    )
+    aliases: dict[str, tuple[str, str]] = {}
+    for raw, replacement in candidates:
+        prefix = str(raw or "").strip().rstrip("\\/")
+        if not prefix or prefix in {".", "\\", "/"}:
+            continue
+        aliases.setdefault(prefix.casefold(), (prefix, replacement))
+        alternate = (
+            prefix.replace("\\", "/")
+            if "\\" in prefix
+            else prefix.replace("/", "\\")
+        )
+        if alternate != prefix:
+            aliases.setdefault(alternate.casefold(), (alternate, replacement))
+    # A profile can live inside APPDATA, which itself lives inside USERPROFILE.
+    # Replace the most specific prefix before its parent.
+    return tuple(sorted(aliases.values(), key=lambda item: len(item[0]), reverse=True))
+
+
+def _redact_private_paths(text: str) -> str:
+    result = str(text)
+    for prefix, replacement in _private_path_aliases():
+        result = re.sub(re.escape(prefix), replacement, result, flags=re.IGNORECASE)
+    return result
+
+
 def _redact(text: str) -> str:
-    if _SANITIZE is None:
-        return str(text)
-    return "\n".join(_SANITIZE(line) for line in str(text).splitlines())
+    sanitized = (
+        str(text)
+        if _SANITIZE is None
+        else "\n".join(_SANITIZE(line) for line in str(text).splitlines())
+    )
+    return _redact_private_paths(sanitized)
 
 
 class Report:

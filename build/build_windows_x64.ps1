@@ -10,12 +10,16 @@ $ProgressPreference = "SilentlyContinue"
 
 $ProjectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 Set-Location -LiteralPath $ProjectRoot
+$ReleaseReadme = Join-Path $ProjectRoot "README.txt"
 
 if ($env:OS -ne "Windows_NT") {
     throw "This build must run on 64-bit Windows."
 }
 if (-not [Environment]::Is64BitOperatingSystem) {
     throw "A 64-bit Windows host is required."
+}
+if (-not (Test-Path -LiteralPath $ReleaseReadme -PathType Leaf)) {
+    throw "Release documentation is missing: $ReleaseReadme"
 }
 
 $py = Get-Command "py.exe" -ErrorAction SilentlyContinue
@@ -166,7 +170,7 @@ $SbomPath = Join-Path $ProjectRoot ("dist\" + $AppName + "-Windows-x64-SBOM.cdx.
 Remove-Item -LiteralPath $ReleaseParent, $ZipPath, $ChecksumsPath, $SbomPath -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $ReleaseRoot -Force | Out-Null
 Copy-Item -Path (Join-Path $BuiltDir "*") -Destination $ReleaseRoot -Recurse -Force
-Copy-Item -LiteralPath "WINDOWS_X64_README.txt" -Destination $ReleaseRoot
+Copy-Item -LiteralPath $ReleaseReadme -Destination (Join-Path $ReleaseRoot "WINDOWS_X64_README.txt")
 Set-Content -LiteralPath (Join-Path $ReleaseRoot "1_START_LANSETSPBOT.bat") -Encoding Ascii -Value "@echo off`r`ncd /d `"%~dp0`"`r`nstart `"`" `"%~dp0$AppName.exe`"`r`n"
 
 & $BuildPython build\generate_sbom.py --version $AppVersion --requirements requirements-runtime.lock --requirements requirements-openai.txt --name $AppName --output $SbomPath

@@ -224,7 +224,7 @@ def test_v15_database_migrates_work_targets_to_v16(tmp_path):
     db = Database(path)
     row = db.get_channel_by_id(10)
 
-    assert db.get_version() == Database.SCHEMA_VERSION == 30
+    assert db.get_version() == Database.SCHEMA_VERSION
     assert row["target_kind"] == "channel"
     assert row["comment_mode"] == "channel_post"
 

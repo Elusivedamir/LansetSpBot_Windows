@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtWidgets import QApplication, QScrollArea
+from PySide6.QtWidgets import QApplication, QLabel, QScrollArea
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.functions.contacts import ResolveUsernameRequest
 from telethon.tl.functions.messages import SendMessageRequest
@@ -16,6 +16,7 @@ from core.account_restriction import (
 )
 from core.rate_limiter import RateLimiter, RpcCategory, classify_rpc_request
 from gui.activity_panel import ActivityPanel
+from gui.instruction_assets import instruction_assets_ready
 from gui.views.instructions_view import InstructionsView
 from services.telegram_service import TelegramService
 from storage.database import Database
@@ -110,9 +111,15 @@ def test_instruction_view_is_a_real_multi_step_slideshow() -> None:
     first = view.stack.widget(0)
     assert isinstance(first, QScrollArea)
     assert first.widgetResizable() is True
-    image = first.findChild(type(view.progress_label), "instructionImage")
+    image = first.findChild(QLabel, "instructionImage")
     assert image is not None
-    assert image.pixmap() is not None and not image.pixmap().isNull()
+    assets_ready = instruction_assets_ready(view._asset_path("01_account.png").parent)
+    assert view._screenshots_ready is assets_ready
+    if assets_ready:
+        assert image.pixmap() is not None and not image.pixmap().isNull()
+    else:
+        assert image.pixmap() is None or image.pixmap().isNull()
+        assert "временно скрыт" in image.text()
     view.next_step()
     assert view.progress_label.text() == f"Шаг 2 из {total}"
     assert view.back_button.isEnabled()

@@ -56,6 +56,10 @@ class AccountView(QWidget):
         self._background_jobs: set[BackgroundCall] = set()
         self._account_blocking_jobs: set[BackgroundCall] = set()
         self._account_state_generation = 0
+        self._account_selection_generation = 0
+        self._account_selection_in_flight = False
+        self._pending_account_selection: tuple[int, int] | None = None
+        self._settings_load_generation = 0
         self._factory_reset_pending = False
         self._applying_settings = False
         self._dynamic_layout_focus_widget: QWidget | None = None
@@ -385,29 +389,76 @@ class AccountView(QWidget):
                 previous_account_id=previous,
             )
 
+        def failed(message: str) -> None:
+            if generation == self._account_catalog_generation:
+                self.account_label.setText(message)
+
         self._run_background(
             lambda: self.adapter.list_telegram_accounts(),
             on_success=applied,
-            on_error=lambda message: self.account_label.setText(message),
+            on_error=failed,
         )
 
     def _select_account(self, account_id: int) -> None:
+        account_id = int(account_id or 0)
+        if account_id <= 0:
+            return
+        self._account_selection_generation += 1
+        generation = self._account_selection_generation
+        self._pending_account_selection = (account_id, generation)
+        # Any settings/catalog callback already in flight belongs to the
+        # account that was visible before this latest intent.
+        self._settings_load_generation += 1
+        self._account_catalog_generation += 1
         self.status_label.setText("Переключение аккаунта…")
+        if not self._account_selection_in_flight:
+            self._start_pending_account_selection()
+
+    def _start_pending_account_selection(self) -> None:
+        request = self._pending_account_selection
+        if request is None or self._account_selection_in_flight:
+            return
+        self._pending_account_selection = None
+        account_id, generation = request
+        self._account_selection_in_flight = True
 
         def selected(_result) -> None:
-            self._adding_account = False
-            self._pending_session_name = ""
-            self.account_manager.set_selected_account_id(account_id)
-            self.load_settings()
-            self.account_changed.emit()
+            try:
+                if generation != self._account_selection_generation:
+                    return
+                self._adding_account = False
+                self._pending_session_name = ""
+                self.account_manager.set_selected_account_id(account_id)
+                self.load_settings()
+                self.account_changed.emit()
+            finally:
+                self._finish_account_selection()
 
-        self._run_background(
-            lambda: self.adapter.select_telegram_account(account_id),
-            on_success=selected,
-            on_error=lambda message: QMessageBox.warning(
-                self, "Аккаунт", message
-            ),
-        )
+        def failed(message: str) -> None:
+            try:
+                if generation != self._account_selection_generation:
+                    return
+                # Restore the selector and fields from the durable account that
+                # remained selected after the failed request.
+                self.load_settings()
+                QMessageBox.warning(self, "Аккаунт", message)
+            finally:
+                self._finish_account_selection()
+
+        try:
+            self._run_background(
+                lambda: self.adapter.select_telegram_account(account_id),
+                on_success=selected,
+                on_error=failed,
+            )
+        except BaseException:
+            self._account_selection_in_flight = False
+            raise
+
+    def _finish_account_selection(self) -> None:
+        self._account_selection_in_flight = False
+        if self._pending_account_selection is not None:
+            self._start_pending_account_selection()
 
     def _begin_add_account(self) -> None:
         state = self.adapter.can_add_telegram_account()
@@ -687,12 +738,23 @@ class AccountView(QWidget):
         )
 
     def load_settings(self):
+        self._settings_load_generation += 1
+        generation = self._settings_load_generation
         self._load_account_catalog()
         self.connect_button.setEnabled(False)
+
+        def applied(values) -> None:
+            if generation == self._settings_load_generation:
+                self._apply_settings(values)
+
+        def failed(message: str) -> None:
+            if generation == self._settings_load_generation:
+                self._settings_load_failed(message)
+
         self._run_background(
             lambda: self.adapter.get_settings(),
-            on_success=self._apply_settings,
-            on_error=self._settings_load_failed,
+            on_success=applied,
+            on_error=failed,
         )
 
     def _settings_load_failed(self, message: str) -> None:

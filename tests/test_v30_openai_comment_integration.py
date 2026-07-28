@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import random
+import threading
 from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
 
 from core.campaign_schedule import to_db_time, utc_now
-from core.exceptions import NonRetryableTelegramError
+from core.exceptions import DeferredTelegramError, NonRetryableTelegramError
 from core.openai_settings import (
     DEFAULT_OPENAI_SYSTEM_PROMPT,
     OPENAI_API_KEY_SECRET,
@@ -229,6 +230,33 @@ async def test_stop_after_generation_blocks_telegram_dispatch(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_quiet_hours_start_after_telegram_read_blocks_openai(tmp_path):
+    class TransitionSchedule:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def require_active(self) -> None:
+            self.calls += 1
+            if self.calls >= 2:
+                raise DeferredTelegramError(
+                    "Тихие часы",
+                    code="local_quiet_hours",
+                    retry_after=90,
+                )
+
+    db, _account_id, _campaign, task = _make_openai_task(tmp_path)
+    generated = _OpenAIStub()
+    comments = _CommentsStub()
+    comments.activity_schedule = TransitionSchedule()
+
+    await _handler(db, _QueueStub(), generated, comments)(task)
+
+    assert comments.activity_schedule.calls == 2
+    assert generated.calls == 0
+    assert comments.calls == []
+
+
+@pytest.mark.asyncio
 async def test_unknown_send_result_marks_draft_uncertain_and_pauses(tmp_path):
     db, account_id, campaign, task = _make_openai_task(tmp_path)
     comments = _CommentsStub(
@@ -302,39 +330,103 @@ def test_v30_migration_is_transactional_and_has_no_api_key_column(tmp_path):
         conn.close()
 
 
+def test_v30_migration_rolls_back_ddl_after_late_failure(tmp_path):
+    path = tmp_path / "v29-late-failure.db"
+    conn = open_project_database(path)
+    conn.executescript(
+        """
+        PRAGMA user_version=29;
+        CREATE TABLE comment_campaigns(id INTEGER PRIMARY KEY);
+        CREATE TABLE migrations(version INTEGER PRIMARY KEY);
+        CREATE TRIGGER reject_v30_migration
+        BEFORE INSERT ON migrations
+        WHEN NEW.version=30
+        BEGIN
+            SELECT RAISE(ABORT, 'injected late v30 failure');
+        END;
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(Exception, match="injected late v30 failure"):
+        migrate_openai_comments_v30(path)
+
+    conn = open_project_database(path)
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 29
+        assert conn.execute(
+            "SELECT 1 FROM migrations WHERE version=30"
+        ).fetchone() is None
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "campaign_comment_settings" not in tables
+        assert "generated_comment_drafts" not in tables
+    finally:
+        conn.close()
+
+
 class _MemoryDB:
     def __init__(self):
         self.values = {}
+        self.fail_on_set = False
+
+    def for_account(self, _account_id):
+        return self
 
     def get_settings(self, prefix):
         return {k: v for k, v in self.values.items() if k.startswith(prefix)}
 
     def set_settings(self, values):
+        if self.fail_on_set:
+            raise RuntimeError("injected settings failure")
         self.values.update(values)
 
 
 class _MemorySecretStore:
     def __init__(self):
         self.values = {}
+        self.fail_after_set = False
 
     def get_strict_optional(self, key):
         return self.values.get(key)
 
     def set(self, key, value):
         self.values[key] = value
+        if self.fail_after_set:
+            self.fail_after_set = False
+            raise RuntimeError("injected secret failure")
 
     def delete(self, key):
         self.values.pop(key, None)
 
 
 class _OpenAIAPIHarness(OpenAICommentAPIMixin):
-    pass
+    def __init__(self):
+        self.database = _MemoryDB()
+        self.secret_store = _MemorySecretStore()
+        self._secret_lock = threading.RLock()
+
+    @staticmethod
+    def get_current_account_id():
+        return 707
+
+    def _strict_account_secret(self, _owner, key):
+        return self.secret_store.get_strict_optional(key)
+
+    def _set_account_secret(self, _owner, key, value):
+        if value is None:
+            self.secret_store.delete(key)
+        else:
+            self.secret_store.set(key, value)
 
 
 def test_api_key_is_masked_and_never_written_to_sqlite_settings():
     api = _OpenAIAPIHarness()
-    api.database = _MemoryDB()
-    api.secret_store = _MemorySecretStore()
     raw_key = "test_openai_key_abcdefghijklmnopqrstuvwxyz123456"
 
     result = api.save_openai_configuration(
@@ -357,6 +449,73 @@ def test_api_key_is_masked_and_never_written_to_sqlite_settings():
     assert result["api_key_mask"].startswith("tes")
 
 
+def test_invalid_api_key_does_not_partially_save_public_settings():
+    api = _OpenAIAPIHarness()
+    api.database.values.update(
+        {
+            "openai.model": "old-model",
+            "openai.max_words": "30",
+        }
+    )
+    before = dict(api.database.values)
+
+    with pytest.raises(ValueError, match="некорректный формат"):
+        api.save_openai_configuration(
+            {
+                "comment_source": SOURCE_OPENAI,
+                "api_key": "short",
+                "model": "new-model",
+                "system_prompt": DEFAULT_OPENAI_SYSTEM_PROMPT,
+                "max_words": 99,
+            }
+        )
+
+    assert api.database.values == before
+    assert api.secret_store.values == {}
+
+
+def test_public_settings_failure_restores_previous_api_key():
+    api = _OpenAIAPIHarness()
+    old_key = "test_openai_key_old_abcdefghijklmnopqrstuvwxyz"
+    new_key = "test_openai_key_new_abcdefghijklmnopqrstuvwxyz"
+    api.secret_store.set(OPENAI_API_KEY_SECRET, old_key)
+    api.database.fail_on_set = True
+
+    with pytest.raises(RuntimeError, match="injected settings failure"):
+        api.save_openai_configuration(
+            {
+                "comment_source": SOURCE_OPENAI,
+                "api_key": new_key,
+                "model": "new-model",
+                "system_prompt": DEFAULT_OPENAI_SYSTEM_PROMPT,
+            }
+        )
+
+    assert api.secret_store.values[OPENAI_API_KEY_SECRET] == old_key
+
+
+def test_secret_failure_restores_key_and_does_not_write_public_settings():
+    api = _OpenAIAPIHarness()
+    old_key = "test_openai_key_old_abcdefghijklmnopqrstuvwxyz"
+    new_key = "test_openai_key_new_abcdefghijklmnopqrstuvwxyz"
+    api.secret_store.set(OPENAI_API_KEY_SECRET, old_key)
+    api.database.values["openai.model"] = "old-model"
+    api.secret_store.fail_after_set = True
+
+    with pytest.raises(RuntimeError, match="injected secret failure"):
+        api.save_openai_configuration(
+            {
+                "comment_source": SOURCE_OPENAI,
+                "api_key": new_key,
+                "model": "new-model",
+                "system_prompt": DEFAULT_OPENAI_SYSTEM_PROMPT,
+            }
+        )
+
+    assert api.secret_store.values[OPENAI_API_KEY_SECRET] == old_key
+    assert api.database.values == {"openai.model": "old-model"}
+
+
 class _FakeAuthenticationError(Exception):
     pass
 
@@ -371,6 +530,10 @@ class _FakeAPITimeoutError(Exception):
 
 class _FakeAPIConnectionError(Exception):
     pass
+
+
+class _FakeInvalidRequestError(Exception):
+    status_code = 400
 
 
 _FAKE_SDK = SimpleNamespace(
@@ -484,6 +647,38 @@ async def test_sdk_errors_are_mapped_without_fallback_comment(sdk_error, expecte
         )
 
     assert raised.value.code == expected_code
+    assert client.closed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sdk_error", "expected_code"),
+    [
+        (_FakeAuthenticationError("bad key"), "invalid_api_key"),
+        (
+            _FakeRateLimitError("insufficient_quota billing"),
+            "insufficient_balance",
+        ),
+        (_FakeInvalidRequestError("bad model"), "invalid_request"),
+    ],
+)
+async def test_permanent_sdk_errors_are_not_retried(sdk_error, expected_code):
+    responses = _FakeResponses(error=sdk_error)
+    client = _FakeClient(responses)
+    service = _service_for(client)
+
+    with pytest.raises(OpenAICommentError) as raised:
+        await service.generate_comment(
+            "Публикация содержит достаточно текста для безопасной генерации комментария.",
+            DEFAULT_OPENAI_SYSTEM_PROMPT,
+            CommentGenerationSettings(
+                timeout_seconds=5,
+                max_generation_attempts=3,
+            ),
+        )
+
+    assert raised.value.code == expected_code
+    assert len(responses.calls) == 1
     assert client.closed is True
 
 

@@ -140,7 +140,7 @@ def test_v10_global_restriction_migrates_to_account_scoped_v19(tmp_path: Path) -
 
     migrated = Database(path)
     state = get_account_restriction_state(migrated, account_id=404)
-    assert migrated.get_version() == Database.SCHEMA_VERSION == 30
+    assert migrated.get_version() == Database.SCHEMA_VERSION
     assert state["active"] is True
     assert state["code"] == "peer_flood"
     assert migrated.get_settings(prefix="telegram.restriction.") == {}

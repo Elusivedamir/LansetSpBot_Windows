@@ -27,6 +27,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from gui.instruction_assets import (  # noqa: E402 - project path is prepared above
+    mark_instruction_assets_stale,
+    write_instruction_asset_metadata,
+)
+
 DESTINATION = PROJECT_ROOT / "gui" / "assets" / "instructions"
 
 # Page index in LansetSpBotApp.stack -> screenshot name used by InstructionsView.
@@ -49,6 +54,11 @@ def main() -> int:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     profile = Path(tempfile.mkdtemp(prefix="instruction-capture-"))
     os.environ["MARLEN_DATA_DIR"] = str(profile)
+    destination = Path(arguments.destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    # Mark before constructing InstructionsView so a previous successful build
+    # cannot make this capture display old screenshots as current.
+    mark_instruction_assets_stale(destination)
 
     from PySide6.QtWidgets import QApplication
 
@@ -124,8 +134,6 @@ def main() -> int:
                 )
         application.processEvents()
 
-    destination = Path(arguments.destination)
-    destination.mkdir(parents=True, exist_ok=True)
     written = 0
     try:
         for index, name in PAGES:
@@ -147,6 +155,10 @@ def main() -> int:
                 return 1
             written += 1
             print(f"{name}: {target.stat().st_size // 1024} KB")
+        if written != len(PAGES):
+            print(f"captured only {written} of {len(PAGES)} instruction pages")
+            return 1
+        write_instruction_asset_metadata(destination, PROJECT_ROOT)
     finally:
         try:
             window._tray.hide()  # noqa: SLF001 - controlled capture run
@@ -156,7 +168,7 @@ def main() -> int:
         application.processEvents()
         container.shutdown(timeout_ms=15_000)
 
-    print(f"{written} screenshots written to {destination}")
+    print(f"{written} verified screenshots written to {destination}")
     return 0
 
 
