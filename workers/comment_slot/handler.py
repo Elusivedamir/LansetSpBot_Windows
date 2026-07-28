@@ -21,6 +21,7 @@ from core.account_restriction import (
 from workers.comment_slot.finalization import finalize_comment_slot
 from workers.comment_slot.models import CommentSlotPhase
 from workers.rpc_boundary import dispatch_barrier_kwargs
+from workers.flood_wait_guard import install_account_flood_wait
 from services.openai_comment_service import OpenAICommentError, extract_post_text
 
 from core.exceptions import (
@@ -987,8 +988,25 @@ def create_comment_slot_handler(
             wait = max(1, int(exc.retry_after))
             retry_at = utc_now() + timedelta(seconds=wait)
             final_message = f"Отложено Telegram на {max(1, round(wait / 60))} мин"
-            slot_deferred = True
             consume_channel = False
+            if deferred_code == "flood_wait_deferred" and campaign_account_id > 0:
+                try:
+                    install_account_flood_wait(
+                        queue_worker=queue_worker,
+                        worker_db=worker_db,
+                        account_id=campaign_account_id,
+                        retry_at=retry_at,
+                        code=deferred_code,
+                        source_task_id=task_id,
+                        wait_seconds=wait,
+                    )
+                except Exception:
+                    # The process-local monotonic embargo was installed before
+                    # the fallible SQLite write, so no later task may issue an RPC.
+                    log.exception(
+                        "Could not persist account FloodWait; "
+                        "local embargo remains active"
+                    )
             changed = worker_db.defer_comment_slot_and_set_network_wait(
                 task_id,
                 slot_id,
@@ -1001,26 +1019,7 @@ def create_comment_slot_handler(
                 raise RuntimeError(
                     "Comment slot was no longer eligible for network deferral"
                 )
-            if deferred_code == "flood_wait_deferred" and campaign_account_id > 0:
-                cooldown_writer = getattr(
-                    worker_db, "set_account_rpc_cooldown", None
-                )
-                if callable(cooldown_writer):
-                    try:
-                        cooldown_writer(
-                            account_id=campaign_account_id,
-                            retry_at=retry_at,
-                            code=deferred_code,
-                            source_task_id=task_id,
-                            wait_seconds=wait,
-                        )
-                    except Exception:
-                        # The campaign/slot deferral is already durable. Preserve
-                        # that safe state even if the broader account cooldown
-                        # cannot be extended during a transient SQLite failure.
-                        log.exception(
-                            "Could not persist account FloodWait cooldown"
-                        )
+            slot_deferred = True
             return
         except asyncio.CancelledError:
             if phase < CommentSlotPhase.SEND_STARTED:

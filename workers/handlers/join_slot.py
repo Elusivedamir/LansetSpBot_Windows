@@ -19,6 +19,7 @@ from core.exceptions import (
     NonRetryableTelegramError,
     TelegramOperationError,
 )
+from workers.flood_wait_guard import install_account_flood_wait
 
 log = logging.getLogger(__name__)
 
@@ -357,7 +358,24 @@ def create_join_slot_handler(
                 return
             wait = max(1, int(exc.retry_after))
             retry_at = utc_now() + timedelta(seconds=wait)
-            slot_deferred = True
+            if code == "flood_wait_deferred" and account_id > 0:
+                try:
+                    install_account_flood_wait(
+                        queue_worker=queue_worker,
+                        worker_db=worker_db,
+                        account_id=account_id,
+                        retry_at=retry_at,
+                        code=code,
+                        source_task_id=task_id,
+                        wait_seconds=wait,
+                    )
+                except Exception:
+                    # The process-local monotonic embargo was installed before
+                    # the fallible SQLite write, so no later task may issue an RPC.
+                    log.exception(
+                        "Could not persist account FloodWait; "
+                        "local embargo remains active"
+                    )
             changed = worker_db.defer_join_slot_and_set_network_wait(
                 task_id,
                 slot_id,
@@ -372,26 +390,7 @@ def create_join_slot_handler(
                 raise RuntimeError(
                     "Join slot was no longer eligible for network deferral"
                 )
-            if code == "flood_wait_deferred" and account_id > 0:
-                cooldown_writer = getattr(
-                    worker_db, "set_account_rpc_cooldown", None
-                )
-                if callable(cooldown_writer):
-                    try:
-                        cooldown_writer(
-                            account_id=account_id,
-                            retry_at=retry_at,
-                            code=code,
-                            source_task_id=task_id,
-                            wait_seconds=wait,
-                        )
-                    except Exception:
-                        # The join campaign is already safely in network_wait.
-                        # Do not strand its slot if the broader cooldown write
-                        # loses a transient SQLite race.
-                        log.exception(
-                            "Could not persist account FloodWait cooldown"
-                        )
+            slot_deferred = True
         except NonRetryableTelegramError as exc:
             code = getattr(exc, "code", "")
             if code == "network_unavailable":

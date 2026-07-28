@@ -29,6 +29,7 @@ from core.exceptions import (
 from core.performance import log_if_slow
 from core.redaction import sanitize_exception, sanitize_text
 from storage.database import Database
+from workers.flood_wait_guard import install_account_flood_wait
 
 log = logging.getLogger(__name__)
 TaskHandler = Callable[[dict], Awaitable[Any]]
@@ -275,6 +276,15 @@ class QueueWorker(QThread):
             self._account_cooldown_deadlines[owner] = (deadline, key)
         return max(1, int(math.ceil(deadline - now)))
 
+    def remember_account_rpc_cooldown(
+        self, account_id: int, remaining_seconds: float, persisted_key: str = ""
+    ) -> int:
+        """Install a process-local embargo before any fallible SQLite write."""
+
+        return self._remember_account_rpc_cooldown(
+            account_id, remaining_seconds, persisted_key
+        )
+
     @staticmethod
     def _positive_float(value: Any) -> float:
         try:
@@ -291,15 +301,21 @@ class QueueWorker(QThread):
         owner = max(0, int(account_id or 0))
         if owner <= 0:
             return 0
+        now = steady_time()
+        with self._account_cooldown_lock:
+            current = self._account_cooldown_deadlines.get(owner)
+            if current is not None and current[0] <= now:
+                self._account_cooldown_deadlines.pop(owner, None)
+                current = None
+            local_deadline = current[0] if current is not None else 0.0
+
         data = dict(cooldown or {})
         persisted_key = str(data.get("next_allowed_at") or "")
         if not persisted_key:
-            with self._account_cooldown_lock:
-                self._account_cooldown_deadlines.pop(owner, None)
-            return 0
+            remaining = local_deadline - now
+            return max(1, int(math.ceil(remaining))) if remaining > 0 else 0
 
         boot_id = current_boot_identity()
-        now = steady_time()
         row_boot_id = str(data.get("boot_id") or "")
         row_deadline = self._positive_float(data.get("steady_deadline"))
         try:
@@ -351,13 +367,17 @@ class QueueWorker(QThread):
                     observed_steady_time=now,
                 )
             with self._account_cooldown_lock:
-                self._account_cooldown_deadlines.pop(owner, None)
-            return 0
+                current = self._account_cooldown_deadlines.get(owner)
+                if current is None or current[0] <= now:
+                    self._account_cooldown_deadlines.pop(owner, None)
+                    return 0
+                remaining = current[0] - now
+            return max(1, int(math.ceil(remaining)))
 
         with self._account_cooldown_lock:
             current = self._account_cooldown_deadlines.get(owner)
             deadline = row_deadline
-            if current is not None and current[1] == persisted_key:
+            if current is not None:
                 deadline = max(deadline, current[0])
             self._account_cooldown_deadlines[owner] = (deadline, persisted_key)
             remaining = deadline - now
@@ -366,7 +386,15 @@ class QueueWorker(QThread):
     def _postpone_for_account_rpc_cooldown(
         self, *, task_id: int, task_type: str, account_id: int
     ) -> bool:
-        cooldown = self.get_db().get_account_rpc_cooldown(account_id=account_id)
+        try:
+            cooldown = self.get_db().get_account_rpc_cooldown(account_id=account_id)
+        except Exception:
+            # A known FloodWait must remain enforced while SQLite is temporarily
+            # unreadable. The process-local deadline was installed first.
+            log.exception(
+                "Could not read persisted account FloodWait; using local embargo"
+            )
+            cooldown = {}
         remaining = self._account_rpc_cooldown_remaining(account_id, cooldown)
         if remaining <= 0:
             return False
@@ -991,24 +1019,34 @@ class QueueWorker(QThread):
             return
         except DeferredTelegramError as exc:
             message = sanitize_text(f"{getattr(exc, 'code', 'deferred')}: {exc}")
-            retry_at = utc_now() + timedelta(seconds=max(1, int(exc.retry_after)))
+            wait_seconds = max(1, int(exc.retry_after))
+            retry_at = utc_now() + timedelta(seconds=wait_seconds)
             code = str(getattr(exc, "code", "deferred") or "deferred")
             if code == "flood_wait_deferred" and task_account_id > 0:
-                cooldown = self.get_db().set_account_rpc_cooldown(
-                    account_id=task_account_id,
-                    retry_at=retry_at,
-                    code=code,
-                    source_task_id=task_id,
-                    wait_seconds=max(1, int(exc.retry_after)),
-                )
-                persisted_retry_at = from_db_time(cooldown.get("next_allowed_at"))
-                if persisted_retry_at is not None and persisted_retry_at > retry_at:
-                    retry_at = persisted_retry_at
-                self._remember_account_rpc_cooldown(
-                    task_account_id,
-                    max(1, int(exc.retry_after)),
-                    str(cooldown.get("next_allowed_at") or ""),
-                )
+                try:
+                    cooldown = install_account_flood_wait(
+                        queue_worker=self,
+                        worker_db=self.get_db(),
+                        account_id=task_account_id,
+                        retry_at=retry_at,
+                        code=code,
+                        source_task_id=task_id,
+                        wait_seconds=wait_seconds,
+                    )
+                except Exception:
+                    # Continue trying to defer the current task. Even if every
+                    # SQLite write fails, the process-local embargo remains active
+                    # and prevents another Telegram RPC for this account.
+                    log.exception(
+                        "Could not persist account FloodWait; "
+                        "local embargo remains active"
+                    )
+                else:
+                    persisted_retry_at = from_db_time(
+                        cooldown.get("next_allowed_at")
+                    )
+                    if persisted_retry_at is not None and persisted_retry_at > retry_at:
+                        retry_at = persisted_retry_at
             defer_result = self.get_db().defer_task(
                 task_id, retry_at=retry_at, error=message
             )
