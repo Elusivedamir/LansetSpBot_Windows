@@ -261,6 +261,13 @@ def test_comment_daily_limit_slider_persists_locally(monkeypatch, tmp_path):
     app = _app()
     config = Config()
     container = ApplicationContainer(config)
+    container.database.register_telegram_account(
+        telegram_account_id=101,
+        session_name="account_101",
+        display_name="Test Account",
+        authorized=True,
+    )
+    container.database.select_telegram_account(101)
     window = MarlenApp(container.adapter, container.queue_worker, config)
     view = window.commenting_view
 

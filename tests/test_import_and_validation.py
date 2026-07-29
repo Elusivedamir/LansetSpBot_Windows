@@ -69,7 +69,13 @@ def test_service_api_rejects_comment_with_only_linked_chat_id(tmp_path):
 
 def test_service_api_accepts_comment_with_channel_id(tmp_path):
     database = Database(tmp_path / "app.db")
-    database.set_setting("telegram.account_id", 101)
+    database.register_telegram_account(
+        telegram_account_id=101,
+        session_name="account_101",
+        display_name="Test Account",
+        authorized=True,
+    )
+    database.select_telegram_account(101)
     api = ServiceAPI(database)
     task = api.create_task(
         "comment",
