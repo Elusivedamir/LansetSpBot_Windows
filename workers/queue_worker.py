@@ -756,8 +756,11 @@ class QueueWorker(QThread):
         self._set_lifecycle_state(self.STATE_ACTIVE)
         active: dict[asyncio.Task, int] = {}
         idle_since: float | None = None
+        consecutive_processing_failures = 0
 
-        async def reap(done_tasks) -> None:
+        async def reap(done_tasks) -> bool:
+            nonlocal consecutive_processing_failures
+
             for future in done_tasks:
                 active.pop(future, None)
                 try:
@@ -765,18 +768,28 @@ class QueueWorker(QThread):
                 except asyncio.CancelledError:
                     pass
                 except Exception as exc:
+                    consecutive_processing_failures += 1
                     safe_error = sanitize_exception(exc)
                     log.exception(
                         "Concurrent account task failed: %s", safe_error
                     )
                     self.worker_error.emit(safe_error)
+                else:
+                    consecutive_processing_failures = 0
+
+            return consecutive_processing_failures >= 5
 
         try:
             while not self.isInterruptionRequested():
                 self.heartbeat = time.time()
                 done = {future for future in active if future.done()}
                 if done:
-                    await reap(done)
+                    if await reap(done):
+                        log.error(
+                            "Queue worker stopped after five consecutive "
+                            "processing failures"
+                        )
+                        break
                     self.stats_changed.emit(self.get_stats())
 
                 claimed_any = False
@@ -818,7 +831,12 @@ class QueueWorker(QThread):
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     if done:
-                        await reap(done)
+                        if await reap(done):
+                            log.error(
+                                "Queue worker stopped after five consecutive "
+                                "processing failures"
+                            )
+                            break
                     continue
 
                 if self.paused:
