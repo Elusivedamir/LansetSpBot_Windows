@@ -134,7 +134,7 @@ if (-not $SkipTests) {
             --total-timeout-seconds 1800 `
             -- `
             $BuildPython -X faulthandler -m coverage run --parallel-mode -m pytest `
-            -vv --maxfail=1 --tb=long --showlocals -ra --durations=20 `
+            -vv --tb=long --showlocals -ra --durations=20 `
             -p tools.pytest_ci_watchdog `
             --junitxml "ci-proof\pytest-core.xml" `
             --ignore "tests/test_gui_v45.py" tests
@@ -149,7 +149,7 @@ if (-not $SkipTests) {
             --total-timeout-seconds 900 `
             -- `
             $BuildPython -X faulthandler -m coverage run --parallel-mode -m pytest `
-            -vv --maxfail=1 --tb=long --showlocals -ra --durations=20 `
+            -vv --tb=long --showlocals -ra --durations=20 `
             -p tools.pytest_ci_watchdog `
             --junitxml "ci-proof\pytest-gui.xml" `
             "tests/test_gui_v45.py"
