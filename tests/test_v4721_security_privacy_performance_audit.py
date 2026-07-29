@@ -246,6 +246,13 @@ def test_account_view_clears_one_time_code_hash_and_2fa_after_success(tmp_path):
     view.code.setText("12345")
     view.two_fa.setText("two-factor-secret")
     view.phone_code_hash = "hash-secret"
+
+    # Этот тест проверяет только уничтожение одноразовых секретов после
+    # успешной авторизации. Фоновая перезагрузка каталога аккаунтов здесь
+    # не относится к проверяемому поведению и может удерживать Qt thread pool.
+    view.load_settings = lambda: None  # type: ignore[method-assign]
+    view._load_account_catalog = lambda: None  # type: ignore[method-assign]
+
     view._authorized({"id": 1, "name": "Account", "_persisted": True})
 
     assert view.code.text() == ""
