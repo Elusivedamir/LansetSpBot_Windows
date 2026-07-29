@@ -41,7 +41,14 @@ def _insert_linked_channels(db: Database, count: int) -> None:
 def test_saved_limit_is_snapshot_for_next_campaign_and_locked_while_active(tmp_path):
     _app()
     db = Database(tmp_path / "limit-snapshot.db")
+    db.register_telegram_account(
+        telegram_account_id=101,
+        session_name="account_101",
+        display_name="Limit test account",
+        authorized=True,
+    )
     db.set_setting("telegram.account_id", 101)
+    db.set_setting("ui.selected_account_id", 101)
     _insert_linked_channels(db, 3)
     api = ServiceAPI(db, secret_store=_Secrets())
     api._campaign_timer.stop()

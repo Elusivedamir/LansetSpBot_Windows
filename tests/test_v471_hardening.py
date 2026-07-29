@@ -128,7 +128,14 @@ def test_release_version_is_consistent_in_build_metadata():
 
 def test_non_idempotent_tasks_are_created_without_automatic_retries(tmp_path):
     db = Database(tmp_path / "retry-policy.db")
+    db.register_telegram_account(
+        telegram_account_id=101,
+        session_name="account_101",
+        display_name="Retry policy test account",
+        authorized=True,
+    )
     db.set_setting("telegram.account_id", 101)
+    db.set_setting("ui.selected_account_id", 101)
     api = ServiceAPI(db)
 
     created = api.create_task(

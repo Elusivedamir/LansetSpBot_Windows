@@ -148,7 +148,14 @@ async def test_manual_telegram_task_snapshots_account_and_is_blocked_after_switc
     tmp_path,
 ):
     db = Database(tmp_path / "manual-account-isolation.db")
+    db.register_telegram_account(
+        telegram_account_id=1111,
+        session_name="account_1111",
+        display_name="Manual isolation account",
+        authorized=True,
+    )
     db.set_setting("telegram.account_id", 1111)
+    db.set_setting("ui.selected_account_id", 1111)
     api = ServiceAPI(db)
     assert api.wait_for_secret_migration(5_000)
     created = api.create_task(

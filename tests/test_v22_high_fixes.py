@@ -111,7 +111,14 @@ async def test_restriction_and_structured_exception_redact_every_persistent_sink
     secret = "V22_PROXY_SECRET_42"
     session_path = "/home/alice/.local/share/marlen/sessions/main.session"
     db = Database(tmp_path / "restricted-secret.db")
+    db.register_telegram_account(
+        telegram_account_id=601,
+        session_name="account_601",
+        display_name="Restricted test account",
+        authorized=True,
+    )
     db.set_setting("telegram.account_id", 601)
+    db.set_setting("ui.selected_account_id", 601)
     task_id = db.insert_task("comment", {"account_id": 601})
     task = db.claim_next_pending_task()
     assert task is not None
