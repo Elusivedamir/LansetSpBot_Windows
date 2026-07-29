@@ -158,7 +158,16 @@ class TelegramAccountRuntimeManager:
                 "Telegram account does not exist", code="account_missing"
             )
         state = str(account.get("runtime_state") or "")
-        if bool(account.get("stopped")) or state in {"stopping", "stopped"}:
+        stopped_value = account.get("stopped")
+        is_stopped = (
+            stopped_value is True
+            or (
+                isinstance(stopped_value, int)
+                and not isinstance(stopped_value, bool)
+                and stopped_value == 1
+            )
+        )
+        if is_stopped or state in {"stopping", "stopped"}:
             raise NonRetryableTelegramError(
                 "Работа аккаунта остановлена", code="account_stopped"
             )
@@ -172,7 +181,20 @@ class TelegramAccountRuntimeManager:
         )
         if callable(restriction_reader):
             restriction = restriction_reader(account_id=account_id)
-            if bool((restriction or {}).get("active")):
+            active_value = (
+                restriction.get("active")
+                if isinstance(restriction, dict)
+                else False
+            )
+            restriction_active = (
+                active_value is True
+                or (
+                    isinstance(active_value, int)
+                    and not isinstance(active_value, bool)
+                    and active_value == 1
+                )
+            )
+            if restriction_active:
                 self.worker_database.set_account_runtime_state(
                     account_id,
                     "restricted",
