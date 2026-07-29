@@ -93,14 +93,14 @@ class TelegramDialogsMixin(_MixinHost):
             "username": getattr(entity, "username", None),
             "target_kind": "group",
             "comment_mode": (
-                "linked_discussion" if is_linked_discussion else "direct_group"
+                "linked_discussion" if is_linked_discussion else "pending"
             ),
             "linked_chat_id": int(peer_id),
             "linked_chat_title": title,
             "link_status": (
                 "Связанное обсуждение · только комментарии к постам"
                 if is_linked_discussion
-                else "Обычная группа · сообщение без привязки к посту"
+                else "Обычная группа · прямая отправка отключена"
             ),
             "access_hash": int(access_hash) if access_hash is not None else None,
             "peer_type": peer_type,

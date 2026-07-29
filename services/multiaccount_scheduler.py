@@ -336,7 +336,18 @@ def run_multiaccount_campaign_tick(root) -> dict[int, str]:
     """Schedule every runnable account independently and isolate failures."""
 
     outcomes: dict[int, str] = {}
-    for account in root.database.list_telegram_accounts():
+    accounts = list(root.database.list_telegram_accounts())
+    if not accounts:
+        legacy_account_id = int(
+            root.database.get_setting("telegram.account_id", 0) or 0
+        )
+        if legacy_account_id > 0:
+            accounts = [{
+                "telegram_account_id": legacy_account_id,
+                "runtime_state": "active",
+                "stopped": False,
+            }]
+    for account in accounts:
         account_id = int(account.get("telegram_account_id") or 0)
         if account_id <= 0:
             continue

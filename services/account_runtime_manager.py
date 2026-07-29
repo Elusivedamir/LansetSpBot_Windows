@@ -147,7 +147,12 @@ class TelegramAccountRuntimeManager:
                 f"{name} requires a positive account_id",
                 code="invalid_payload",
             )
-        if self.container.queue_worker.is_scope_cancelled("account", account_id):
+        cancellation_reader = getattr(
+            self.container.queue_worker, "is_scope_cancelled", None
+        )
+        if callable(cancellation_reader) and cancellation_reader(
+            "account", account_id
+        ):
             raise NonRetryableTelegramError(
                 "Работа аккаунта остановлена",
                 code="account_stopped",

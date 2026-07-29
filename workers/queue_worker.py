@@ -953,6 +953,24 @@ class QueueWorker(QThread):
             task_account_id = int(raw_task_account_id or 0)
         except (TypeError, ValueError, OverflowError):
             task_account_id = 0
+        if task_type in self.ACCOUNT_RPC_TASK_TYPES and task_account_id > 0:
+            current_account_id = 0
+            try:
+                current_account_id = int(
+                    self.get_db().get_setting("telegram.account_id", 0) or 0
+                )
+            except Exception:
+                current_account_id = task_account_id
+            if current_account_id > 0 and current_account_id != task_account_id:
+                message = (
+                    "account_state_mismatch: selected Telegram account changed "
+                    f"after task creation (task={task_account_id}, "
+                    f"current={current_account_id})"
+                )
+                self.get_db().set_failed(task_id, message, retry=False)
+                self.failed_count += 1
+                self.task_failed.emit(task_id, message)
+                return
         if (
             task_type in self.ACCOUNT_RPC_TASK_TYPES
             and task_account_id > 0

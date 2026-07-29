@@ -93,6 +93,7 @@ class AccountView(QWidget):
         self.status_label.setObjectName("statusTitle")
         self.account_label = QLabel("Введите данные Telegram API")
         self.account_label.setObjectName("mutedText")
+        self.account_label.setMinimumWidth(530)
         status_text = QVBoxLayout()
         status_text.addWidget(self.status_label)
         status_text.addWidget(self.account_label)

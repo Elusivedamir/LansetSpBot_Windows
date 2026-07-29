@@ -279,6 +279,8 @@ class TaskQueueAPIMixin(_MixinHost):
             return self._queue_start_blocker_locked()
 
     def start_queue(self) -> bool:
+        if self._shutdown_requested:
+            return False
         worker = self.queue_worker
         with self._queue_lock:
             blocker = self._queue_start_blocker_locked()
