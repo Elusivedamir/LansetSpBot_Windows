@@ -46,7 +46,7 @@ jobs:
             tests/test_v4721_business_logic_audit3.py::test_comment_task_never_runs_through_another_account_session `
             tests/test_v4721_business_logic_audit3.py::test_join_task_never_runs_through_another_account_session `
             -vv -s `
-            --no-cov `
+            -o addopts="" `
             --tb=long `
             --showlocals `
             --maxfail=0 `
