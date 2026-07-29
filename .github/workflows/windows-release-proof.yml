@@ -2,6 +2,19 @@ name: Windows Release Proof
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/windows-release-proof.yml"
+      - "**/*.py"
+      - "**/*.ps1"
+      - "**/*.cmd"
+      - "**/*.bat"
+      - "requirements*.txt"
+      - "requirements*.lock"
+      - "SHA256SUMS.txt"
+      - "build/**"
   push:
     branches:
       - main
