@@ -1213,6 +1213,11 @@ class ChannelRepositoryMixin:
                          AND group_target.target_kind='group'
                          AND group_target.local_banned_at IS NULL
                          AND group_target.comment_mode!='linked_discussion'
+                          AND NOT (
+                              group_target.comment_mode='pending'
+                              AND group_target.link_status=
+                                  'Обычная группа · прямая отправка отключена'
+                          )
                          AND NOT EXISTS(
                              SELECT 1 FROM channels AS channel_target
                              WHERE channel_target.account_id=group_target.account_id
