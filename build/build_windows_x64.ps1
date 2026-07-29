@@ -138,7 +138,6 @@ if (-not $SkipTests) {
             -p tools.pytest_ci_watchdog `
             --junitxml "ci-proof\pytest-core.xml" `
             --ignore "tests/test_gui_v45.py" tests
-            "tests/test_v4721_rpc_optimization_v10.py::test_ordinary_group_classification_uses_zero_telegram_rpc"
         $coreTestsExit = $LASTEXITCODE
 
         Write-BuildStage "Running GUI pytest diagnostics in isolated process"
