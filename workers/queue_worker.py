@@ -982,10 +982,17 @@ class QueueWorker(QThread):
                 campaign_id = int(task_payload.get("campaign_id") or 0)
                 if campaign_id > 0:
                     reason = "Кампания приостановлена: Telegram-сессия не совпадает с локальным аккаунтом"
+                    slot_id = int(task_payload.get("slot_id") or 0)
                     if task_type == "auto_comment_slot":
                         self.get_db().pause_comment_campaign(campaign_id, reason=reason)
+                        if slot_id > 0:
+                            self.get_db().defer_comment_slot(
+                                slot_id, scheduled_at=utc_now(), result=reason
+                            )
                     elif task_type == "join_saved_slot":
                         self.get_db().pause_join_campaign(campaign_id, reason=reason)
+                        if slot_id > 0:
+                            self.get_db().defer_join_slot(slot_id, utc_now(), reason)
                 self.failed_count += 1
                 self.task_failed.emit(task_id, message)
                 return

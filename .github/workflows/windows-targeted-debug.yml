@@ -2,6 +2,12 @@ name: Windows Targeted Debug
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "**/*.py"
+      - ".github/workflows/windows-targeted-debug.yml"
 
 permissions:
   contents: read
@@ -34,27 +40,16 @@ jobs:
           python -m pip install -r requirements-openai.lock
           python -m pip install -r requirements-dev-windows-x64.lock
 
-      - name: Run seven failing tests
+      - name: Run failing tests with full traceback
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Continue"
-
           python -m pytest `
-            tests/test_encrypted_telethon_session.py::test_runtime_clients_receive_encrypted_session_instance `
             tests/test_v27_local_ban_runtime_fix.py::test_ambiguous_join_bans_only_target_and_batch_continues `
             tests/test_v27_local_ban_runtime_fix.py::test_resumed_checkpoint_skips_already_banned_channel_without_rpc `
-            tests/test_v4715_repeat_audit_fixes.py::test_successful_scheduler_tick_clears_previous_failure_counter `
-            tests/test_v4718_state_consistency_fixes.py::test_account_actions_remain_locked_until_identity_is_persisted `
-            tests/test_v4721_business_logic_audit3.py::test_comment_task_never_runs_through_another_account_session `
-            tests/test_v4721_business_logic_audit3.py::test_join_task_never_runs_through_another_account_session `
-            -vv -s `
-            --tb=long `
-            --showlocals `
-            --maxfail=0 `
-            --junitxml=targeted-results.xml `
-            2>&1 | Tee-Object -FilePath targeted-tests.log
-
-          exit $LASTEXITCODE
+            tests/test_v4715_repeat_audit_fixes.py::test_queue_worker_stops_after_five_consecutive_processing_failures `
+            -vv -s --tb=long --maxfail=3 `
+            --junitxml=targeted-results.xml 2>&1 |
+            Tee-Object -FilePath targeted-tests.log
 
       - name: Upload diagnostics
         if: always()
@@ -64,4 +59,4 @@ jobs:
           path: |
             targeted-tests.log
             targeted-results.xml
-          if-no-files-found: error
+          if-no-files-found: warn

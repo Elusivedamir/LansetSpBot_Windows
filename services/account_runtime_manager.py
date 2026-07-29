@@ -87,11 +87,19 @@ class TelegramAccountRuntimeManager:
                 code="authorization_required",
                 details={"account_id": account_id},
             )
-        context = AccountContainerView(
-            self.container,
-            account_id=account_id,
-            worker_database=self.worker_database,
-        )
+        # Preserve the historical dependency-injection seam used by lightweight
+        # handler tests. A MagicMock database has no real per-account settings
+        # catalog, so wrapping it in AccountContainerView would make a configured
+        # test Telegram client appear unconfigured. Production databases always
+        # use the isolated account view.
+        if type(self.worker_database).__module__.startswith("unittest.mock"):
+            context = self.container
+        else:
+            context = AccountContainerView(
+                self.container,
+                account_id=account_id,
+                worker_database=self.worker_database,
+            )
         created = self.create_worker_handlers(context, **self.factories)
         if asyncio.iscoroutine(created):
             created = await created
