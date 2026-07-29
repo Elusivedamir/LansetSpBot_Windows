@@ -163,7 +163,11 @@ def test_successful_scheduler_tick_clears_previous_failure_counter(
 ) -> None:
     db = Database(tmp_path / "scheduler-reset.db")
     db.set_setting("telegram.account_id", 101)
-    api = ServiceAPI(db, secret_store=_Secrets())
+    api = ServiceAPI(
+        db,
+        secret_store=_Secrets(),
+        secret_migration_verified=True,
+    )
     api._campaign_timer.stop()
     api._delivery_recovery_timer.stop()
     api._scheduler_failures = 2

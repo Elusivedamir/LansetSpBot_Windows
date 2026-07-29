@@ -1056,6 +1056,13 @@ class AccountView(QWidget):
         )
 
     def _ensure_account_change_allowed(self) -> bool:
+        if self._account_blocking_jobs:
+            QMessageBox.warning(
+                self,
+                APP_NAME,
+                "Дождитесь завершения сохранения состояния Telegram-аккаунта",
+            )
+            return False
         if self.adapter.is_queue_running():
             QMessageBox.warning(
                 self, APP_NAME, "Сначала дождитесь завершения текущей операции"
@@ -1071,13 +1078,6 @@ class AccountView(QWidget):
             return False
         if self.auth_worker is not None and self.auth_worker.isRunning():
             QMessageBox.warning(self, APP_NAME, "Авторизация уже выполняется")
-            return False
-        if self._account_blocking_jobs:
-            QMessageBox.warning(
-                self,
-                APP_NAME,
-                "Дождитесь завершения сохранения состояния Telegram-аккаунта",
-            )
             return False
         return True
 
@@ -1302,20 +1302,10 @@ class AccountView(QWidget):
         self.status_label.setText("Сохранение изолированного аккаунта…")
 
         def persist_and_register():
-            # Persist the authorization snapshot and returned identity as one
-            # blocking operation. Account actions must remain locked until the
-            # selected account id is durable, even if final session catalog
-            # registration subsequently reports an error.
-            durable_settings = dict(settings)
-            durable_settings.update(
-                {
-                    "telegram.account_id": str(int(account["id"])),
-                    "telegram.account_name": str(account.get("name") or "Telegram Account"),
-                    "telegram.account_username": str(account.get("username") or ""),
-                    "telegram.authorized": "1",
-                }
-            )
-            self.adapter.save_settings(durable_settings)
+            # Registration owns the atomic session move, account row, selected
+            # identity and account-scoped settings write. Keep the GUI locked
+            # around that single transaction instead of attempting a legacy
+            # settings write before the new account exists.
             return self.adapter.register_authorized_account(
                 account,
                 settings,

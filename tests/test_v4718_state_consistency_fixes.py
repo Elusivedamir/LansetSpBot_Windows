@@ -139,6 +139,11 @@ def test_account_actions_remain_locked_until_identity_is_persisted(
     app = _app()
     config = Config()
     container = ApplicationContainer(config)
+    monkeypatch.setattr(
+        container.database,
+        "_harden_database_artifacts",
+        lambda *, force=False: None,
+    )
     window = MarlenApp(container.adapter, container.queue_worker, config)
     view = window.account_view
     QThreadPool.globalInstance().waitForDone(5_000)
@@ -146,15 +151,37 @@ def test_account_actions_remain_locked_until_identity_is_persisted(
 
     started = threading.Event()
     release = threading.Event()
-    original_save = container.adapter.save_settings
 
-    def delayed_save(values):
+    def delayed_registration(account, settings, *, pending_session_name):
         started.set()
-        if not release.wait(timeout=5):
-            raise RuntimeError("test save timeout")
-        return original_save(values)
+        if not release.wait(timeout=30):
+            raise RuntimeError("test registration timeout")
+        assert pending_session_name == view._pending_session_name
+        row, _created = container.database.register_telegram_account(
+            telegram_account_id=int(account["id"]),
+            session_name=f"account_{int(account['id'])}",
+            display_name=str(account.get("name") or "Telegram Account"),
+            username=str(account.get("username") or "") or None,
+            authorized=True,
+        )
+        public_settings = {
+            key: value
+            for key, value in settings.items()
+            if key not in container.api.SECRET_SETTING_KEYS
+        }
+        container.database.replace_account_settings(
+            int(account["id"]),
+            public_settings,
+        )
+        selected = container.database.select_telegram_account(int(account["id"]))
+        selected.update(row)
+        return selected
 
-    monkeypatch.setattr(container.adapter, "save_settings", delayed_save)
+    monkeypatch.setattr(
+        container.adapter,
+        "register_authorized_account",
+        delayed_registration,
+    )
     warnings: list[tuple] = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
 
