@@ -140,6 +140,9 @@ async def test_queue_worker_stops_after_five_consecutive_processing_failures(
             calls += 1
             return {"id": calls, "type": "boom"}
 
+        def seconds_until_next_pending_task(self):
+            return None
+
     async def fail(_task):
         raise RuntimeError("boom")
 

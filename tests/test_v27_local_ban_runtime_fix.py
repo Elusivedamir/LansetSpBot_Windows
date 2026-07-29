@@ -30,6 +30,9 @@ class _Worker:
     def isInterruptionRequested(self) -> bool:  # noqa: N802 - Qt API
         return False
 
+    def is_scope_cancelled(self, _scope_type, _scope_id) -> bool:
+        return False
+
     async def safe_sleep(self, seconds: float, *, cancel_scope=None) -> bool:
         self.sleep_calls.append(seconds)
         return True
