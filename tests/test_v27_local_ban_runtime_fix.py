@@ -260,7 +260,9 @@ async def test_ambiguous_join_bans_only_target_and_batch_continues(monkeypatch):
     telegram = _TelegramForLinks()
     handlers, cleanup = _link_handlers(monkeypatch, db, telegram)
 
-    await handlers["link_channels"]({"id": 9, "payload": {}})
+    await handlers["link_channels"](
+        {"id": 9, "payload": {"account_id": 77}}
+    )
     await cleanup()
 
     db.ban_channel_locally.assert_called_once_with(
@@ -321,7 +323,10 @@ async def test_resumed_checkpoint_skips_already_banned_channel_without_rpc(
         {
             "id": 10,
             "defer_count": 1,
-            "payload": {"_link_checkpoint": checkpoint},
+            "payload": {
+                "account_id": 77,
+                "_link_checkpoint": checkpoint,
+            },
         }
     )
     await cleanup()

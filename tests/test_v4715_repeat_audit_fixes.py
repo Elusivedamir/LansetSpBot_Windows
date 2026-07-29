@@ -135,7 +135,7 @@ async def test_queue_worker_stops_after_five_consecutive_processing_failures(
     calls = 0
 
     class _DB:
-        def claim_next_pending_task(self):
+        def claim_next_pending_task(self, *_args, **_kwargs):
             nonlocal calls
             calls += 1
             return {"id": calls, "type": "boom"}

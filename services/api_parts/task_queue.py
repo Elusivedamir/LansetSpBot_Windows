@@ -267,6 +267,8 @@ class TaskQueueAPIMixin(_MixinHost):
             return "shutdown_in_progress"
         if self._secret_migration_required.is_set():
             return "local_secret_migration"
+        if has_pending_account_state(self.database.path):
+            return "account_transition_pending"
         # Authorization and Telegram restrictions are account-scoped.
         # They must not stop the shared worker from serving other accounts.
         return None
