@@ -247,13 +247,48 @@ def test_account_view_clears_one_time_code_hash_and_2fa_after_success(tmp_path):
     view.two_fa.setText("two-factor-secret")
     view.phone_code_hash = "hash-secret"
 
-    # Этот тест проверяет только уничтожение одноразовых секретов после
-    # успешной авторизации. Фоновая перезагрузка каталога аккаунтов здесь
-    # не относится к проверяемому поведению и может удерживать Qt thread pool.
+    # Воспроизводим актуальный успешный путь: Telegram identity сначала
+    # регистрируется в изолированном account registry, после чего UI завершает
+    # авторизацию. Старый флаг _persisted больше не является контрактом.
+    view._auth_settings_snapshot = {
+        "telegram.api_id": 12345,
+        "telegram.api_hash": "test-api-hash",
+        "telegram.phone": "+10000000000",
+        "telegram.proxy_enabled": "0",
+    }
+    view._pending_session_name = "pending_0123456789abcdef0123456789abcdef"
+
     view.load_settings = lambda: None  # type: ignore[method-assign]
     view._load_account_catalog = lambda: None  # type: ignore[method-assign]
 
-    view._authorized({"id": 1, "name": "Account", "_persisted": True})
+    def complete_registration(
+        _callback,
+        *,
+        on_success=None,
+        on_error=None,
+        blocks_account_change=False,
+    ):
+        assert blocks_account_change is True
+        assert on_error is not None
+        assert on_success is not None
+        on_success(
+            {
+                "telegram_account_id": 1,
+                "display_name": "Account",
+                "username": "",
+            }
+        )
+        return object()
+
+    view._run_background = complete_registration  # type: ignore[method-assign]
+
+    view._authorized(
+        {
+            "id": 1,
+            "name": "Account",
+            "_session_name": view._pending_session_name,
+        }
+    )
 
     assert view.code.text() == ""
     assert view.two_fa.text() == ""
