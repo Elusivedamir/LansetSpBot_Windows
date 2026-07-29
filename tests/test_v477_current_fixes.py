@@ -280,7 +280,7 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     class DB:
         calls = 0
 
-        def claim_next_pending_task(self):
+        def claim_next_pending_task(self, *_args, **_kwargs):
             self.calls += 1
             raise DatabaseError("locked")
 

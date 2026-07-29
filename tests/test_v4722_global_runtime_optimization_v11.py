@@ -64,7 +64,7 @@ async def test_persistent_idle_worker_does_not_poll_empty_sqlite_queue():
         def __init__(self):
             self.claims = 0
 
-        def claim_next_pending_task(self):
+        def claim_next_pending_task(self, *_args, **_kwargs):
             self.claims += 1
             return None
 
