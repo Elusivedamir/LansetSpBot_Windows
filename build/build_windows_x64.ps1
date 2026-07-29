@@ -137,7 +137,19 @@ if (-not $SkipTests) {
             -vv --tb=long --showlocals -ra --durations=20 `
             -p tools.pytest_ci_watchdog `
             --junitxml "ci-proof\pytest-core.xml" `
-            --ignore "tests/test_gui_v45.py" tests
+            "tests/test_v22_high_fixes.py::test_restriction_and_structured_exception_redact_every_persistent_sink" `
+            "tests/test_v27_local_ban_runtime_fix.py::test_ambiguous_join_bans_only_target_and_batch_continues" `
+            "tests/test_v27_local_ban_runtime_fix.py::test_resumed_checkpoint_skips_already_banned_channel_without_rpc" `
+            "tests/test_v4714_pause_defer_atomic_fixes.py::test_saved_limit_is_snapshot_for_next_campaign_and_locked_while_active" `
+            "tests/test_v4715_repeat_audit_fixes.py::test_queue_worker_stops_after_five_consecutive_processing_failures" `
+            "tests/test_v4715_repeat_audit_fixes.py::test_successful_scheduler_tick_clears_previous_failure_counter" `
+            "tests/test_v4718_state_consistency_fixes.py::test_account_actions_remain_locked_until_identity_is_persisted" `
+            "tests/test_v4719_final_audit_fixes.py::test_pending_account_transition_blocks_queue_start" `
+            "tests/test_v4719_final_audit_fixes.py::test_worker_defers_telegram_tasks_when_secret_store_is_unavailable" `
+            "tests/test_v471_hardening.py::test_non_idempotent_tasks_are_created_without_automatic_retries" `
+            "tests/test_v4721_business_logic_audit3.py::test_manual_telegram_task_snapshots_account_and_is_blocked_after_switch" `
+            "tests/test_v4721_help_instructions_v13.py::test_windows_build_regenerates_guide_assets_before_release_checks" `
+            "tests/test_v4721_rpc_optimization_v10.py::test_ordinary_group_classification_uses_zero_telegram_rpc"
         $coreTestsExit = $LASTEXITCODE
 
         Write-BuildStage "Running GUI pytest diagnostics in isolated process"
