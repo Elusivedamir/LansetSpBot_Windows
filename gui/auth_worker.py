@@ -281,7 +281,7 @@ class TelegramAuthWorker(QThread):
                     category=UserWarning,
                     module=r"telethon\.client\.telegrambaseclient",
                 )
-            encrypted_session = EncryptedSQLiteSession(self._session_base())
+            encrypted_session = EncryptedSQLiteSession(self.session_dir / "main" if self.session_name == "main" else self._session_base())
             client = TelegramClient(
                 encrypted_session,
                 api_id,

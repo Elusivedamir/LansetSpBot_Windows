@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any

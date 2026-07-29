@@ -1300,12 +1300,20 @@ class AccountView(QWidget):
             self.account_changed.emit()
 
         self.status_label.setText("Сохранение изолированного аккаунта…")
-        self._run_background(
-            lambda: self.adapter.register_authorized_account(
+
+        def persist_and_register():
+            # Persist the authorization snapshot first. Besides keeping the
+            # historical GUI contract, this makes the account-change lock span
+            # the complete durable write rather than only catalog registration.
+            self.adapter.save_settings(settings)
+            return self.adapter.register_authorized_account(
                 account,
                 settings,
                 pending_session_name=pending_name,
-            ),
+            )
+
+        self._run_background(
+            persist_and_register,
             on_success=registered,
             on_error=self._failed,
             blocks_account_change=True,

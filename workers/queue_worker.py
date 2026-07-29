@@ -29,6 +29,7 @@ from core.exceptions import (
 from core.performance import log_if_slow
 from core.redaction import sanitize_exception, sanitize_text
 from storage.database import Database
+from storage.db_common import DatabaseError
 from workers.flood_wait_guard import install_account_flood_wait
 
 log = logging.getLogger(__name__)
@@ -796,9 +797,19 @@ class QueueWorker(QThread):
                 if not self.paused:
                     while len(active) < self.max_parallel_accounts:
                         excluded = set(active.values())
-                        task = self.get_db().claim_next_pending_task(excluded)
+                        try:
+                            task = self.get_db().claim_next_pending_task(excluded)
+                        except DatabaseError as exc:
+                            consecutive_processing_failures += 1
+                            log.warning("Task claim failed (%s/5): %s", consecutive_processing_failures, sanitize_exception(exc))
+                            if consecutive_processing_failures >= 5:
+                                break
+                            if not await self.safe_sleep(0.05):
+                                break
+                            continue
                         if task is None:
                             break
+                        consecutive_processing_failures = 0
                         payload = task.get("payload") or {}
                         try:
                             account_id = int(
@@ -968,6 +979,13 @@ class QueueWorker(QThread):
                     f"current={current_account_id})"
                 )
                 self.get_db().set_failed(task_id, message, retry=False)
+                campaign_id = int(task_payload.get("campaign_id") or 0)
+                if campaign_id > 0:
+                    reason = "Кампания приостановлена: Telegram-сессия не совпадает с локальным аккаунтом"
+                    if task_type == "auto_comment_slot":
+                        self.get_db().pause_comment_campaign(campaign_id, reason=reason)
+                    elif task_type == "join_saved_slot":
+                        self.get_db().pause_join_campaign(campaign_id, reason=reason)
                 self.failed_count += 1
                 self.task_failed.emit(task_id, message)
                 return
