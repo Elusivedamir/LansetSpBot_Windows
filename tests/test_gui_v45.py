@@ -291,7 +291,10 @@ def test_comment_daily_limit_slider_persists_locally(monkeypatch, tmp_path):
 
     reopened = Database(tmp_path / "limit-slider.db")
     try:
-        assert reopened.get_setting("commenting.daily_limit") == "137"
+        # Multi-account settings live in account_settings, not in the global
+        # compatibility settings table. Reopen the profile and verify the owner.
+        assert reopened.get_setting("commenting.daily_limit") is None
+        assert reopened.get_account_setting(101, "commenting.daily_limit") == "137"
     finally:
         reopened.close_thread_connection()
 
