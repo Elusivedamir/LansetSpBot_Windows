@@ -449,7 +449,16 @@ async def test_unconfigured_telegram_handlers_fail_closed(monkeypatch):
         api_id=0, api_hash="", session_dir=Path("/tmp")
     )
 
-    handlers, cleanup = container._create_worker_handlers()
+    # This test verifies the single-account factory's fail-closed behavior.
+    # The production container now wraps that factory in a multi-account runtime
+    # manager, whose cleanup is intentionally an async close callback.
+    handlers, cleanup = create_worker_handlers(
+        container,
+        TelegramService=MagicMock,
+        ImportService=ImportService,
+        LinkedChatService=MagicMock,
+        CommentService=MagicMock,
+    )
 
     assert cleanup is None
     with pytest.raises(NonRetryableTelegramError) as raised:

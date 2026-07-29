@@ -268,8 +268,13 @@ def test_comment_daily_limit_slider_persists_locally(monkeypatch, tmp_path):
     assert view.daily_limit_slider.maximum() == 1000
     view.daily_limit_slider.setValue(137)
     assert view._save_daily_limit() is True
+    # setValue() also arms the delayed autosave.  The explicit save above has
+    # already persisted the value, so stop the duplicate callback before the
+    # container/database are shut down.
+    view.limit_save_timer.stop()
     assert container.adapter.get_comment_daily_limit() == 137
 
+    window.suspend_runtime_updates()
     window._tray.hide()
     window.deleteLater()
     app.processEvents()
@@ -278,7 +283,10 @@ def test_comment_daily_limit_slider_persists_locally(monkeypatch, tmp_path):
     from storage.database import Database
 
     reopened = Database(tmp_path / "limit-slider.db")
-    assert reopened.get_setting("commenting.daily_limit") == "137"
+    try:
+        assert reopened.get_setting("commenting.daily_limit") == "137"
+    finally:
+        reopened.close_thread_connection()
 
 
 def test_cached_account_transient_check_does_not_show_false_error(

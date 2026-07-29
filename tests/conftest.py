@@ -127,30 +127,46 @@ def _close_test_database_connections(monkeypatch):
     monkeypatch.setattr(Database, "__init__", tracked_init)
     yield
 
-    # GUI tests create short-lived BackgroundCall jobs (activity snapshots,
-    # account catalog/settings reads and maintenance calls).  On Windows the Qt
-    # global thread pool may still be inside SQLCipher/ACL work when the next
-    # test starts tearing down a Database object.  That race previously ended in
-    # a native ``Windows fatal exception: access violation`` instead of a normal
-    # pytest failure.  Drain only already-submitted jobs before closing their
-    # thread-local database connections.
+    # Wait only for LansetSpBot-owned BackgroundCall jobs.  Waiting for the
+    # complete Qt global thread pool can include unrelated Qt/platform work and
+    # can block the Windows test process indefinitely.
     try:
-        from PySide6.QtCore import QThreadPool
+        import time
+
+        from PySide6.QtCore import QCoreApplication, QEvent
         from PySide6.QtWidgets import QApplication
 
+        from gui.background import BackgroundCall
+    except ImportError:
+        pass
+    else:
         app = QApplication.instance()
         if app is not None:
+            # Stop timers before pumping deferred deletes, otherwise a teardown
+            # event can enqueue another database refresh while we are draining.
+            for widget in tuple(app.topLevelWidgets()):
+                suspend = getattr(widget, "suspend_runtime_updates", None)
+                if callable(suspend):
+                    suspend()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
             app.processEvents()
-        pool = QThreadPool.globalInstance()
-        pool.waitForDone(10_000)
+
+        deadline = time.monotonic() + 10.0
+        while BackgroundCall.has_pending_jobs() and time.monotonic() < deadline:
+            if app is not None:
+                app.processEvents()
+            time.sleep(0.01)
+
         if app is not None:
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
             app.processEvents()
-        # Signal delivery can enqueue one final follow-up refresh.
-        pool.waitForDone(2_000)
-    except Exception:
-        # Connection cleanup below remains the fail-safe even in tests that
-        # deliberately replace or destroy Qt globals.
-        pass
+
+        pending = BackgroundCall.pending_count()
+        if pending:
+            pytest.fail(
+                f"{pending} LansetSpBot BackgroundCall job(s) did not finish during test teardown",
+                pytrace=False,
+            )
 
     for database in reversed(instances):
         try:
