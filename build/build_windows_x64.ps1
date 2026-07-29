@@ -118,23 +118,33 @@ if (-not $SkipTests) {
     & $BuildPython -m coverage erase
     if ($LASTEXITCODE -ne 0) { throw "Could not reset coverage data." }
 
-    Write-BuildStage "Running core pytest diagnostics"
-    & $BuildPython -X faulthandler -m coverage run --parallel-mode -m pytest `
-        -vv --maxfail=1 --tb=long --showlocals -rA --durations=20 `
-        -p tools.pytest_ci_watchdog `
-        --junitxml "ci-proof\pytest-core.xml" `
-        --ignore "tests/test_gui_v45.py" tests 2>&1 |
-        Tee-Object -FilePath "ci-proof\pytest-core.log"
-    $coreTestsExit = $LASTEXITCODE
+    # The pytest watchdog deliberately writes diagnostic messages to stderr.
+    # PowerShell must not convert that normal stream into a terminating error.
+    # Real pytest failures are still enforced through the captured exit codes.
+    $pytestErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        Write-BuildStage "Running core pytest diagnostics"
+        & $BuildPython -X faulthandler -m coverage run --parallel-mode -m pytest `
+            -vv --maxfail=1 --tb=long --showlocals -rA --durations=20 `
+            -p tools.pytest_ci_watchdog `
+            --junitxml "ci-proof\pytest-core.xml" `
+            --ignore "tests/test_gui_v45.py" tests 2>&1 |
+            Tee-Object -FilePath "ci-proof\pytest-core.log"
+        $coreTestsExit = $LASTEXITCODE
 
-    Write-BuildStage "Running GUI pytest diagnostics in isolated process"
-    & $BuildPython -X faulthandler -m coverage run --parallel-mode -m pytest `
-        -vv --maxfail=1 --tb=long --showlocals -rA --durations=20 `
-        -p tools.pytest_ci_watchdog `
-        --junitxml "ci-proof\pytest-gui.xml" `
-        "tests/test_gui_v45.py" 2>&1 |
-        Tee-Object -FilePath "ci-proof\pytest-gui.log"
-    $guiTestsExit = $LASTEXITCODE
+        Write-BuildStage "Running GUI pytest diagnostics in isolated process"
+        & $BuildPython -X faulthandler -m coverage run --parallel-mode -m pytest `
+            -vv --maxfail=1 --tb=long --showlocals -rA --durations=20 `
+            -p tools.pytest_ci_watchdog `
+            --junitxml "ci-proof\pytest-gui.xml" `
+            "tests/test_gui_v45.py" 2>&1 |
+            Tee-Object -FilePath "ci-proof\pytest-gui.log"
+        $guiTestsExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $pytestErrorActionPreference
+    }
 
     # Preserve partial coverage even when either diagnostic suite fails. This is
     # evidence only; the release gate below still fails closed on any test error.
