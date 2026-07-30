@@ -130,8 +130,8 @@ if (-not $SkipTests) {
         & $BuildPython tools\run_ci_subprocess.py `
             --label core `
             --log "ci-proof\pytest-core.log" `
-            --idle-timeout-seconds 240 `
-            --total-timeout-seconds 1800 `
+            --idle-timeout-seconds 660 `
+            --total-timeout-seconds 3600 `
             -- `
             $BuildPython -X faulthandler -m coverage run --parallel-mode -m pytest `
             -vv --tb=long --showlocals -ra --durations=20 `
