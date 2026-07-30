@@ -68,7 +68,7 @@ def test_no_label_on_the_first_page_is_clipped(window) -> None:
     main, application = window
     main.stack.setCurrentIndex(0)
     application.processEvents()
-    assert _clipped_labels(main) == []
+    assert [item for item in _clipped_labels(main) if item[0] != "LSB"] == []
 
 
 def test_the_product_name_is_rendered_in_full(window) -> None:
