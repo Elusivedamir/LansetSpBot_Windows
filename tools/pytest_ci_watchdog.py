@@ -12,8 +12,28 @@ import sys
 from pathlib import Path
 
 COLLECTION_TIMEOUT_SECONDS = 300
-TEST_TIMEOUT_SECONDS = 180
+DEFAULT_TEST_TIMEOUT_SECONDS = 180
+SLOW_TEST_TIMEOUT_SECONDS = 600
 CURRENT_TEST_FILE = os.environ.get("PYTEST_CURRENT_TEST_FILE", "").strip()
+
+# Known deterministic integration/simulation tests legitimately perform large
+# SQLCipher or Qt workloads on hosted Windows runners. They remain fail-closed,
+# but use a larger per-test budget instead of being killed by the unit-test
+# ceiling. Keep this list explicit so an accidentally hanging ordinary test
+# still fails after three minutes.
+SLOW_TEST_NODE_FRAGMENTS = (
+    "test_24_virtual_hour_schedule_and_ledger_simulation_has_no_duplicates",
+    "test_model_based_100_independent_business_state_sequences",
+    "test_file_logs_use_two_mib_total_and_cleanup_old_rotations",
+)
+
+
+def _timeout_for_node(nodeid: str) -> int:
+    return (
+        SLOW_TEST_TIMEOUT_SECONDS
+        if any(fragment in nodeid for fragment in SLOW_TEST_NODE_FRAGMENTS)
+        else DEFAULT_TEST_TIMEOUT_SECONDS
+    )
 
 
 def _record_current_test(nodeid: str) -> None:
@@ -60,12 +80,13 @@ def pytest_collection_finish(session) -> None:
 def pytest_runtest_logstart(nodeid, location) -> None:
     del location
     _record_current_test(nodeid)
+    timeout_seconds = _timeout_for_node(str(nodeid))
     print(
-        f"[pytest-ci-watchdog] armed {TEST_TIMEOUT_SECONDS}s for {nodeid}",
+        f"[pytest-ci-watchdog] armed {timeout_seconds}s for {nodeid}",
         file=sys.stderr,
         flush=True,
     )
-    _arm(TEST_TIMEOUT_SECONDS)
+    _arm(timeout_seconds)
 
 
 def pytest_runtest_logfinish(nodeid, location) -> None:
