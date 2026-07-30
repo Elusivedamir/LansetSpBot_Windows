@@ -8,6 +8,8 @@ recovery that runs after an unclean shutdown.
 
 from __future__ import annotations
 
+import os
+
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
