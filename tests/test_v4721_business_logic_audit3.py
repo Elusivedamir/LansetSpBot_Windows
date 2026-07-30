@@ -779,27 +779,41 @@ def test_24_virtual_hour_schedule_and_ledger_simulation_has_no_duplicates(tmp_pa
     db = Database(tmp_path / "virtual-24h.db")
     start = datetime(2026, 7, 15, 0, 0, tzinfo=UTC)
     expected_total = 0
-    for account_id, count in ((101, 40), (202, 1000)):
-        db.set_setting("telegram.account_id", account_id)
-        slots = generate_random_slots(
-            start, start + timedelta(hours=24), count, rng=random.Random(account_id)
-        )
-        assert len({to_db_time(slot) for slot in slots}) == count
-        for index in range(count):
-            channel_id = account_id * 10_000 + index
-            db.insert_channel(
-                {
-                    "account_id": account_id,
-                    "channel_id": channel_id,
-                    "linked_chat_id": channel_id + 1,
-                    "title": f"{account_id}-{index}",
-                }
+    # Exercise the real repository methods and uniqueness constraints while
+    # keeping the 1,040-row simulation inside one outer transaction. Without
+    # this boundary, Windows performs thousands of SQLCipher commits plus
+    # repeated artifact-security checks and exceeds the per-test watchdog.
+    with db.get_connection():
+        for account_id, count in ((101, 40), (202, 1000)):
+            db.set_setting("telegram.account_id", account_id)
+            slots = generate_random_slots(
+                start,
+                start + timedelta(hours=24),
+                count,
+                rng=random.Random(account_id),
             )
-            assert db.reserve_comment_delivery(channel_id, 15, account_id=account_id)
-            assert not db.reserve_comment_delivery(
-                channel_id, 15, account_id=account_id
-            )
-        expected_total += count
+            assert len({to_db_time(slot) for slot in slots}) == count
+            for index in range(count):
+                channel_id = account_id * 10_000 + index
+                db.insert_channel(
+                    {
+                        "account_id": account_id,
+                        "channel_id": channel_id,
+                        "linked_chat_id": channel_id + 1,
+                        "title": f"{account_id}-{index}",
+                    }
+                )
+                assert db.reserve_comment_delivery(
+                    channel_id,
+                    15,
+                    account_id=account_id,
+                )
+                assert not db.reserve_comment_delivery(
+                    channel_id,
+                    15,
+                    account_id=account_id,
+                )
+            expected_total += count
     with db.get_connection() as conn:
         total = conn.execute("SELECT COUNT(*) FROM comment_deliveries").fetchone()[0]
         duplicates = conn.execute(
