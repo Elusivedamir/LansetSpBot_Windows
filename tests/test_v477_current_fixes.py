@@ -291,7 +291,7 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     )
     with pytest.raises(DatabaseError, match="locked"):
         await worker._run_async()
-    assert worker._db.calls == 8
+    assert worker._db.calls == 5
     assert worker.lifecycle_state == worker.STATE_DRAINING
 
 

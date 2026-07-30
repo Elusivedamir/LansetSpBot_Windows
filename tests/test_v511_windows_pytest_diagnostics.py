@@ -36,7 +36,7 @@ def test_split_pytest_diagnostics_keep_independent_evidence() -> None:
 def test_watchdog_dumps_all_threads_and_exits_on_hung_test() -> None:
     text = WATCHDOG.read_text(encoding="utf-8")
 
-    assert "DEFAULT_TEST_TIMEOUT_SECONDS = 180" in text
+    assert "DEFAULT_DEFAULT_TEST_TIMEOUT_SECONDS = 180" in text
     assert "SLOW_TEST_TIMEOUT_SECONDS = 600" in text
     assert "COLLECTION_TIMEOUT_SECONDS = 300" in text
     assert "faulthandler.dump_traceback_later" in text
