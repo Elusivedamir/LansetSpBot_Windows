@@ -11,7 +11,6 @@ from typing import Any, cast
 from PySide6.QtCore import QTimer, Slot
 
 from core.account_state import has_pending_account_state
-from core.account_restriction import get_account_restriction_state
 
 log = logging.getLogger(__name__)
 

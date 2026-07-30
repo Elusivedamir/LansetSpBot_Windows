@@ -53,7 +53,7 @@ async def test_ordinary_group_classification_uses_zero_telegram_rpc(monkeypatch)
     db.update_group_link_classification.assert_called_once_with(
         group_id,
         is_linked=False,
-        status="Обычная группа · сообщение без привязки к посту",
+        status="Группа · локально определена как обычная",
         account_id=77,
     )
 

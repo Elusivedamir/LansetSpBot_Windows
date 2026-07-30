@@ -32,7 +32,8 @@ class SettingsAPIMixin(_MixinHost):
     ) -> str | None:
         owner = int(account_id or 0)
         if owner > 0 and hasattr(self, "_strict_account_secret"):
-            return self._strict_account_secret(owner, key)
+            value = self._strict_account_secret(owner, key)
+            return None if value is None else str(value)
         getter = getattr(type(self.secret_store), "get_strict_optional", None)
         if callable(getter):
             value = self.secret_store.get_strict_optional(key)

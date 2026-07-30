@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import AbstractContextManager
 from typing import Any
 
 from storage.database import Database
@@ -36,7 +35,7 @@ class AccountDatabaseView(Database):
         self.sqlite_timeout_seconds = base.sqlite_timeout_seconds
         self._database_key = base._database_key
 
-    def get_connection(self) -> AbstractContextManager:
+    def get_connection(self):
         return self._base.get_connection()
 
     def close_thread_connection(self) -> None:

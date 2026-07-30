@@ -90,7 +90,7 @@ class MainWindow(QMainWindow):
 
         brand_row = QHBoxLayout()
         brand_mark = QLabel("LSB")
-        brand_mark.setMinimumWidth(84)
+        brand_mark.setMinimumWidth(68)
         brand_mark.setObjectName("brandMark")
         brand_text = QVBoxLayout()
         brand_text.setSpacing(0)

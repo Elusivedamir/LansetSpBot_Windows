@@ -828,6 +828,12 @@ class QueueWorker(QThread):
                         claimed_any = True
                         idle_since = None
 
+                if consecutive_processing_failures >= 5:
+                    log.error(
+                        "Queue worker stopped after five consecutive task claim failures"
+                    )
+                    break
+
                 if claimed_any:
                     continue
 
@@ -933,12 +939,12 @@ class QueueWorker(QThread):
         task_payload = task.get("payload") or {}
         try:
             column_account_id = int(task.get("account_id") or 0)
-            payload_account_id = int(
+            raw_payload_account_id = (
                 task_payload.get("account_id")
                 if isinstance(task_payload, dict)
                 else 0
-                or 0
             )
+            payload_account_id = int(str(raw_payload_account_id or 0))
         except (TypeError, ValueError, OverflowError):
             column_account_id = 0
             payload_account_id = 0

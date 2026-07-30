@@ -182,8 +182,12 @@ def test_legacy_secret_migration_closes_its_thread_connection():
 
     database = MagicMock()
     database.get_setting.return_value = "legacy-secret"
+    database.get_selected_account_id.return_value = 0
+    database.list_telegram_accounts.return_value = []
     secret_store = MagicMock()
-    secret_store.get.return_value = ""
+    protected: dict[str, str] = {}
+    secret_store.get.side_effect = lambda key, default="": protected.get(key, default)
+    secret_store.set.side_effect = protected.__setitem__
 
     ServiceAPI._migrate_legacy_secrets(
         database,

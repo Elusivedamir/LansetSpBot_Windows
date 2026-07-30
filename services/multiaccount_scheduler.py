@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from core.campaign_schedule import to_db_time, utc_now
 from services.api_parts.comments import CommentCampaignAPIMixin
@@ -310,9 +309,10 @@ class AccountCampaignContext(
         return None
 
     def _strict_openai_key(self) -> str | None:
-        return self.root._strict_account_secret(
+        value = self.root._strict_account_secret(
             self.account_id, "openai.api_key"
         )
+        return None if value is None else str(value)
 
     def set_comment_daily_limit(self, value: int) -> int:
         normalized = max(0, min(1000, int(value)))

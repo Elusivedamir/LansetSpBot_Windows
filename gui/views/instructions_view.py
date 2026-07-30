@@ -84,11 +84,11 @@ class ScreenshotPreviewDialog(QDialog):
         self.image_label.setObjectName("instructionImagePreview")
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.scroll = QScrollArea()
-        self.scroll.setObjectName("instructionImageScroll")
-        self.scroll.setWidgetResizable(False)
-        self.scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.scroll.setWidget(self.image_label)
+        self.image_scroll = QScrollArea()
+        self.image_scroll.setObjectName("instructionImageScroll")
+        self.image_scroll.setWidgetResizable(False)
+        self.image_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_scroll.setWidget(self.image_label)
 
         hint = QLabel(
             "Используйте «По размеру окна» для общего вида или «100%» "
@@ -119,7 +119,7 @@ class ScreenshotPreviewDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
-        layout.addWidget(self.scroll, 1)
+        layout.addWidget(self.image_scroll, 1)
         layout.addLayout(controls)
 
         self._sync_mode_buttons()
@@ -139,7 +139,7 @@ class ScreenshotPreviewDialog(QDialog):
             return
         pixmap = self._source_pixmap
         if self._fit_to_window:
-            viewport = self.scroll.viewport().size()
+            viewport = self.image_scroll.viewport().size()
             pixmap = self._source_pixmap.scaled(
                 max(1, viewport.width() - 24),
                 max(1, viewport.height() - 24),

@@ -250,7 +250,7 @@ class OSBoundMasterKeyProvider:
 
         # ctypes.WinDLL and the Win32 error helpers exist only on Windows,
         # which is the only platform that reaches this branch.
-        windll_loader = ctypes.WinDLL  # type: ignore[attr-defined]
+        windll_loader = ctypes.WinDLL
         crypt32 = windll_loader("crypt32", use_last_error=True)
         kernel32 = windll_loader("kernel32", use_last_error=True)
         crypt32.CryptProtectData.argtypes = [
@@ -311,8 +311,8 @@ class OSBoundMasterKeyProvider:
                 ctypes.byref(output_blob),
             )
         if not ok:
-            win_error = ctypes.WinError  # type: ignore[attr-defined]
-            last_error = ctypes.get_last_error  # type: ignore[attr-defined]
+            win_error = ctypes.WinError
+            last_error = ctypes.get_last_error
             raise VaultUnavailableError(
                 f"Windows DPAPI operation failed: {win_error(last_error())}"
             )
