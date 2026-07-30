@@ -289,6 +289,10 @@ class TaskRepositoryMixin:
     ):
         try:
             with self.get_connection() as conn:
+                # Serialize this payload read-modify-write operation with
+                # checkpoint persistence and external pause requests.
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
                     "SELECT payload FROM tasks WHERE id=? AND type='link_channels'",
                     (int(task_id),),
@@ -321,6 +325,10 @@ class TaskRepositoryMixin:
     ):
         try:
             with self.get_connection() as conn:
+                # Serialize this payload read-modify-write operation with
+                # checkpoint persistence and external pause requests.
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
                     "SELECT payload FROM tasks WHERE id=? AND type='link_channels'",
                     (int(task_id),),
@@ -350,6 +358,10 @@ class TaskRepositoryMixin:
     def resume_link_task(self, task_id):
         try:
             with self.get_connection() as conn:
+                # Serialize this payload read-modify-write operation with
+                # checkpoint persistence and external pause requests.
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
                     "SELECT payload FROM tasks WHERE id=? AND type='link_channels'",
                     (int(task_id),),
