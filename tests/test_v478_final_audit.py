@@ -192,7 +192,7 @@ def test_legacy_secret_migration_closes_its_thread_connection():
         threading.RLock(),
     )
 
-    secret_store.set.assert_called_once_with("telegram.api_hash", "legacy-secret")
+    secret_store.set.assert_called_once_with("account.1.telegram.api_hash", "legacy-secret")
     database.delete_setting.assert_called_once_with("telegram.api_hash")
     database.close_thread_connection.assert_called_once_with()
 
