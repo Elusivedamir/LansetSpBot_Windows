@@ -1134,6 +1134,12 @@ class TaskRepositoryMixin:
             value = max(0, min(100, int(progress)))
             checkpoint_payload = self._decode_task_payload(payload)
             with self.get_connection() as conn:
+                # Serialize checkpoint persistence with request_link_task_pause().
+                # Without an early write reservation, a pause request could commit
+                # between this method's SELECT and UPDATE and then be overwritten
+                # by a stale checkpoint payload.
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
                 current = conn.execute(
                     "SELECT payload FROM tasks WHERE id=? AND status='running'",
                     (int(task_id),),
