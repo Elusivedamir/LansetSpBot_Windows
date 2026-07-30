@@ -256,7 +256,7 @@ async def test_comment_slot_never_sends_plain_message_to_standalone_group(monkey
     assert db.finish_comment_slot.call_args.kwargs["status"] == "skipped"
     assert db.finish_comment_slot.call_args.kwargs["post_id"] is None
     assert db.finish_comment_slot.call_args.kwargs["sent"] is False
-    db.update_group_link_classification.assert_called_once()
+    db.update_group_link_classification.assert_not_called()
 
 
 @pytest.mark.asyncio
