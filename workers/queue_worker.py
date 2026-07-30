@@ -976,13 +976,9 @@ class QueueWorker(QThread):
             self.task_failed.emit(task_id, message)
             return
 
-        raw_task_account_id: Any = (
-            task_payload.get("account_id") if isinstance(task_payload, dict) else 0
-        )
-        try:
-            task_account_id = int(raw_task_account_id or 0)
-        except (TypeError, ValueError, OverflowError):
-            task_account_id = 0
+        # claim_next_pending_task() normalizes the durable account_id column.
+        # Prefer it when a legacy payload does not contain account_id.
+        task_account_id = column_account_id or payload_account_id
         if task_type in self.ACCOUNT_RPC_TASK_TYPES and task_account_id > 0:
             current_account_id = 0
             try:

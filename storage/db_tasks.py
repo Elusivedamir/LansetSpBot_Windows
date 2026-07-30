@@ -694,6 +694,25 @@ class TaskRepositoryMixin:
                     if column_account and payload_account and column_account != payload_account:
                         raise ValueError("task account column does not match payload")
                     account_id = column_account or payload_account
+
+                    # Legacy tasks may keep account_id only inside payload.
+                    # Normalize the indexed column before applying the active-
+                    # account exclusion, otherwise two tasks for one Telegram
+                    # account could be claimed concurrently.
+                    if account_id != column_account:
+                        normalized = conn.execute(
+                            """UPDATE tasks
+                               SET account_id=?, updated_at=CURRENT_TIMESTAMP
+                               WHERE id=? AND status='pending'""",
+                            (account_id, claimed["id"]),
+                        )
+                        if normalized.rowcount != 1:
+                            continue
+                        claimed["account_id"] = account_id
+
+                    if account_id in excluded:
+                        # The normalized row will be excluded by the next SELECT.
+                        continue
                 except (json.JSONDecodeError, TypeError, ValueError) as exc:
                     conn.execute(
                         """UPDATE tasks SET status='failed', error=?,
