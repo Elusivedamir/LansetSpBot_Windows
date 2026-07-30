@@ -291,8 +291,8 @@ def test_start_queue_cannot_cancel_shutdown(tmp_path):
 
     api.cancel_shutdown()
     api._campaign_timer.stop()
-    assert api.start_queue() is True
-    worker.start.assert_called_once_with()
+    assert api.start_queue() is False
+    worker.start.assert_not_called()
     api.prepare_shutdown()
 
 

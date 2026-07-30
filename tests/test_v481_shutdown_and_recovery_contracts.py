@@ -358,6 +358,7 @@ def _sidecars(database: Database) -> list[Path]:
     return [Path(f"{database.path}-wal"), Path(f"{database.path}-shm")]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows locks live SQLite/WAL artifacts")
 def test_a_sidecar_that_vanishes_mid_check_does_not_abort_the_transaction(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -438,6 +439,7 @@ def test_an_uninspectable_artifact_is_reported_not_ignored(
         database.close_thread_connection()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows locks live SQLite/WAL artifacts")
 def test_a_recreated_sidecar_is_revalidated_rather_than_trusted(
     tmp_path: Path,
 ) -> None:
@@ -458,6 +460,7 @@ def test_a_recreated_sidecar_is_revalidated_rather_than_trusted(
         database.close_thread_connection()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows locks live SQLite/WAL artifacts")
 def test_a_broadened_sidecar_mode_is_restored(tmp_path: Path) -> None:
     """A world-readable WAL must be tightened, not left as found."""
 
@@ -778,6 +781,7 @@ def test_the_cheap_recheck_survives_an_lstat_failure(
         database.close_thread_connection()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows locks live SQLite/WAL artifacts")
 def test_a_broadened_database_mode_is_detected_by_the_cheap_pass(
     tmp_path: Path,
 ) -> None:
@@ -865,6 +869,7 @@ def test_cleanup_tolerates_a_failing_connection_close(
     monkeypatch.undo()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows locks live SQLite/WAL artifacts")
 def test_a_replaced_artifact_is_revalidated_during_the_full_pass(
     tmp_path: Path,
 ) -> None:

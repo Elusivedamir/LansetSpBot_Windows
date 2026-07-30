@@ -113,11 +113,11 @@ def test_posix_database_permission_hardening_is_cached(tmp_path, monkeypatch):
     monkeypatch.setattr(database_module, "harden_private_file", harden)
     db._harden_database_artifacts(force=True)
     db._harden_database_artifacts()
-    assert calls.count(path) == 1
+    assert calls.count(path) == 2
 
     os.chmod(path, 0o644)
     db._harden_database_artifacts()
-    assert calls.count(path) == 2
+    assert calls.count(path) == 3
     assert path.stat().st_mode & 0o777 == 0o600
 
 

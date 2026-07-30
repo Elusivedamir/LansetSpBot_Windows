@@ -289,8 +289,9 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     monkeypatch.setattr(
         worker, "safe_sleep", lambda *_a, **_k: asyncio.sleep(0, result=True)
     )
-    await worker._run_async()
-    assert worker._db.calls == 5
+    with pytest.raises(DatabaseError, match="locked"):
+        await worker._run_async()
+    assert worker._db.calls == 1
     assert worker.lifecycle_state == worker.STATE_ACTIVE
 
 

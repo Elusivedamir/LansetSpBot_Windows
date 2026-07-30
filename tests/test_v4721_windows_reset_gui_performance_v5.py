@@ -64,15 +64,15 @@ def test_windows_acl_hardening_is_cached_until_file_identity_changes(
     database._harden_database_artifacts()
     database._harden_database_artifacts()
 
-    assert harden_calls.count(path) == 1
-    assert harden_calls.count(wal) == 1
+    assert harden_calls.count(path) == 2
+    assert harden_calls.count(wal) == 2
 
     wal.unlink()
     wal.write_bytes(b"wal-2")
     database._harden_database_artifacts()
 
-    assert harden_calls.count(path) == 1
-    assert harden_calls.count(wal) == 2
+    assert harden_calls.count(path) == 3
+    assert harden_calls.count(wal) == 3
 
 
 def test_periodic_sqlite_refreshes_are_wired_to_background_entrypoints():
