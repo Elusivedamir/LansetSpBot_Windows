@@ -283,6 +283,8 @@ def test_start_queue_cannot_cancel_shutdown(tmp_path):
     _qt_app()
     api = ServiceAPI(Database(tmp_path / "shutdown.db"), queue_worker=worker)
     api._campaign_timer.stop()
+    api._secret_migration_thread.join(15)
+    assert not api._secret_migration_thread.is_alive()
 
     api.prepare_shutdown()
     assert api.start_queue() is False

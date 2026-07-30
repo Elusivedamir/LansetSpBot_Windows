@@ -890,7 +890,7 @@ def create_link_channels_handler(
             status = (
                 "Связанное обсуждение · только комментарии к постам"
                 if is_linked
-                else "Обычная группа · сообщение без привязки к посту"
+                else "Группа · локально определена как обычная"
             )
             group_update_kwargs = {
                 "is_linked": is_linked,

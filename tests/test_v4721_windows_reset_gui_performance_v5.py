@@ -46,7 +46,6 @@ def test_windows_acl_hardening_is_cached_until_file_identity_changes(
     database = Database.__new__(Database)
     database.path = path
     database._artifact_security_lock = threading.RLock()
-    database._artifact_security_identities = {}
 
     harden_calls: list[Path] = []
     monkeypatch.setattr(database_module, "os", SimpleNamespace(name="nt"))
@@ -64,6 +63,7 @@ def test_windows_acl_hardening_is_cached_until_file_identity_changes(
     database._harden_database_artifacts()
     database._harden_database_artifacts()
 
+    assert database._artifact_security_identities
     assert harden_calls.count(path) == 1
     assert harden_calls.count(wal) == 1
 

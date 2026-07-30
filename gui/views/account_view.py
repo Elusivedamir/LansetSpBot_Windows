@@ -93,6 +93,7 @@ class AccountView(QWidget):
         self.status_label.setObjectName("statusTitle")
         self.account_label = QLabel("Введите данные Telegram API")
         self.account_label.setObjectName("mutedText")
+        self.account_label.setMinimumWidth(530)
         status_text = QVBoxLayout()
         status_text.addWidget(self.status_label)
         status_text.addWidget(self.account_label)
@@ -1055,6 +1056,13 @@ class AccountView(QWidget):
         )
 
     def _ensure_account_change_allowed(self) -> bool:
+        if self._account_blocking_jobs:
+            QMessageBox.warning(
+                self,
+                APP_NAME,
+                "Дождитесь завершения сохранения состояния Telegram-аккаунта",
+            )
+            return False
         if self.adapter.is_queue_running():
             QMessageBox.warning(
                 self, APP_NAME, "Сначала дождитесь завершения текущей операции"
@@ -1070,13 +1078,6 @@ class AccountView(QWidget):
             return False
         if self.auth_worker is not None and self.auth_worker.isRunning():
             QMessageBox.warning(self, APP_NAME, "Авторизация уже выполняется")
-            return False
-        if self._account_blocking_jobs:
-            QMessageBox.warning(
-                self,
-                APP_NAME,
-                "Дождитесь завершения сохранения состояния Telegram-аккаунта",
-            )
             return False
         return True
 
@@ -1299,12 +1300,20 @@ class AccountView(QWidget):
             self.account_changed.emit()
 
         self.status_label.setText("Сохранение изолированного аккаунта…")
-        self._run_background(
-            lambda: self.adapter.register_authorized_account(
+
+        def persist_and_register():
+            # Registration owns the atomic session move, account row, selected
+            # identity and account-scoped settings write. Keep the GUI locked
+            # around that single transaction instead of attempting a legacy
+            # settings write before the new account exists.
+            return self.adapter.register_authorized_account(
                 account,
                 settings,
                 pending_session_name=pending_name,
-            ),
+            )
+
+        self._run_background(
+            persist_and_register,
             on_success=registered,
             on_error=self._failed,
             blocks_account_change=True,

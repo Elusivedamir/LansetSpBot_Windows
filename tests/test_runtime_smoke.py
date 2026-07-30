@@ -105,7 +105,13 @@ def test_queue_restarts_when_task_arrives_during_cleanup(tmp_path):
         return {"noop": noop}, cleanup
 
     worker = QueueWorker(factory, database_path=path)
-    api = ServiceAPI(database, worker)
+    # Этот тест проверяет перезапуск QueueWorker, а не миграцию секретов.
+    # Production ApplicationContainer завершает миграцию до создания очереди.
+    api = ServiceAPI(
+        database,
+        worker,
+        secret_migration_verified=True,
+    )
     first = api.create_task("noop", {})
     assert api.start_queue() is True
 

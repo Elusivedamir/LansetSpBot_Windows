@@ -383,8 +383,15 @@ def test_service_api_uses_configured_campaign_duration(tmp_path):
 
     app = QApplication.instance() or QApplication([])
     db = Database(tmp_path / "campaign-hours.db")
+    db.register_telegram_account(
+        telegram_account_id=101,
+        session_name="account_101",
+        display_name="Test account",
+    )
     db.set_setting("telegram.account_id", 101)
-    db.insert_channel({"channel_id": 1, "linked_chat_id": 2, "title": "A"})
+    db.insert_channel(
+        {"channel_id": 1, "linked_chat_id": 2, "title": "A", "account_id": 101}
+    )
     api = ServiceAPI(db, campaign_hours=6)
     api._campaign_timer.stop()
     campaign = api.start_comment_campaign(["hello"], continuous=False, daily_limit=1)

@@ -8,6 +8,7 @@ recovery that runs after an unclean shutdown.
 
 from __future__ import annotations
 
+import os
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -367,10 +368,12 @@ def test_a_sidecar_that_vanishes_mid_check_does_not_abort_the_transaction(
     try:
         database.set_setting("k", "v")
         real_validate = local_security.validate_private_regular_file
+        journal = Path(f"{database.path}-journal")
+        journal.write_bytes(b"temporary rollback journal")
 
         def flaky(path, *args, **kwargs):
             target = Path(path)
-            if target.name.endswith(("-wal", "-shm")):
+            if target == journal:
                 target.unlink(missing_ok=True)
                 # Mirror the real cause chain: SQLite removing the sidecar
                 # surfaces as FileNotFoundError underneath the security error.
@@ -446,18 +449,18 @@ def test_a_recreated_sidecar_is_revalidated_rather_than_trusted(
     database = Database(tmp_path / "recreated.db")
     try:
         database.set_setting("k", "v1")
-        for sidecar in _sidecars(database):
-            sidecar.unlink(missing_ok=True)
-        # A fresh transaction recreates the sidecars; hardening must accept the
-        # new inode instead of failing on the remembered identity.
-        database.set_setting("k", "v2")
-        assert database.get_setting("k") == "v2"
+        journal = Path(f"{database.path}-journal")
+        journal.write_bytes(b"first journal")
         database._harden_database_artifacts(force=True)  # noqa: SLF001
-        assert database.get_setting("k") == "v2"
+        journal.unlink()
+        journal.write_bytes(b"recreated journal")
+        database._harden_database_artifacts(force=True)  # noqa: SLF001
+        assert database.get_setting("k") == "v1"
     finally:
         database.close_thread_connection()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX chmod modes do not model Windows ACLs")
 def test_a_broadened_sidecar_mode_is_restored(tmp_path: Path) -> None:
     """A world-readable WAL must be tightened, not left as found."""
 
@@ -778,6 +781,7 @@ def test_the_cheap_recheck_survives_an_lstat_failure(
         database.close_thread_connection()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX chmod modes do not model Windows ACLs")
 def test_a_broadened_database_mode_is_detected_by_the_cheap_pass(
     tmp_path: Path,
 ) -> None:
@@ -873,15 +877,12 @@ def test_a_replaced_artifact_is_revalidated_during_the_full_pass(
     database = Database(tmp_path / "swap.db")
     try:
         database.set_setting("k", "v")
+        journal = Path(f"{database.path}-journal")
+        journal.write_bytes(b"first journal")
         database._harden_database_artifacts(force=True)  # noqa: SLF001
-        wal = Path(f"{database.path}-wal")
-        if wal.exists():
-            import os
-
-            replacement = wal.with_name("swap.tmp")
-            replacement.write_bytes(wal.read_bytes())
-            os.chmod(replacement, 0o600)
-            os.replace(replacement, wal)
+        replacement = journal.with_name("swap.tmp")
+        replacement.write_bytes(b"replacement journal")
+        os.replace(replacement, journal)
         database._harden_database_artifacts(force=True)  # noqa: SLF001
         assert database.get_setting("k") == "v"
     finally:

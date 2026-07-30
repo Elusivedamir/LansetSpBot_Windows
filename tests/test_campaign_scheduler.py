@@ -332,7 +332,13 @@ def test_commenting_24h_cooldown_excludes_old_channels_but_accepts_new_sync(tmp_
 
 def test_service_campaign_caps_attempts_to_unique_eligible_channels(tmp_path):
     db = Database(tmp_path / "cap.db")
-    db.set_setting("telegram.account_id", 101)
+    db.register_telegram_account(
+        telegram_account_id=101,
+        session_name="account_101",
+        display_name="Test Account",
+        authorized=True,
+    )
+    db.select_telegram_account(101)
     _add_linked_channels(db, 5)
     api = ServiceAPI(db)
 

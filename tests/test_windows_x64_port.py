@@ -70,7 +70,9 @@ def test_windows_build_pipeline_has_native_self_tests_and_release_zip() -> None:
     build = (ROOT / "build" / "build_windows_x64.ps1").read_text(encoding="utf-8-sig")
 
     assert "Python 3.13 x64" in build
-    assert "-m pytest -q" in build
+    assert "-m pytest" in build
+    assert "-vv --tb=long --showlocals" in build
+    assert "tools\\run_ci_subprocess.py" in build
     assert "-m ruff check" in build
     assert "-m mypy" in build
     assert "$BuiltExe --self-test" in build

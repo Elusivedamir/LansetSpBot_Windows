@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
@@ -39,12 +41,14 @@ class AccountSecretStoreView:
         self.base.set(account_secret_key(self.account_id, key), value)
 
     def get(self, key: str, default: str = "") -> str:
-        return self.base.get(account_secret_key(self.account_id, key), default)
+        value = self.base.get(account_secret_key(self.account_id, key), default)
+        return str(default if value is None else value)
 
     def get_strict_optional(self, key: str) -> str | None:
-        return self.base.get_strict_optional(
+        value = self.base.get_strict_optional(
             account_secret_key(self.account_id, key)
         )
+        return None if value is None else str(value)
 
     def delete(self, key: str) -> None:
         self.base.delete(account_secret_key(self.account_id, key))
@@ -91,10 +95,12 @@ class AccountQueueWorkerView:
     ) -> bool:
         if self._base.is_scope_cancelled("account", self.account_id):
             return True
-        return self._base.is_scope_cancelled(
-            scope_type,
-            scope_id,
-            self.account_id if scope_type == "channel" else account_id,
+        return bool(
+            self._base.is_scope_cancelled(
+                scope_type,
+                scope_id,
+                self.account_id if scope_type == "channel" else account_id,
+            )
         )
 
     async def safe_sleep(self, seconds, step=0.5, *, cancel_scope=None):
@@ -169,24 +175,26 @@ class AccountContainerView:
         if not account:
             raise RuntimeError(f"Telegram account {self.account_id} does not exist")
         saved = database.get_settings("telegram.")
+        telegram_config = getattr(self.config, "telegram", None)
         api_id = self._as_int(
-            saved.get("telegram.api_id"), self.config.telegram.api_id
+            saved.get("telegram.api_id"),
+            getattr(telegram_config, "api_id", 0),
         )
         api_hash = str(
             self._strict_secret_value("telegram.api_hash")
-            or self.config.telegram.api_hash
+            or getattr(telegram_config, "api_hash", "")
             or ""
         ).strip()
         phone = str(
             self._strict_secret_value("telegram.phone")
-            or self.config.telegram.phone
+            or getattr(telegram_config, "phone", None)
             or ""
         ).strip() or None
         proxy_port = self._as_int(saved.get("telegram.proxy_port"), 0) or None
         return TelegramSettings(
             api_id=api_id,
             api_hash=api_hash,
-            session_dir=self.config.telegram.session_dir,
+            session_dir=getattr(telegram_config, "session_dir", Path("sessions")),
             session_name=str(account.get("session_name") or f"account_{self.account_id}"),
             account_id=self.account_id,
             phone=phone,

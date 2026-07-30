@@ -364,7 +364,12 @@ class CommentService:
         campaign_id=None,
         dispatch_barrier=None,
     ):
-        """Send one standalone group message with durable duplicate protection."""
+        """Reject the removed standalone ordinary-group delivery path."""
+
+        raise NonRetryableTelegramError(
+            "Direct messages to ordinary groups are disabled",
+            code="direct_group_disabled",
+        )
 
         selected = self._select_text(text)
         if len(selected) > 4096:

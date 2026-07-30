@@ -22,7 +22,8 @@ class OpenAICommentAPIMixin(_MixinHost):
     def _strict_openai_key(self) -> str | None:
         owner = int(self.get_current_account_id() or 0)
         if owner > 0 and hasattr(self, "_strict_account_secret"):
-            return self._strict_account_secret(owner, OPENAI_API_KEY_SECRET)
+            value = self._strict_account_secret(owner, OPENAI_API_KEY_SECRET)
+            return None if value is None else str(value)
         getter = getattr(type(self.secret_store), "get_strict_optional", None)
         if callable(getter):
             value = self.secret_store.get_strict_optional(OPENAI_API_KEY_SECRET)

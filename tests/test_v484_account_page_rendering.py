@@ -49,8 +49,8 @@ def window(tmp_path, monkeypatch):
         container.shutdown(timeout_ms=15_000)
 
 
-def _clipped_labels(root) -> list[tuple[str, int, int]]:
-    clipped: list[tuple[str, int, int]] = []
+def _clipped_labels(root) -> list[tuple[str, str, int, int]]:
+    clipped: list[tuple[str, str, int, int]] = []
     for label in root.findChildren(QLabel):
         text = label.text()
         if not text or len(text) > 60 or not label.isVisible() or label.wordWrap():
@@ -58,7 +58,7 @@ def _clipped_labels(root) -> list[tuple[str, int, int]]:
         needed = label.fontMetrics().horizontalAdvance(text)
         available = label.width()
         if available > 0 and needed > available + 1:
-            clipped.append((text, needed, available))
+            clipped.append((label.objectName(), text, needed, available))
     return clipped
 
 

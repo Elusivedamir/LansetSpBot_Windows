@@ -323,6 +323,10 @@ class Database(
                 ):
                     refresh_needed = True
                     break
+                # Windows ``st_mode`` reflects the DOS read-only flag, not the
+                # effective ACL applied by ``icacls``. Treating it as a POSIX
+                # mode makes every transaction look insecure and defeats the
+                # ACL identity cache.
                 if os.name != "nt" and (int(info.st_mode) & 0o777) != 0o600:
                     refresh_needed = True
                     break
@@ -360,9 +364,9 @@ class Database(
 
                 identity = self._artifact_security_identity(validated_info)
                 known_identity = identities.get(candidate)
-                mode_is_private = True
-                if os.name != "nt":
-                    mode_is_private = (int(validated_info.st_mode) & 0o777) == 0o600
+                mode_is_private = os.name == "nt" or (
+                    (int(validated_info.st_mode) & 0o777) == 0o600
+                )
                 known_marker = markers.get(candidate)
                 marker_matches = known_marker == b"" or (
                     bool(known_marker)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from core.config import MAX_COMMENT_VARIANTS
 from storage.db_common import DatabaseError
@@ -55,7 +55,7 @@ SECRET_ACCOUNT_SETTING_KEYS = frozenset(
 
 def _positive_account_id(value: object) -> int:
     try:
-        parsed = int(value or 0)
+        parsed = int(str(value or 0))
     except (TypeError, ValueError, OverflowError) as exc:
         raise DatabaseError(f"Invalid Telegram account id: {value!r}") from exc
     if parsed <= 0:
@@ -329,7 +329,7 @@ class AccountRepositoryMixin(_MixinHost):
                        WHERE telegram_account_id=? AND session_name=?""",
                     (owner, clean_session),
                 )
-                return cursor.rowcount == 1
+                return bool(cursor.rowcount == 1)
         except DatabaseError:
             raise
         except Exception as exc:
@@ -721,14 +721,14 @@ class AccountRepositoryMixin(_MixinHost):
                                 "1" if bool(next_row["authorized"]) else "0"
                             ),
                         }
-                        for key, value in compatibility.items():
+                        for setting_key, setting_value in compatibility.items():
                             conn.execute(
                                 """INSERT INTO settings(key, value, updated_at)
                                    VALUES(?, ?, CURRENT_TIMESTAMP)
                                    ON CONFLICT(key) DO UPDATE SET
                                        value=excluded.value,
                                        updated_at=CURRENT_TIMESTAMP""",
-                                (key, value),
+                                (setting_key, setting_value),
                             )
                         rows = conn.execute(
                             """SELECT key, value FROM account_settings
@@ -1177,4 +1177,6 @@ class AccountRepositoryMixin(_MixinHost):
     def for_account(self, account_id: object):
         from storage.account_database_view import AccountDatabaseView
 
-        return AccountDatabaseView(self, _positive_account_id(account_id))
+        return AccountDatabaseView(
+            cast(Any, self), _positive_account_id(account_id)
+        )

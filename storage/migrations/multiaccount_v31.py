@@ -61,7 +61,7 @@ def _setting(conn: SQLiteConnection, key: str, default: str = "") -> str:
 
 def _positive_int(value: object) -> int:
     try:
-        parsed = int(value or 0)
+        parsed = int(str(value or 0))
     except (TypeError, ValueError, OverflowError):
         return 0
     return parsed if parsed > 0 else 0

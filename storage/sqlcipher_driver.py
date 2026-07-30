@@ -545,7 +545,11 @@ def migrate_plaintext_database(path: Path, *, key: bytes, timeout: float = 30.0)
             f"Could not restrict encrypted migration file {temporary}"
         )
     verify_encrypted_database(temporary, key=key)
-    with temporary.open("rb") as stream:
+    # ``os.fsync`` maps to the MSVCRT ``_commit`` call on Windows.  Open the
+    # exported file for update rather than read-only so the durability barrier
+    # is valid on both Windows and POSIX before the atomic activation.
+    with temporary.open("r+b") as stream:
+        stream.flush()
         os.fsync(stream.fileno())
     _fsync_directory(database.parent)
 

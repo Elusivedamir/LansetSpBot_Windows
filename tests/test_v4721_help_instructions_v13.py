@@ -121,7 +121,10 @@ def test_windows_build_regenerates_guide_assets_before_release_checks() -> None:
     )
     capture = '& $BuildPython tools\\capture_instruction_screenshots.py'
     manifest = '& $BuildPython tools\\generate_manifest.py'
-    pytest_gate = "& $BuildPython -m coverage run -m pytest -q"
+    pytest_gate = (
+        "$BuildPython -X faulthandler -m coverage run "
+        "--parallel-mode -m pytest"
+    )
     package = "& $BuildPython -m PyInstaller"
 
     assert build.count(capture) == 1

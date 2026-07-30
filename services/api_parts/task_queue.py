@@ -11,7 +11,6 @@ from typing import Any, cast
 from PySide6.QtCore import QTimer, Slot
 
 from core.account_state import has_pending_account_state
-from core.account_restriction import get_account_restriction_state
 
 log = logging.getLogger(__name__)
 
@@ -267,6 +266,8 @@ class TaskQueueAPIMixin(_MixinHost):
             return "shutdown_in_progress"
         if self._secret_migration_required.is_set():
             return "local_secret_migration"
+        if has_pending_account_state(self.database.path):
+            return "account_transition_pending"
         # Authorization and Telegram restrictions are account-scoped.
         # They must not stop the shared worker from serving other accounts.
         return None
@@ -277,6 +278,8 @@ class TaskQueueAPIMixin(_MixinHost):
             return self._queue_start_blocker_locked()
 
     def start_queue(self) -> bool:
+        if self._shutdown_requested:
+            return False
         worker = self.queue_worker
         with self._queue_lock:
             blocker = self._queue_start_blocker_locked()

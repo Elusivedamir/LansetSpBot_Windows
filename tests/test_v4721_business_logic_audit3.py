@@ -148,7 +148,14 @@ async def test_manual_telegram_task_snapshots_account_and_is_blocked_after_switc
     tmp_path,
 ):
     db = Database(tmp_path / "manual-account-isolation.db")
+    db.register_telegram_account(
+        telegram_account_id=1111,
+        session_name="account_1111",
+        display_name="Manual isolation account",
+        authorized=True,
+    )
     db.set_setting("telegram.account_id", 1111)
+    db.set_setting("ui.selected_account_id", 1111)
     api = ServiceAPI(db)
     assert api.wait_for_secret_migration(5_000)
     created = api.create_task(
@@ -570,7 +577,7 @@ class _ReferenceCampaign:
             self.state = "completed"
 
 
-def test_model_based_100_independent_business_state_sequences(tmp_path):
+def test_model_based_100_independent_business_state_sequences(tmp_path, monkeypatch):
     commands = (
         "pause",
         "resume",
@@ -585,10 +592,21 @@ def test_model_based_100_independent_business_state_sequences(tmp_path):
         "process_uncertain",
     )
     observed_outcomes: set[str] = set()
+    path = tmp_path / "model-sequences.db"
+    db = Database(path)
+    # The constructor above exercises the real SQLCipher artifact hardening.
+    # Re-running Windows ACL checks after every one of the thousands of model
+    # transitions tests filesystem policy, not campaign state, and used to push
+    # this single test past the CI watchdog. Dedicated storage tests cover that
+    # policy; keep this state-machine simulation focused on repository behavior.
+    monkeypatch.setattr(
+        db,
+        "_harden_database_artifacts",
+        lambda *, force=False: None,
+    )
+    model_start = utc_now() + timedelta(days=1)
     for sequence_id in range(100):
-        path = tmp_path / f"model-{sequence_id}.db"
         owner = 10_000 + sequence_id
-        db = Database(path)
         db.set_setting("telegram.account_id", owner)
         db.insert_channel(
             {
@@ -605,6 +623,7 @@ def test_model_based_100_independent_business_state_sequences(tmp_path):
             continuous=False,
             account_id=owner,
             rng=random.Random(sequence_id),
+            start_at=model_start,
         )
         model = _ReferenceCampaign(owner=owner)
         source = random.Random(sequence_id)
@@ -618,7 +637,9 @@ def test_model_based_100_independent_business_state_sequences(tmp_path):
             elif command == "resume":
                 expected = model.transition(command)
                 actual = db.resume_comment_campaign(
-                    campaign["id"], rng=random.Random(sequence_id + 1)
+                    campaign["id"],
+                    now=model_start,
+                    rng=random.Random(sequence_id + 1),
                 )
                 assert bool(actual) == expected
             elif command == "stop":
@@ -628,7 +649,6 @@ def test_model_based_100_independent_business_state_sequences(tmp_path):
             elif command == "restart":
                 assert model.transition(command)
                 db.close_thread_connection()
-                db = Database(path)
             elif command == "change_account":
                 assert model.transition(command)
                 db.set_setting("telegram.account_id", model.current_account)
@@ -752,7 +772,7 @@ def test_model_based_100_independent_business_state_sequences(tmp_path):
                 and open_slots > 0
             )
             assert production_can_process == model.can_process
-        db.close_thread_connection()
+    db.close_thread_connection()
 
     assert observed_outcomes == {"success", "failure", "uncertain"}
 
@@ -761,27 +781,41 @@ def test_24_virtual_hour_schedule_and_ledger_simulation_has_no_duplicates(tmp_pa
     db = Database(tmp_path / "virtual-24h.db")
     start = datetime(2026, 7, 15, 0, 0, tzinfo=UTC)
     expected_total = 0
-    for account_id, count in ((101, 40), (202, 1000)):
-        db.set_setting("telegram.account_id", account_id)
-        slots = generate_random_slots(
-            start, start + timedelta(hours=24), count, rng=random.Random(account_id)
-        )
-        assert len({to_db_time(slot) for slot in slots}) == count
-        for index in range(count):
-            channel_id = account_id * 10_000 + index
-            db.insert_channel(
-                {
-                    "account_id": account_id,
-                    "channel_id": channel_id,
-                    "linked_chat_id": channel_id + 1,
-                    "title": f"{account_id}-{index}",
-                }
+    # Exercise all repository methods and uniqueness constraints while keeping
+    # the virtual-day simulation in one atomic unit. Without the outer scope,
+    # 1,040 rows caused roughly 3,120 SQLCipher commits plus Windows artifact
+    # security checks and exceeded the per-test CI watchdog.
+    with db.get_connection():
+        for account_id, count in ((101, 40), (202, 1000)):
+            db.set_setting("telegram.account_id", account_id)
+            slots = generate_random_slots(
+                start,
+                start + timedelta(hours=24),
+                count,
+                rng=random.Random(account_id),
             )
-            assert db.reserve_comment_delivery(channel_id, 15, account_id=account_id)
-            assert not db.reserve_comment_delivery(
-                channel_id, 15, account_id=account_id
-            )
-        expected_total += count
+            assert len({to_db_time(slot) for slot in slots}) == count
+            for index in range(count):
+                channel_id = account_id * 10_000 + index
+                db.insert_channel(
+                    {
+                        "account_id": account_id,
+                        "channel_id": channel_id,
+                        "linked_chat_id": channel_id + 1,
+                        "title": f"{account_id}-{index}",
+                    }
+                )
+                assert db.reserve_comment_delivery(
+                    channel_id,
+                    15,
+                    account_id=account_id,
+                )
+                assert not db.reserve_comment_delivery(
+                    channel_id,
+                    15,
+                    account_id=account_id,
+                )
+            expected_total += count
     with db.get_connection() as conn:
         total = conn.execute("SELECT COUNT(*) FROM comment_deliveries").fetchone()[0]
         duplicates = conn.execute(
