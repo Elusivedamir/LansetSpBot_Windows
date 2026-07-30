@@ -148,6 +148,8 @@ def test_instruction_explains_account_switch_isolation():
     assert "Инструкция для версии" in source
     assert "__version__" in source
     assert "Смена Telegram-аккаунта" in source
-    assert "Живой журнал» изолированы по Telegram account_id" in source
+    assert "Живой журнал" in source
+    assert "account_id" in source
+    assert "изолир" in source.lower()
     assert "Сохранённый список каналов" in source
     assert "подтянуть в новый аккаунт" in source

@@ -322,7 +322,16 @@ class CommentCampaignAPIMixin(_MixinHost):
         if self._shutdown_requested:
             return
         if self._secret_migration_required.is_set():
-            if (
+            migration_thread = getattr(self, "_secret_migration_thread", None)
+            if migration_thread is not None and migration_thread.is_alive():
+                # Direct API construction (including tests and recovery tools) may
+                # call the first scheduler tick immediately after startup. Give the
+                # one-shot migration enough time to finish on slower Windows disks
+                # instead of treating a harmless startup race as a failed tick.
+                migration_thread.join(timeout=2.0)
+            if not self._secret_migration_required.is_set():
+                pass
+            elif (
                 not self.is_secret_migration_running()
                 and time.monotonic() >= self._secret_migration_retry_at
             ):
@@ -340,7 +349,8 @@ class CommentCampaignAPIMixin(_MixinHost):
                     daemon=False,
                 )
                 self._secret_migration_thread.start()
-            return
+            if self._secret_migration_required.is_set():
+                return
         if has_pending_account_state(self.database.path):
             return
         try:

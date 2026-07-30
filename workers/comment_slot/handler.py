@@ -485,56 +485,9 @@ def create_comment_slot_handler(
                 schedule_guard.require_active()
 
             if comment_mode == "direct_group":
-                # An ordinary group is a standalone route. It never needs a
-                # channel post, discussion root or reply_to value.
-                if not target_allows_rpc(channel_id):
-                    final_status = "skipped"
-                    final_message = "Пропущено: обычный чат локально заблокирован"
-                    consume_channel = False
-                    return
-
-                route_binder = getattr(worker_db, "bind_comment_slot_target", None)
-                if callable(route_binder) and not route_binder(
-                    slot_id,
-                    task_id,
-                    channel_id=channel_id,
-                    post_id=None,
-                    linked_chat_id=channel_id,
-                    discussion_message_id=None,
-                ):
-                    raise NonRetryableTelegramError(
-                        "Direct-group campaign route could not be persisted",
-                        code="campaign_slot_unavailable",
-                    )
-
-                selected = reserve_variant()
-                set_runtime(
-                    task_id,
-                    f"Отправка сообщения в обычный чат: {channel_title}",
-                    account_id=campaign_account_id,
-                )
-                if scope_is_cancelled(channel_id):
-                    final_message = "Кампания приостановлена перед отправкой в чат"
-                    consume_channel = False
-                    suspend_cancelled_slot(final_message)
-                    slot_deferred = True
-                    return
-
-                send_barrier = create_dispatch_barrier(channel_id, channel_id)
-                phase = CommentSlotPhase.READY_TO_SEND
-                phase = CommentSlotPhase.SEND_STARTED
-                await comments.send_direct_message(
-                    channel_id,
-                    selected,
-                    task_id=task_id,
-                    account_id=campaign_account_id,
-                    campaign_id=campaign_id,
-                    dispatch_barrier=send_barrier,
-                )
-                sent = True
-                phase = CommentSlotPhase.SEND_CONFIRMED
-                final_status = "sent"
-                final_message = "Сообщение отправлено в обычный чат"
+                final_status = "skipped"
+                final_message = "Пропущено: прямая отправка в обычные группы отключена"
+                consume_channel = False
                 return
 
             # A checkpoint or selected row may become banned after it was read.

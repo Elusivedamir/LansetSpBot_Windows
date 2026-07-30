@@ -93,6 +93,7 @@ class AccountView(QWidget):
         self.status_label.setObjectName("statusTitle")
         self.account_label = QLabel("Введите данные Telegram API")
         self.account_label.setObjectName("mutedText")
+        self.account_label.setMinimumWidth(530)
         status_text = QVBoxLayout()
         status_text.addWidget(self.status_label)
         status_text.addWidget(self.account_label)
@@ -1299,12 +1300,30 @@ class AccountView(QWidget):
             self.account_changed.emit()
 
         self.status_label.setText("Сохранение изолированного аккаунта…")
-        self._run_background(
-            lambda: self.adapter.register_authorized_account(
+
+        def persist_and_register():
+            # Persist the authorization snapshot and returned identity as one
+            # blocking operation. Account actions must remain locked until the
+            # selected account id is durable, even if final session catalog
+            # registration subsequently reports an error.
+            durable_settings = dict(settings)
+            durable_settings.update(
+                {
+                    "telegram.account_id": str(int(account["id"])),
+                    "telegram.account_name": str(account.get("name") or "Telegram Account"),
+                    "telegram.account_username": str(account.get("username") or ""),
+                    "telegram.authorized": "1",
+                }
+            )
+            self.adapter.save_settings(durable_settings)
+            return self.adapter.register_authorized_account(
                 account,
                 settings,
                 pending_session_name=pending_name,
-            ),
+            )
+
+        self._run_background(
+            persist_and_register,
             on_success=registered,
             on_error=self._failed,
             blocks_account_change=True,

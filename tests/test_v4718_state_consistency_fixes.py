@@ -158,6 +158,15 @@ def test_account_actions_remain_locked_until_identity_is_persisted(
     warnings: list[tuple] = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
 
+    view._adding_account = True
+    view._pending_session_name = "pending_0123456789abcdef0123456789abcdef"
+    view._auth_settings_snapshot = {
+        "telegram.api_id": "12345",
+        "telegram.api_hash": "test-api-hash",
+        "telegram.phone": "+10000000000",
+        "telegram.proxy_enabled": False,
+    }
+
     view._authorized({"id": 222, "name": "New", "username": "new"})
     assert started.wait(timeout=5)
     assert view._account_blocking_jobs

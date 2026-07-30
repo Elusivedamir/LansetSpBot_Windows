@@ -8,7 +8,7 @@ from telethon import connection
 
 from core.version import APP_NAME, __version__
 from services.paced_telegram_client import PacedTelegramClient
-from services.account_sessions import session_base, validate_session_name
+from services.account_sessions import validate_session_name
 from services.telegram import (
     LatestPostResult,
     TelegramDialogsMixin,
@@ -52,7 +52,10 @@ class TelegramService(
         session_name = validate_session_name(
             getattr(settings, "session_name", "main")
         )
-        telegram_session_base = session_base(settings.session_dir, session_name)
+        session_base = settings.session_dir / "main"
+        if session_name != "main":
+            session_base = settings.session_dir / session_name
+        telegram_session_base = session_base
         session_file = telegram_session_base.with_suffix(".session")
         # Session copies are never kept; remove any left by an older version.
         self.purge_session_backups(session_file)

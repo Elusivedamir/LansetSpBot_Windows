@@ -305,12 +305,17 @@ async def test_worker_defers_telegram_tasks_when_secret_store_is_unavailable(tmp
     container.secret_store = LockedSecretStore()
 
     handlers, cleanup = container._create_worker_handlers()
-    assert cleanup is None
-    await handlers["noop"]({"id": 1})
-    with pytest.raises(DeferredTelegramError) as raised:
-        await handlers["sync_channels"]({"id": 2})
-    assert raised.value.code == "secret_store_unavailable"
-    assert raised.value.retry_after == 120
+    assert callable(cleanup)
+    try:
+        await handlers["noop"]({"id": 1})
+        with pytest.raises(DeferredTelegramError) as raised:
+            await handlers["sync_channels"](
+                {"id": 2, "payload": {"account_id": 222}}
+            )
+        assert raised.value.code == "secret_store_unavailable"
+        assert raised.value.retry_after == 120
+    finally:
+        cleanup()
 
 
 def test_get_settings_does_not_mask_locked_secret_store(tmp_path):

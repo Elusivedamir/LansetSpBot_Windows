@@ -118,23 +118,47 @@ if (-not $SkipTests) {
     & $BuildPython -m coverage erase
     if ($LASTEXITCODE -ne 0) { throw "Could not reset coverage data." }
 
-    Write-BuildStage "Running core pytest diagnostics"
-    & $BuildPython -X faulthandler -m coverage run --parallel-mode -m pytest `
-        -vv --maxfail=1 --tb=long --showlocals -rA --durations=20 `
-        -p tools.pytest_ci_watchdog `
-        --junitxml "ci-proof\pytest-core.xml" `
-        --ignore "tests/test_gui_v45.py" tests 2>&1 |
-        Tee-Object -FilePath "ci-proof\pytest-core.log"
-    $coreTestsExit = $LASTEXITCODE
+    # The in-process faulthandler cannot terminate a native Qt/SQLite deadlock.
+    # Run pytest behind an external parent process as well. It relays output live,
+    # records the last started node, and kills the complete child tree after four
+    # silent minutes instead of leaving the GitHub runner stuck indefinitely.
+    $pytestErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        Write-BuildStage "Running core pytest diagnostics"
+        $env:PYTEST_CURRENT_TEST_FILE = "ci-proof\pytest-core-current-test.txt"
+        & $BuildPython tools\run_ci_subprocess.py `
+            --label core `
+            --log "ci-proof\pytest-core.log" `
+            --idle-timeout-seconds 240 `
+            --total-timeout-seconds 1800 `
+            -- `
+            $BuildPython -X faulthandler -m coverage run --parallel-mode -m pytest `
+            -vv --tb=long --showlocals -ra --durations=20 `
+            -p tools.pytest_ci_watchdog `
+            --junitxml "ci-proof\pytest-core.xml" `
+            --ignore "tests/test_gui_v45.py" tests
+        $coreTestsExit = $LASTEXITCODE
 
-    Write-BuildStage "Running GUI pytest diagnostics in isolated process"
-    & $BuildPython -X faulthandler -m coverage run --parallel-mode -m pytest `
-        -vv --maxfail=1 --tb=long --showlocals -rA --durations=20 `
-        -p tools.pytest_ci_watchdog `
-        --junitxml "ci-proof\pytest-gui.xml" `
-        "tests/test_gui_v45.py" 2>&1 |
-        Tee-Object -FilePath "ci-proof\pytest-gui.log"
-    $guiTestsExit = $LASTEXITCODE
+        Write-BuildStage "Running GUI pytest diagnostics in isolated process"
+        $env:PYTEST_CURRENT_TEST_FILE = "ci-proof\pytest-gui-current-test.txt"
+        & $BuildPython tools\run_ci_subprocess.py `
+            --label gui `
+            --log "ci-proof\pytest-gui.log" `
+            --idle-timeout-seconds 240 `
+            --total-timeout-seconds 900 `
+            -- `
+            $BuildPython -X faulthandler -m coverage run --parallel-mode -m pytest `
+            -vv --tb=long --showlocals -ra --durations=20 `
+            -p tools.pytest_ci_watchdog `
+            --junitxml "ci-proof\pytest-gui.xml" `
+            "tests/test_gui_v45.py"
+        $guiTestsExit = $LASTEXITCODE
+    }
+    finally {
+        Remove-Item Env:PYTEST_CURRENT_TEST_FILE -ErrorAction SilentlyContinue
+        $ErrorActionPreference = $pytestErrorActionPreference
+    }
 
     # Preserve partial coverage even when either diagnostic suite fails. This is
     # evidence only; the release gate below still fails closed on any test error.

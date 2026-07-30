@@ -126,6 +126,48 @@ def _close_test_database_connections(monkeypatch):
 
     monkeypatch.setattr(Database, "__init__", tracked_init)
     yield
+
+    # Wait only for LansetSpBot-owned BackgroundCall jobs.  Waiting for the
+    # complete Qt global thread pool can include unrelated Qt/platform work and
+    # can block the Windows test process indefinitely.
+    try:
+        import time
+
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from PySide6.QtWidgets import QApplication
+
+        from gui.background import BackgroundCall
+    except ImportError:
+        pass
+    else:
+        app = QApplication.instance()
+        if app is not None:
+            # Stop timers before pumping deferred deletes, otherwise a teardown
+            # event can enqueue another database refresh while we are draining.
+            for widget in tuple(app.topLevelWidgets()):
+                suspend = getattr(widget, "suspend_runtime_updates", None)
+                if callable(suspend):
+                    suspend()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            app.processEvents()
+
+        deadline = time.monotonic() + 10.0
+        while BackgroundCall.has_pending_jobs() and time.monotonic() < deadline:
+            if app is not None:
+                app.processEvents()
+            time.sleep(0.01)
+
+        if app is not None:
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            app.processEvents()
+
+        pending = BackgroundCall.pending_count()
+        if pending:
+            pytest.fail(
+                f"{pending} LansetSpBot BackgroundCall job(s) did not finish during test teardown",
+                pytrace=False,
+            )
+
     for database in reversed(instances):
         try:
             database.close_thread_connection()

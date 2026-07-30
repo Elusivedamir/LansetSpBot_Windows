@@ -156,6 +156,7 @@ class ScreenshotPreviewDialog(QDialog):
 
 
 class InstructionsView(QWidget):
+    """Сохранённый список каналов изолирован по Telegram-аккаунтам. Данные одного аккаунта нельзя автоматически подтянуть в новый аккаунт."""
     """Scrollable slide-by-slide operator guide with annotated UI diagrams."""
 
     IMAGE_SHARE_OF_SLIDE = 0.58

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
@@ -169,24 +171,26 @@ class AccountContainerView:
         if not account:
             raise RuntimeError(f"Telegram account {self.account_id} does not exist")
         saved = database.get_settings("telegram.")
+        telegram_config = getattr(self.config, "telegram", None)
         api_id = self._as_int(
-            saved.get("telegram.api_id"), self.config.telegram.api_id
+            saved.get("telegram.api_id"),
+            getattr(telegram_config, "api_id", 0),
         )
         api_hash = str(
             self._strict_secret_value("telegram.api_hash")
-            or self.config.telegram.api_hash
+            or getattr(telegram_config, "api_hash", "")
             or ""
         ).strip()
         phone = str(
             self._strict_secret_value("telegram.phone")
-            or self.config.telegram.phone
+            or getattr(telegram_config, "phone", None)
             or ""
         ).strip() or None
         proxy_port = self._as_int(saved.get("telegram.proxy_port"), 0) or None
         return TelegramSettings(
             api_id=api_id,
             api_hash=api_hash,
-            session_dir=self.config.telegram.session_dir,
+            session_dir=getattr(telegram_config, "session_dir", Path("sessions")),
             session_name=str(account.get("session_name") or f"account_{self.account_id}"),
             account_id=self.account_id,
             phone=phone,

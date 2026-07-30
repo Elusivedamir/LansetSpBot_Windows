@@ -6,15 +6,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import core.composition as composition
 from core.config import TelegramSettings
 from core.exceptions import (
     DeferredTelegramError,
     NonRetryableTelegramError,
     TelegramOperationError,
 )
-from services.import_service import ImportValidationError
+from services.import_service import ImportService, ImportValidationError
 from core.composition import ApplicationContainer
+from workers.handler_registry import create_worker_handlers
 
 
 class _Worker:
@@ -181,20 +181,16 @@ def _handlers(
 
     comments = _Comments()
     linked = linked or _Linked()
-    if importer is not None:
-        monkeypatch.setattr(composition, "ImportService", lambda _db: importer)
-    monkeypatch.setattr(
-        composition,
-        "TelegramService",
-        lambda *_args, **_kwargs: telegram,
+    import_factory = (
+        (lambda _db: importer) if importer is not None else ImportService
     )
-    monkeypatch.setattr(composition, "LinkedChatService", lambda _telegram: linked)
-    monkeypatch.setattr(
-        composition,
-        "CommentService",
-        lambda *_args, **_kwargs: comments,
+    handlers, cleanup = create_worker_handlers(
+        container,
+        TelegramService=lambda *_args, **_kwargs: telegram,
+        ImportService=import_factory,
+        LinkedChatService=lambda _telegram: linked,
+        CommentService=lambda *_args, **_kwargs: comments,
     )
-    handlers, cleanup = container._create_worker_handlers()
     return handlers, cleanup, comments, container.queue_worker
 
 
@@ -453,7 +449,16 @@ async def test_unconfigured_telegram_handlers_fail_closed(monkeypatch):
         api_id=0, api_hash="", session_dir=Path("/tmp")
     )
 
-    handlers, cleanup = container._create_worker_handlers()
+    # This test verifies the single-account factory's fail-closed behavior.
+    # The production container now wraps that factory in a multi-account runtime
+    # manager, whose cleanup is intentionally an async close callback.
+    handlers, cleanup = create_worker_handlers(
+        container,
+        TelegramService=MagicMock,
+        ImportService=ImportService,
+        LinkedChatService=MagicMock,
+        CommentService=MagicMock,
+    )
 
     assert cleanup is None
     with pytest.raises(NonRetryableTelegramError) as raised:

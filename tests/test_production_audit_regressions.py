@@ -579,10 +579,19 @@ def test_database_rolls_back_base_exceptions(tmp_path, error_type) -> None:
 
 def test_failed_secret_migration_blocks_scheduler_until_retry_succeeds(
     tmp_path,
+    monkeypatch,
 ) -> None:
     _qt_app()
     database = Database(tmp_path / "secret-migration.db")
     database.set_setting("telegram.api_hash", "legacy-secret")
+
+    # The production scheduler is now multi-account. Verify the public
+    # orchestration seam rather than the obsolete root _campaign_tick_once method.
+    scheduler_tick = MagicMock()
+    monkeypatch.setattr(
+        "services.multiaccount_scheduler.run_multiaccount_campaign_tick",
+        scheduler_tick,
+    )
 
     class LockedThenAvailableStore:
         def __init__(self) -> None:
@@ -613,10 +622,9 @@ def test_failed_secret_migration_blocks_scheduler_until_retry_succeeds(
     assert api._secret_migration_required.is_set()
     assert database.get_setting("telegram.api_hash") == "legacy-secret"
 
-    api._campaign_tick_once = MagicMock()
     api._secret_migration_retry_at = float("inf")
     api._campaign_tick()
-    api._campaign_tick_once.assert_not_called()
+    scheduler_tick.assert_not_called()
     assert api.start_queue() is False
     worker.start.assert_not_called()
 
@@ -629,7 +637,7 @@ def test_failed_secret_migration_blocks_scheduler_until_retry_succeeds(
     assert store.values["telegram.api_hash"] == "legacy-secret"
 
     api._campaign_tick()
-    api._campaign_tick_once.assert_called_once_with()
+    scheduler_tick.assert_called_once_with(api)
     api.prepare_shutdown()
 
 

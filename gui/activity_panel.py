@@ -64,6 +64,7 @@ class ActivityPanel(QFrame):
         self.state_label = QLabel("Ожидание кампании")
         self.state_label.setObjectName("activityBadge")
         self.next_label = QLabel("Следующая проверка: —")
+        self.next_label.setMinimumWidth(290)
         self.next_label.setObjectName("activityNext")
 
         self.spambot_button = QPushButton("Проверить блокировку @SpamBot")

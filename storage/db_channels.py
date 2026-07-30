@@ -1151,7 +1151,7 @@ class ChannelRepositoryMixin:
                         (str(status or ""), owner_account_id, int(group_id)),
                     )
                 else:
-                    mode = "linked_discussion" if is_linked else "direct_group"
+                    mode = "linked_discussion" if is_linked else "pending"
                     cursor = conn.execute(
                         """UPDATE channels
                            SET comment_mode=?,
@@ -1201,18 +1201,23 @@ class ChannelRepositoryMixin:
                 ).rowcount
                 direct = conn.execute(
                     """UPDATE channels AS group_target
-                       SET comment_mode='direct_group',
+                       SET comment_mode='pending',
                            linked_chat_id=group_target.channel_id,
                            linked_chat_title=COALESCE(
                                group_target.linked_chat_title,
                                group_target.title
                            ),
-                           link_status='Обычная группа · сообщение без привязки к посту',
+                           link_status='Обычная группа · прямая отправка отключена',
                            last_sync_at=CURRENT_TIMESTAMP
                        WHERE group_target.account_id=?
                          AND group_target.target_kind='group'
                          AND group_target.local_banned_at IS NULL
                          AND group_target.comment_mode!='linked_discussion'
+                          AND NOT (
+                              group_target.comment_mode='pending'
+                              AND group_target.link_status=
+                                  'Обычная группа · прямая отправка отключена'
+                          )
                          AND NOT EXISTS(
                              SELECT 1 FROM channels AS channel_target
                              WHERE channel_target.account_id=group_target.account_id
@@ -1223,7 +1228,7 @@ class ChannelRepositoryMixin:
                 ).rowcount
             return {
                 "linked_discussion": max(0, int(linked or 0)),
-                "direct_group": max(0, int(direct or 0)),
+                "direct_group": 0,
             }
         except DatabaseError:
             raise

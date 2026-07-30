@@ -135,10 +135,13 @@ async def test_queue_worker_stops_after_five_consecutive_processing_failures(
     calls = 0
 
     class _DB:
-        def claim_next_pending_task(self):
+        def claim_next_pending_task(self, *_args, **_kwargs):
             nonlocal calls
             calls += 1
             return {"id": calls, "type": "boom"}
+
+        def seconds_until_next_pending_task(self):
+            return None
 
     async def fail(_task):
         raise RuntimeError("boom")
@@ -166,7 +169,10 @@ def test_successful_scheduler_tick_clears_previous_failure_counter(
     api._scheduler_failures = 2
     api._scheduler_error_present = True
     db.set_setting("scheduler.comment_error", "old error")
-    monkeypatch.setattr(api, "_campaign_tick_once", lambda: None)
+    monkeypatch.setattr(
+        "services.multiaccount_scheduler.run_multiaccount_campaign_tick",
+        lambda _root: {},
+    )
 
     api._campaign_tick()
 
@@ -249,7 +255,16 @@ def test_cancelled_scope_registry_prunes_old_campaign_ids(monkeypatch) -> None:
     worker = QueueWorker(lambda: {})
     worker._cancelled_scope_retention_seconds = 10
     moments = iter([100.0, 120.0])
-    monkeypatch.setattr(queue_module.time, "monotonic", lambda: next(moments))
+    last_moment = [120.0]
+
+    def monotonic():
+        try:
+            last_moment[0] = next(moments)
+        except StopIteration:
+            pass
+        return last_moment[0]
+
+    monkeypatch.setattr(queue_module.time, "monotonic", monotonic)
 
     worker.request_scope_cancellation("comment_campaign", 1)
     assert not worker.is_scope_cancelled("comment_campaign", 2)
