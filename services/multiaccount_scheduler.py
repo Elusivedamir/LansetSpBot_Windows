@@ -58,6 +58,14 @@ class AccountCampaignDatabaseView(AccountDatabaseView):
             ).fetchone()
         return row is not None
 
+    def reconcile_comment_schedule(self):
+        """Reconcile only comment schedule rows owned by this account."""
+        return self._base.reconcile_comment_schedule(account_id=self.account_id)
+
+    def reconcile_join_schedule(self):
+        """Reconcile only join schedule rows owned by this account."""
+        return self._base.reconcile_join_schedule(account_id=self.account_id)
+
     def queue_due_comment_slot(self, *, now=None):
         """Atomically queue one due comment slot owned by this account."""
         now = now or utc_now()
@@ -356,6 +364,7 @@ def run_multiaccount_campaign_tick(root) -> dict[int, str]:
             "stopping",
             "stopped",
             "authorization_required",
+            "restricted",
             "error",
         }:
             outcomes[account_id] = "skipped"
