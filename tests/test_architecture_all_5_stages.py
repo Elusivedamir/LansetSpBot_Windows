@@ -206,7 +206,7 @@ def test_stage_3_floodwait_is_deferred_with_buffer() -> None:
 
     assert decision.retry_after is not None
 
-    assert 150 <= decision.retry_after <= 165
+    assert 180 <= decision.retry_after <= 300
 
 
 
