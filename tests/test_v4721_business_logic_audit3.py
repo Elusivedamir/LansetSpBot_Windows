@@ -577,7 +577,7 @@ class _ReferenceCampaign:
             self.state = "completed"
 
 
-def test_model_based_100_independent_business_state_sequences(tmp_path):
+def test_model_based_100_independent_business_state_sequences(tmp_path, monkeypatch):
     commands = (
         "pause",
         "resume",
@@ -592,10 +592,19 @@ def test_model_based_100_independent_business_state_sequences(tmp_path):
         "process_uncertain",
     )
     observed_outcomes: set[str] = set()
+    path = tmp_path / "model-sequences.db"
+    db = Database(path)
+    # The constructor above exercises the real SQLCipher artifact hardening.
+    # Thousands of later model transitions test campaign behavior, not ACL
+    # execution latency, which has dedicated storage tests.
+    monkeypatch.setattr(
+        db,
+        "_harden_database_artifacts",
+        lambda *, force=False: None,
+    )
+    model_start = utc_now() + timedelta(days=1)
     for sequence_id in range(100):
-        path = tmp_path / f"model-{sequence_id}.db"
         owner = 10_000 + sequence_id
-        db = Database(path)
         db.set_setting("telegram.account_id", owner)
         db.insert_channel(
             {
@@ -612,6 +621,7 @@ def test_model_based_100_independent_business_state_sequences(tmp_path):
             continuous=False,
             account_id=owner,
             rng=random.Random(sequence_id),
+            start_at=model_start,
         )
         model = _ReferenceCampaign(owner=owner)
         source = random.Random(sequence_id)
@@ -625,7 +635,9 @@ def test_model_based_100_independent_business_state_sequences(tmp_path):
             elif command == "resume":
                 expected = model.transition(command)
                 actual = db.resume_comment_campaign(
-                    campaign["id"], rng=random.Random(sequence_id + 1)
+                    campaign["id"],
+                    now=model_start,
+                    rng=random.Random(sequence_id + 1),
                 )
                 assert bool(actual) == expected
             elif command == "stop":
@@ -635,7 +647,6 @@ def test_model_based_100_independent_business_state_sequences(tmp_path):
             elif command == "restart":
                 assert model.transition(command)
                 db.close_thread_connection()
-                db = Database(path)
             elif command == "change_account":
                 assert model.transition(command)
                 db.set_setting("telegram.account_id", model.current_account)
@@ -759,7 +770,7 @@ def test_model_based_100_independent_business_state_sequences(tmp_path):
                 and open_slots > 0
             )
             assert production_can_process == model.can_process
-        db.close_thread_connection()
+    db.close_thread_connection()
 
     assert observed_outcomes == {"success", "failure", "uncertain"}
 

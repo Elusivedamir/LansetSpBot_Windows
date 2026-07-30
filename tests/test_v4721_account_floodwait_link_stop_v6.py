@@ -54,7 +54,13 @@ async def test_floodwait_blocks_every_due_rpc_for_same_account(tmp_path):
     assert calls == []
     stored = database.get_task(sync_id)
     assert stored and stored["status"] == "pending"
-    assert from_db_time(stored["not_before"]) == cooldown_until
+    postponed_until = from_db_time(stored["not_before"])
+    assert postponed_until is not None
+    # The process-local embargo is refreshed after the fallible SQLite write.
+    # On slow Windows disks this can conservatively extend the persisted
+    # wall-clock deadline by the duration of that write.
+    assert postponed_until >= cooldown_until
+    assert postponed_until <= utc_now() + timedelta(seconds=181)
 
 
 def test_only_one_active_link_task_exists_per_account(tmp_path):

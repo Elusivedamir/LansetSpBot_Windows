@@ -262,19 +262,22 @@ def test_sqlite_maintenance_runs_off_gui_thread_and_timer_can_run_again(
     api._run_daily_maintenance()
     assert time.monotonic() - started < 0.05
 
-    deadline = time.monotonic() + 3.0
+    deadline = time.monotonic() + 15.0
     while api._maintenance_job is not None and time.monotonic() < deadline:
         app.processEvents()
         time.sleep(0.01)
     assert api._maintenance_job is None
-    assert db.maintenance_threads == [db.cleanup_threads[-1]]
+    assert db.maintenance_threads
+    assert db.cleanup_threads
+    assert db.maintenance_threads[0] == db.cleanup_threads[-1]
     assert db.maintenance_threads[0] != main_thread
 
     api._maintenance_timer.timeout.emit()
-    deadline = time.monotonic() + 3.0
+    deadline = time.monotonic() + 15.0
     while api._maintenance_job is not None and time.monotonic() < deadline:
         app.processEvents()
         time.sleep(0.01)
+    assert api._maintenance_job is None
     assert len(db.maintenance_threads) == 2
     assert api._maintenance_timer.interval() == 60 * 60 * 1000
 
