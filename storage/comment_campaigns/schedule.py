@@ -402,11 +402,13 @@ class CommentScheduleMixin(_MixinHost):
                 }
             )
             cursor = connection.execute(
-                """INSERT INTO tasks(type, payload, status, progress, max_retries,
-                                      created_at, updated_at)
-                   VALUES('auto_comment_slot', ?, 'pending', 0, 0,
+                """INSERT INTO tasks(
+                       account_id, type, payload, status, progress, max_retries,
+                       created_at, updated_at
+                   )
+                   VALUES(?, 'auto_comment_slot', ?, 'pending', 0, 0,
                           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-                (payload,),
+                (int(row["account_id"]), payload),
             )
             if cursor.lastrowid is None:
                 raise DatabaseError("SQLite did not return a task id")
