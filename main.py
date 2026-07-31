@@ -21,6 +21,17 @@ if _SELF_TEST:
     _SELF_TEST_ROOT = Path(tempfile.mkdtemp(prefix="marlen-self-test-"))
     os.environ["MARLEN_DATA_DIR"] = str(_SELF_TEST_ROOT)
 
+from core.profile_bootstrap import (  # noqa: E402
+    ProfileBootstrapError,
+    prepare_profile_environment,
+)
+
+try:
+    _PROFILE_BOOTSTRAP = prepare_profile_environment()
+except ProfileBootstrapError as exc:
+    print(f"LansetSpBot profile bootstrap failed: {exc}", file=sys.stderr, flush=True)
+    raise SystemExit(2) from exc
+
 from PySide6.QtCore import QCoreApplication  # noqa: E402
 from PySide6.QtGui import QIcon  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
