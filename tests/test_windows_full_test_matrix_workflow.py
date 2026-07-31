@@ -49,7 +49,7 @@ def test_windows_source_runner_executes_all_release_relevant_gates() -> None:
         '"compileall"',
         '"ruff"',
         '"mypy"',
-        '"pytest-core"',
+        '"pytest-core-shard-$ShardNumber"',
         '"pytest-gui"',
         '"coverage-report"',
         '"critical-coverage"',
@@ -63,9 +63,11 @@ def test_windows_source_runner_executes_all_release_relevant_gates() -> None:
 def test_windows_source_runner_preserves_ambiguous_failure_diagnostics() -> None:
     text = RUNNER.read_text(encoding="utf-8-sig")
     assert "--maxfail=1" not in text
-    assert '"--total-timeout-seconds", "3600"' in text
+    assert '"--idle-timeout-seconds", "300"' in text
+    assert '"--total-timeout-seconds", "1500"' in text
     assert '"--total-timeout-seconds", "900"' in text
-    assert '"--junitxml", (Join-Path $EvidenceRoot "pytest-core.xml")' in text
+    assert '"pytest-core-shard-$ShardNumber.xml"' in text
     assert '"--junitxml", (Join-Path $EvidenceRoot "pytest-gui.xml")' in text
+    assert "$CoreShardCount = 4" in text
     assert "checkout-final.json" in text
     assert "summary.json" in text

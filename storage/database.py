@@ -323,7 +323,7 @@ class Database(
                 ):
                     refresh_needed = True
                     break
-                if (int(info.st_mode) & 0o777) != 0o600:
+                if os.name != "nt" and (int(info.st_mode) & 0o777) != 0o600:
                     refresh_needed = True
                     break
             if not refresh_needed:
@@ -360,8 +360,10 @@ class Database(
 
                 identity = self._artifact_security_identity(validated_info)
                 known_identity = identities.get(candidate)
-                mode_is_private = True
-                mode_is_private = (int(validated_info.st_mode) & 0o777) == 0o600
+                mode_is_private = (
+                    os.name == "nt"
+                    or (int(validated_info.st_mode) & 0o777) == 0o600
+                )
                 known_marker = markers.get(candidate)
                 marker_matches = known_marker == b"" or (
                     bool(known_marker)

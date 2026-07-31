@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [switch]$SkipTests,
     [switch]$KeepBuildVenv,
@@ -153,27 +153,64 @@ if (-not $SkipTests) {
     $pytestErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        Write-BuildStage "Running core pytest diagnostics"
-        $env:PYTEST_CURRENT_TEST_FILE = (Join-Path $ProofRoot "pytest-core-current-test.txt")
-        & $BuildPython tools\run_ci_subprocess.py `
-            --label core `
-            --log (Join-Path $ProofRoot "pytest-core.log") `
-            --idle-timeout-seconds 660 `
-            --total-timeout-seconds 3600 `
-            -- `
-            $BuildPython -X faulthandler -m coverage run --parallel-mode -m pytest `
-            -vv --tb=long --showlocals -ra --durations=20 `
-            -p tools.pytest_ci_watchdog `
-            --junitxml (Join-Path $ProofRoot "pytest-core.xml") `
-            --ignore "tests/test_gui_v45.py" tests
-        $coreTestsExit = $LASTEXITCODE
+        Write-BuildStage "Running core pytest diagnostics in four file shards"
+        $CoreTestFiles = @(
+            Get-ChildItem -LiteralPath (Join-Path $ProjectRoot "tests") `
+                -Recurse -File -Filter "test_*.py" |
+                Where-Object { $_.Name -ne "test_gui_v45.py" } |
+                Sort-Object FullName |
+                ForEach-Object {
+                    [System.IO.Path]::GetRelativePath($ProjectRoot, $_.FullName)
+                }
+        )
+        $CoreShardCount = 4
+        $coreTestsExit = 0
+        $coreShardResults = @()
+        for ($ShardIndex = 0; $ShardIndex -lt $CoreShardCount; $ShardIndex++) {
+            $ShardNumber = $ShardIndex + 1
+            $ShardFiles = @()
+            for (
+                $FileIndex = $ShardIndex;
+                $FileIndex -lt $CoreTestFiles.Count;
+                $FileIndex += $CoreShardCount
+            ) {
+                $ShardFiles += $CoreTestFiles[$FileIndex]
+            }
+            if ($ShardFiles.Count -eq 0) {
+                continue
+            }
+            $env:PYTEST_CURRENT_TEST_FILE = Join-Path $ProofRoot (
+                "pytest-core-shard-$ShardNumber-current-test.txt"
+            )
+            $ShardCommand = @(
+                "tools\run_ci_subprocess.py",
+                "--label", "core-shard-$ShardNumber",
+                "--log", (Join-Path $ProofRoot "pytest-core-shard-$ShardNumber.log"),
+                "--idle-timeout-seconds", "300",
+                "--total-timeout-seconds", "1500",
+                "--",
+                $BuildPython,
+                "-X", "faulthandler",
+                "-m", "coverage", "run", "--parallel-mode",
+                "-m", "pytest",
+                "-vv", "--tb=long", "--showlocals", "-ra", "--durations=20",
+                "-p", "tools.pytest_ci_watchdog",
+                "--junitxml", (Join-Path $ProofRoot "pytest-core-shard-$ShardNumber.xml")
+            ) + $ShardFiles
+            & $BuildPython @ShardCommand
+            $ShardExit = $LASTEXITCODE
+            $coreShardResults += "core_shard_$ShardNumber=$ShardExit"
+            if ($ShardExit -ne 0 -and $coreTestsExit -eq 0) {
+                $coreTestsExit = $ShardExit
+            }
+        }
 
         Write-BuildStage "Running GUI pytest diagnostics in isolated process"
         $env:PYTEST_CURRENT_TEST_FILE = (Join-Path $ProofRoot "pytest-gui-current-test.txt")
         & $BuildPython tools\run_ci_subprocess.py `
             --label gui `
             --log (Join-Path $ProofRoot "pytest-gui.log") `
-            --idle-timeout-seconds 240 `
+            --idle-timeout-seconds 300 `
             --total-timeout-seconds 900 `
             -- `
             $BuildPython -X faulthandler -m coverage run --parallel-mode -m pytest `
@@ -206,6 +243,7 @@ if (-not $SkipTests) {
 
     @(
         "core_exit=$coreTestsExit"
+        $coreShardResults
         "gui_exit=$guiTestsExit"
         "coverage_combine_exit=$coverageCombineExit"
         "coverage_json_exit=$coverageJsonExit"

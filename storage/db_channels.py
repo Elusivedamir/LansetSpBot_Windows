@@ -1199,7 +1199,7 @@ class ChannelRepositoryMixin:
                               ))""",
                     (owner_account_id,),
                 ).rowcount
-                direct = conn.execute(
+                conn.execute(
                     """UPDATE channels AS group_target
                        SET comment_mode='pending',
                            linked_chat_id=group_target.channel_id,

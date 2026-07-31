@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-ARCHITECTURE_STATUS = "experimental"
 
 
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Final, Iterable
+
+ARCHITECTURE_STATUS = "experimental"
 
 
 class CampaignKind(StrEnum):

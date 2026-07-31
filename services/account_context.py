@@ -4,7 +4,7 @@ from pathlib import Path
 
 from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from core.config import TelegramSettings
 from storage.account_database_view import AccountDatabaseView
@@ -41,12 +41,14 @@ class AccountSecretStoreView:
         self.base.set(account_secret_key(self.account_id, key), value)
 
     def get(self, key: str, default: str = "") -> str:
-        return self.base.get(account_secret_key(self.account_id, key), default)
+        value = self.base.get(account_secret_key(self.account_id, key), default)
+        return default if value is None else cast(str, value)
 
     def get_strict_optional(self, key: str) -> str | None:
-        return self.base.get_strict_optional(
+        value = self.base.get_strict_optional(
             account_secret_key(self.account_id, key)
         )
+        return cast(str | None, value)
 
     def delete(self, key: str) -> None:
         self.base.delete(account_secret_key(self.account_id, key))
@@ -93,10 +95,13 @@ class AccountQueueWorkerView:
     ) -> bool:
         if self._base.is_scope_cancelled("account", self.account_id):
             return True
-        return self._base.is_scope_cancelled(
-            scope_type,
-            scope_id,
-            self.account_id if scope_type == "channel" else account_id,
+        return cast(
+            bool,
+            self._base.is_scope_cancelled(
+                scope_type,
+                scope_id,
+                self.account_id if scope_type == "channel" else account_id,
+            ),
         )
 
     async def safe_sleep(self, seconds, step=0.5, *, cancel_scope=None):

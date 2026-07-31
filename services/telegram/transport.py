@@ -645,7 +645,10 @@ class TelegramTransportMixin(_MixinHost):
             retry_network=retry_network,
             request_dispatched=request_dispatched,
         )
-        details = {"rpc_error": rpc_name, "rpc_message": rpc_message}
+        details: dict[str, object] = {
+            "rpc_error": rpc_name,
+            "rpc_message": rpc_message,
+        }
         if action is RpcFailureAction.USER_RESTRICTED:
             raise NonRetryableTelegramError(
                 "Telegram restricted this user account",

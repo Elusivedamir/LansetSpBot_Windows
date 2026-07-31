@@ -9,25 +9,28 @@ WATCHDOG = ROOT / "tools" / "pytest_ci_watchdog.py"
 def test_windows_pytest_diagnostics_are_split_and_fail_fast() -> None:
     text = BUILD.read_text(encoding="utf-8-sig")
 
-    assert 'Write-BuildStage "Running core pytest diagnostics"' in text
-    assert '--ignore "tests/test_gui_v45.py" tests' in text
+    assert 'Write-BuildStage "Running core pytest diagnostics in four file shards"' in text
+    assert '$CoreShardCount = 4' in text
+    assert 'Where-Object { $_.Name -ne "test_gui_v45.py" }' in text
     assert 'Write-BuildStage "Running GUI pytest diagnostics in isolated process"' in text
     assert '"tests/test_gui_v45.py"' in text
     assert text.count("tools\\run_ci_subprocess.py") == 2
     assert text.count("--tb=long") == 2
-    assert text.count("-p tools.pytest_ci_watchdog") == 2
+    assert text.count("tools.pytest_ci_watchdog") == 2
     assert "--maxfail=1" not in text
-    assert "--total-timeout-seconds 3600" in text
+    assert '"--total-timeout-seconds", "1500"' in text
     assert "--total-timeout-seconds 900" in text
+    assert '"--idle-timeout-seconds", "300"' in text
 
 
 def test_split_pytest_diagnostics_keep_independent_evidence() -> None:
     text = BUILD.read_text(encoding="utf-8-sig")
 
-    assert '--log (Join-Path $ProofRoot "pytest-core.log")' in text
+    assert '"pytest-core-shard-$ShardNumber.log"' in text
     assert '--log (Join-Path $ProofRoot "pytest-gui.log")' in text
-    assert '--junitxml (Join-Path $ProofRoot "pytest-core.xml")' in text
+    assert '"pytest-core-shard-$ShardNumber.xml"' in text
     assert '--junitxml (Join-Path $ProofRoot "pytest-gui.xml")' in text
+    assert '$coreShardResults += "core_shard_$ShardNumber=$ShardExit"' in text
     assert "pytest-diagnostics-summary.txt" in text
     assert "core_exit=$coreTestsExit" in text
     assert "gui_exit=$guiTestsExit" in text

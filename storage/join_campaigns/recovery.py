@@ -232,7 +232,7 @@ class JoinRecoveryMixin(_MixinHost):
                        LEFT JOIN tasks t ON t.id=s.task_id
                        WHERE s.status IN ('queued','running')
                          AND (s.task_id IS NULL OR t.id IS NULL)"""
-                orphan_params = ()
+                orphan_params: tuple[object, ...] = ()
                 if owner_account_id > 0:
                     orphan_query += " AND c.account_id=?"
                     orphan_params = (owner_account_id,)
@@ -267,7 +267,7 @@ class JoinRecoveryMixin(_MixinHost):
                        JOIN tasks t ON t.id=s.task_id
                        WHERE s.status IN ('queued','running')
                          AND t.status IN ('failed','cancelled','completed')"""
-                completed_params = ()
+                completed_params: tuple[object, ...] = ()
                 if owner_account_id > 0:
                     completed_query += " AND c.account_id=?"
                     completed_params = (owner_account_id,)

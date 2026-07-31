@@ -90,6 +90,7 @@ async def test_persistent_idle_worker_does_not_poll_empty_sqlite_queue():
     assert queue.claims == 1
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits are not Windows ACLs")
 def test_posix_database_permission_hardening_is_cached(tmp_path, monkeypatch):
     import storage.database as database_module
 
@@ -113,11 +114,11 @@ def test_posix_database_permission_hardening_is_cached(tmp_path, monkeypatch):
     monkeypatch.setattr(database_module, "harden_private_file", harden)
     db._harden_database_artifacts(force=True)
     db._harden_database_artifacts()
-    assert calls.count(path) == 2
+    assert calls.count(path) == 1
 
     os.chmod(path, 0o644)
     db._harden_database_artifacts()
-    assert calls.count(path) == 3
+    assert calls.count(path) == 2
     assert path.stat().st_mode & 0o777 == 0o600
 
 

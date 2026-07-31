@@ -248,9 +248,9 @@ class OSBoundMasterKeyProvider:
         class DataBlob(ctypes.Structure):
             _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_ubyte))]
 
-        # ctypes.WinDLL and the Win32 error helpers exist only on Windows,
-        # which is the only platform that reaches this branch.
-        windll_loader = ctypes.WinDLL  # type: ignore[attr-defined]
+        # These names are exposed by ctypes only on Windows. Resolve them
+        # dynamically so static analysis also succeeds on non-Windows hosts.
+        windll_loader = getattr(ctypes, "WinDLL")
         crypt32 = windll_loader("crypt32", use_last_error=True)
         kernel32 = windll_loader("kernel32", use_last_error=True)
         crypt32.CryptProtectData.argtypes = [
@@ -311,8 +311,8 @@ class OSBoundMasterKeyProvider:
                 ctypes.byref(output_blob),
             )
         if not ok:
-            win_error = ctypes.WinError  # type: ignore[attr-defined]
-            last_error = ctypes.get_last_error  # type: ignore[attr-defined]
+            win_error = getattr(ctypes, "WinError")
+            last_error = getattr(ctypes, "get_last_error")
             raise VaultUnavailableError(
                 f"Windows DPAPI operation failed: {win_error(last_error())}"
             )
@@ -323,6 +323,7 @@ class OSBoundMasterKeyProvider:
                 kernel32.LocalFree(output_blob.pbData)
             if description:
                 kernel32.LocalFree(description)
+
 
 class EncryptedBlobCodec:
     """Versioned AES-GCM codec with independent keys for each data purpose."""

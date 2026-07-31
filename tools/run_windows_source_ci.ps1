@@ -147,15 +147,41 @@ $PreviousCurrentTestFile = [Environment]::GetEnvironmentVariable(
     "Process"
 )
 try {
-    $env:PYTEST_CURRENT_TEST_FILE = Join-Path $EvidenceRoot "pytest-core-current-test.txt"
-    Invoke-PythonGate `
-        -Name "pytest-core" `
-        -Arguments @(
+    # Four deterministic file shards keep one slow/native-deadlocked test from
+    # monopolising the complete Windows suite. Coverage still combines the
+    # parallel data files after every shard has produced independent evidence.
+    $CoreTestFiles = @(
+        Get-ChildItem -LiteralPath (Join-Path $ProjectRoot "tests") `
+            -Recurse -File -Filter "test_*.py" |
+            Where-Object { $_.Name -ne "test_gui_v45.py" } |
+            Sort-Object FullName |
+            ForEach-Object {
+                [System.IO.Path]::GetRelativePath($ProjectRoot, $_.FullName)
+            }
+    )
+    $CoreShardCount = 4
+    for ($ShardIndex = 0; $ShardIndex -lt $CoreShardCount; $ShardIndex++) {
+        $ShardNumber = $ShardIndex + 1
+        $ShardFiles = @()
+        for (
+            $FileIndex = $ShardIndex;
+            $FileIndex -lt $CoreTestFiles.Count;
+            $FileIndex += $CoreShardCount
+        ) {
+            $ShardFiles += $CoreTestFiles[$FileIndex]
+        }
+        if ($ShardFiles.Count -eq 0) {
+            continue
+        }
+        $env:PYTEST_CURRENT_TEST_FILE = Join-Path $EvidenceRoot (
+            "pytest-core-shard-$ShardNumber-current-test.txt"
+        )
+        $ShardArguments = @(
             "tools\run_ci_subprocess.py",
-            "--label", "core-$VersionToken",
-            "--log", (Join-Path $EvidenceRoot "pytest-core.log"),
-            "--idle-timeout-seconds", "660",
-            "--total-timeout-seconds", "3600",
+            "--label", "core-$VersionToken-shard-$ShardNumber",
+            "--log", (Join-Path $EvidenceRoot "pytest-core-shard-$ShardNumber.log"),
+            "--idle-timeout-seconds", "300",
+            "--total-timeout-seconds", "1500",
             "--",
             $Python,
             "-X", "faulthandler",
@@ -163,11 +189,13 @@ try {
             "-m", "pytest",
             "-vv", "--tb=long", "--showlocals", "-ra", "--durations=30",
             "-p", "tools.pytest_ci_watchdog",
-            "--junitxml", (Join-Path $EvidenceRoot "pytest-core.xml"),
-            "--ignore", "tests/test_gui_v45.py",
-            "tests"
-        ) `
-        -LogName "pytest-core-parent.txt" | Out-Null
+            "--junitxml", (Join-Path $EvidenceRoot "pytest-core-shard-$ShardNumber.xml")
+        ) + $ShardFiles
+        Invoke-PythonGate `
+            -Name "pytest-core-shard-$ShardNumber" `
+            -Arguments $ShardArguments `
+            -LogName "pytest-core-shard-$ShardNumber-parent.txt" | Out-Null
+    }
 
     $env:PYTEST_CURRENT_TEST_FILE = Join-Path $EvidenceRoot "pytest-gui-current-test.txt"
     Invoke-PythonGate `
@@ -176,7 +204,7 @@ try {
             "tools\run_ci_subprocess.py",
             "--label", "gui-$VersionToken",
             "--log", (Join-Path $EvidenceRoot "pytest-gui.log"),
-            "--idle-timeout-seconds", "240",
+            "--idle-timeout-seconds", "300",
             "--total-timeout-seconds", "900",
             "--",
             $Python,

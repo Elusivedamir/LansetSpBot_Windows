@@ -544,7 +544,7 @@ class CommentSlotRunner:
                 state.channel_id
                 if state.comment_mode == "direct_group"
                 and raw_linked_chat_id is None
-                else int(raw_linked_chat_id)
+                else int(cast(Any, raw_linked_chat_id))
             )
         except (KeyError, TypeError, ValueError, OverflowError) as exc:
             raise NonRetryableTelegramError(
@@ -698,8 +698,9 @@ class CommentSlotRunner:
             self._record_negative_route_result(result.status)
             return False
         self._validate_resolved_route()
-        if state.discussion_chat_id != state.linked_chat_id:
-            state.linked_chat_id = int(state.discussion_chat_id)
+        resolved_discussion_chat_id = cast(int, state.discussion_chat_id)
+        if resolved_discussion_chat_id != state.linked_chat_id:
+            state.linked_chat_id = resolved_discussion_chat_id
         if not self.target_allows_rpc(state.channel_id, state.linked_chat_id):
             state.final_status = "skipped"
             state.final_message = (
@@ -855,6 +856,11 @@ class CommentSlotRunner:
     async def _prepare_openai_text(self, schedule_guard: Any | None) -> bool:
         state = self.s
         result = state.resolved_result
+        if result is None or result.message is None:
+            raise NonRetryableTelegramError(
+                "Resolved Telegram post is missing before OpenAI generation",
+                code="invalid_comment_target",
+            )
         state.generated_post_text = extract_post_text(result.message)
         existing_draft = self._read_existing_generated_draft()
         existing_status = str((existing_draft or {}).get("status") or "")
@@ -929,11 +935,12 @@ class CommentSlotRunner:
         )
         if not callable(reader):
             return None
-        return reader(
+        value = reader(
             account_id=state.campaign_account_id,
             source_channel_id=state.channel_id,
             source_post_id=state.post_id,
         )
+        return dict(value) if isinstance(value, dict) else None
 
     def _save_generated_draft(
         self,

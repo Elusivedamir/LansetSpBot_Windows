@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import random
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -16,6 +17,7 @@ from storage.database import Database, DatabaseError
 from workers.queue_worker import QueueWorker
 from tests.conftest import open_project_database
 
+ROOT = Path(__file__).resolve().parents[1]
 UTC = timezone.utc
 
 

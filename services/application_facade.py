@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-ARCHITECTURE_STATUS = "experimental"
 
 
 
@@ -8,6 +7,8 @@ ARCHITECTURE_STATUS = "experimental"
 from dataclasses import dataclass
 
 from typing import Any, Protocol
+
+ARCHITECTURE_STATUS = "experimental"
 
 
 

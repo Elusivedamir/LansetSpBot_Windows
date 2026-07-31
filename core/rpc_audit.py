@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-ARCHITECTURE_STATUS = "experimental"
 
 
 
@@ -14,6 +13,8 @@ from collections import Counter
 from dataclasses import dataclass
 
 from typing import Mapping
+
+ARCHITECTURE_STATUS = "experimental"
 
 
 

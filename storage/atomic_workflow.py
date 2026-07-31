@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-ARCHITECTURE_STATUS = "experimental"
 
 
 
@@ -20,6 +19,8 @@ from core.campaign_state import (
     require_campaign_transition,
 
 )
+
+ARCHITECTURE_STATUS = "experimental"
 
 
 

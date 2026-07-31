@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import AbstractContextManager
+from contextlib import contextmanager
 from typing import Any
 
 from storage.database import Database
@@ -36,8 +36,10 @@ class AccountDatabaseView(Database):
         self.sqlite_timeout_seconds = base.sqlite_timeout_seconds
         self._database_key = base._database_key
 
-    def get_connection(self) -> AbstractContextManager:
-        return self._base.get_connection()
+    @contextmanager
+    def get_connection(self):
+        with self._base.get_connection() as connection:
+            yield connection
 
     def close_thread_connection(self) -> None:
         # The parent QueueWorker owns the shared thread-local connection.

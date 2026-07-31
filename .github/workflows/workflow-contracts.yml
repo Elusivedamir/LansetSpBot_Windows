@@ -1,0 +1,49 @@
+name: Workflow Contract Check
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/**"
+      - ".github/dependabot.yml"
+      - "tests/test_*workflow*.py"
+      - "tests/test_release_pipeline_contracts.py"
+      - "tests/test_v511_windows_pytest_diagnostics.py"
+      - "tools/check_workflow_contracts.py"
+      - "SHA256SUMS.txt"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/**"
+      - ".github/dependabot.yml"
+      - "tests/test_*workflow*.py"
+      - "tests/test_release_pipeline_contracts.py"
+      - "tests/test_v511_windows_pytest_diagnostics.py"
+      - "tools/check_workflow_contracts.py"
+      - "SHA256SUMS.txt"
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Validate workflow syntax, full-SHA pins and source manifest
+        run: |
+          python tools/check_workflow_contracts.py
+          python tools/generate_manifest.py --check

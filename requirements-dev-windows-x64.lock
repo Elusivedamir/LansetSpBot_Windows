@@ -1,14 +1,17 @@
-# Fully hash-pinned test/static-analysis environment for CPython 3.13 x64 on Windows.
+# Fully hash-pinned test/static-analysis environment for CPython 3.13/3.14 x64 on Windows.
 ast-serialize==0.6.0 \
     --hash=sha256:113b58346f9ceb664352032770caca817d4a3c86f611c6088e6ef65ddaa70f0e
 coverage==7.15.0 \
-    --hash=sha256:2c57a275078ee3fa185f83e400f765bc764a549de66d99b47881645cbd4ea629
+    --hash=sha256:2c57a275078ee3fa185f83e400f765bc764a549de66d99b47881645cbd4ea629 \
+    --hash=sha256:3bb3040e9f4bbe26fcb0cd7cc85ac63e630d3f3a9c74f027abf4caa27e706663
 iniconfig==2.3.0 \
     --hash=sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12
 librt==0.13.0 \
-    --hash=sha256:54dab44a847d5ad1acd05c8a83fe518ae685516ecf4d3f7cc6e3df2a66767650
+    --hash=sha256:54dab44a847d5ad1acd05c8a83fe518ae685516ecf4d3f7cc6e3df2a66767650 \
+    --hash=sha256:a3dfe4edf10e8ed7e55b026a8bfc2c2a8704218b659cd4bffdf604fab966dc39
 mypy==2.2.0 \
-    --hash=sha256:c2c967a7685fa93fcf1a778b3ebe76e756b28ba14655f539d7b61ff3da69352a
+    --hash=sha256:c2c967a7685fa93fcf1a778b3ebe76e756b28ba14655f539d7b61ff3da69352a \
+    --hash=sha256:6fc0e98b95e31755ca06d89f75fafa7820fbb3ea2caace6d83cba17625cd0acb
 mypy-extensions==1.1.0 \
     --hash=sha256:1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505
 packaging==26.2 \

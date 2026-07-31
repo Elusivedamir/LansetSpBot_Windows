@@ -3,10 +3,8 @@ from __future__ import annotations
 import re
 import secrets
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-from core.config import MAX_COMMENT_VARIANTS
 from services.account_context import (
     SECRET_SETTING_KEYS,
     account_secret_key,
@@ -22,7 +20,6 @@ from services.account_sessions import (
     validate_session_name,
     write_account_lifecycle_journal,
 )
-from storage.db_common import DatabaseError
 
 if TYPE_CHECKING:  # pragma: no cover
     from core.mixin_host import MixinHost as _MixinHost
@@ -38,7 +35,7 @@ class AccountsAPIMixin(_MixinHost):
     MAX_TELEGRAM_ACCOUNTS = 5
 
     def list_telegram_accounts(self) -> list[dict[str, Any]]:
-        return self.database.list_telegram_accounts()
+        return cast(list[dict[str, Any]], self.database.list_telegram_accounts())
 
     def get_selected_account_id(self) -> int:
         return int(self.database.get_selected_account_id() or 0)
@@ -60,7 +57,9 @@ class AccountsAPIMixin(_MixinHost):
         }
 
     def select_telegram_account(self, account_id: int) -> dict[str, Any]:
-        result = self.database.select_telegram_account(account_id)
+        result = cast(
+            dict[str, Any], self.database.select_telegram_account(account_id)
+        )
         # TelegramAccountRuntimeManager owns one isolated Telethon runtime per
         # task account. Changing the GUI-selected account only changes the
         # compatibility/default context; it must not stop unrelated runtimes.
@@ -94,7 +93,9 @@ class AccountsAPIMixin(_MixinHost):
         account = self.database.get_telegram_account(owner)
         if not account:
             return {}
-        values = self.database.get_account_settings(owner)
+        values = cast(
+            dict[str, Any], self.database.get_account_settings(owner)
+        )
         for key in SECRET_SETTING_KEYS:
             values.pop(key, None)
         values.update(
@@ -266,7 +267,10 @@ class AccountsAPIMixin(_MixinHost):
                             for key, value in secret_updates.items():
                                 self._set_account_secret(telegram_id, key, value)
                         self.database.resume_account_work(telegram_id)
-                        selected = self.database.select_telegram_account(telegram_id)
+                        selected = cast(
+                            dict[str, Any],
+                            self.database.select_telegram_account(telegram_id),
+                        )
                     journal = update_account_lifecycle_journal(
                         self.secret_store, journal, phase="committed"
                     )
@@ -347,7 +351,10 @@ class AccountsAPIMixin(_MixinHost):
                 with self._secret_lock:
                     for key, value in secret_updates.items():
                         self._set_account_secret(telegram_id, key, value)
-                selected = self.database.select_telegram_account(telegram_id)
+                selected = cast(
+                    dict[str, Any],
+                    self.database.select_telegram_account(telegram_id),
+                )
             journal = update_account_lifecycle_journal(
                 self.secret_store, journal, phase="committed"
             )
@@ -381,7 +388,7 @@ class AccountsAPIMixin(_MixinHost):
         existing = self.database.get_telegram_account(telegram_id)
         if not existing:
             raise ValueError("Telegram-аккаунт не зарегистрирован")
-        row, _created = self.database.register_telegram_account(
+        raw_row, _created = self.database.register_telegram_account(
             telegram_account_id=telegram_id,
             session_name=str(existing["session_name"]),
             display_name=str(account.get("name") or existing["display_name"]),
@@ -389,7 +396,7 @@ class AccountsAPIMixin(_MixinHost):
             phone=str(account.get("phone") or ""),
             authorized=True,
         )
-        return row
+        return cast(dict[str, Any], raw_row)
 
     def stop_telegram_account(
         self, account_id: int, *, timeout_seconds: float = 20.0
@@ -503,7 +510,10 @@ class AccountsAPIMixin(_MixinHost):
                 with self._secret_lock:
                     for key in SECRET_SETTING_KEYS:
                         self._set_account_secret(owner, key, None)
-                result = self.database.delete_telegram_account_data(owner)
+                result = cast(
+                    dict[str, Any],
+                    self.database.delete_telegram_account_data(owner),
+                )
                 journal = update_account_lifecycle_journal(
                     self.secret_store, journal, phase="committed"
                 )
@@ -558,10 +568,13 @@ class AccountsAPIMixin(_MixinHost):
             raise ValueError(
                 "Сначала переключитесь с другого подключённого аккаунта."
             )
-        return self.database.import_comment_profile_between_accounts(
-            source_account_id=source,
-            target_account_id=target,
-            mode=mode,
+        return cast(
+            dict[str, Any],
+            self.database.import_comment_profile_between_accounts(
+                source_account_id=source,
+                target_account_id=target,
+                mode=mode,
+            ),
         )
 
     def import_channels_from_previous_account(self) -> dict[str, int]:
@@ -571,7 +584,10 @@ class AccountsAPIMixin(_MixinHost):
             raise ValueError(
                 "Сначала переключитесь с другого подключённого аккаунта."
             )
-        return self.database.import_channels_between_accounts(
-            source_account_id=source,
-            target_account_id=target,
+        return cast(
+            dict[str, int],
+            self.database.import_channels_between_accounts(
+                source_account_id=source,
+                target_account_id=target,
+            ),
         )
