@@ -295,6 +295,33 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     assert worker.lifecycle_state == worker.STATE_DRAINING
 
 
+def test_startup_reconciles_comment_slots_after_task_recovery() -> None:
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+
+    occurrences = source.count(
+        "container.database.reset_running_tasks()\n"
+        "        container.database.reconcile_comment_schedule()"
+    )
+
+    assert occurrences == 2
+
+
+def test_mutating_rpc_500_is_not_automatically_retried() -> None:
+    source = (
+        ROOT / "services/telegram/transport.py"
+    ).read_text(encoding="utf-8")
+
+    start = source.index("except RPCError as exc:")
+    block = source[start:]
+
+    guard = block.index("if rpc_code >= 500 or rpc_name in transient_names:")
+    unknown = block.index("if not retry_network and request_started:", guard)
+    deferred = block.index("raise DeferredTelegramError(", unknown)
+
+    assert unknown < deferred
+    assert "code=unknown_result_code" in block[unknown:deferred]
+
+
 def test_comment_slot_queue_blocks_only_same_account() -> None:
     source = (
         ROOT / "storage/comment_campaigns/schedule.py"

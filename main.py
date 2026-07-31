@@ -158,6 +158,7 @@ def _run_self_test(app: QApplication) -> int:
         config = Config()
         container = ApplicationContainer(config)
         container.database.reset_running_tasks()
+        container.database.reconcile_comment_schedule()
         window = LansetSpBotApp(container.adapter, container.queue_worker, config)
 
         if window.stack.count() != 5:
@@ -385,6 +386,7 @@ def main() -> int:
 
         container = ApplicationContainer(config)
         container.database.reset_running_tasks()
+        container.database.reconcile_comment_schedule()
         window = LansetSpBotApp(
             container.adapter,
             container.queue_worker,
