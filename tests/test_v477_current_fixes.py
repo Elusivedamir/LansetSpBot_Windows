@@ -295,6 +295,20 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     assert worker.lifecycle_state == worker.STATE_DRAINING
 
 
+def test_multiaccount_scheduler_skips_restricted_accounts() -> None:
+    source = (ROOT / "services/multiaccount_scheduler.py").read_text(
+        encoding="utf-8"
+    )
+    state_start = source.index(
+        'if bool(account.get("stopped")) or state in {'
+    )
+    state_end = source.index(
+        'outcomes[account_id] = "skipped"',
+        state_start,
+    )
+    assert '"restricted",' in source[state_start:state_end]
+
+
 def test_claim_normalizes_legacy_account_before_active_account_exclusion() -> None:
     source = (ROOT / "storage" / "db_tasks.py").read_text(encoding="utf-8")
     start = source.index("    def claim_next_pending_task(")

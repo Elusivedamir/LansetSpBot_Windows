@@ -366,6 +366,7 @@ def run_multiaccount_campaign_tick(root) -> dict[int, str]:
             "stopping",
             "stopped",
             "authorization_required",
+            "restricted",
             "error",
         }:
             outcomes[account_id] = "skipped"
