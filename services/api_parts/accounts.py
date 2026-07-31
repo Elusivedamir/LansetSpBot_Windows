@@ -3,10 +3,8 @@ from __future__ import annotations
 import re
 import secrets
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from core.config import MAX_COMMENT_VARIANTS
 from services.account_context import (
     SECRET_SETTING_KEYS,
     account_secret_key,
@@ -22,7 +20,6 @@ from services.account_sessions import (
     validate_session_name,
     write_account_lifecycle_journal,
 )
-from storage.db_common import DatabaseError
 
 if TYPE_CHECKING:  # pragma: no cover
     from core.mixin_host import MixinHost as _MixinHost

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from core.campaign_schedule import to_db_time, utc_now
 from services.api_parts.comments import CommentCampaignAPIMixin
