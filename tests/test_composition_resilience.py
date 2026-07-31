@@ -128,10 +128,12 @@ class _Comments:
             raise self.error
         self.sent.append(kwargs)
 
-    async def send_direct_message(self, chat_id, text, *, task_id=None) -> None:
+    async def send_direct_message(self, chat_id, text, *, task_id=None, **kwargs) -> None:
         if self.error:
             raise self.error
-        self.sent.append({"chat_id": chat_id, "text": text, "task_id": task_id})
+        self.sent.append(
+            {"chat_id": chat_id, "text": text, "task_id": task_id, **kwargs}
+        )
 
 
 class _Linked:

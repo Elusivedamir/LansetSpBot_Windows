@@ -392,7 +392,7 @@ def test_mtproxy_secret_is_saved_outside_sqlite_and_loaded_back(tmp_path):
     assert api.get_settings("telegram.")["telegram.proxy_secret"] == EE_HEX_SECRET
 
 
-def test_account_view_switches_to_mtproxy_secret_field_and_serializes_it(monkeypatch):
+def test_account_view_excludes_mtproxy_and_disables_legacy_setting(monkeypatch):
     from PySide6.QtWidgets import QApplication
 
     from gui.views.account_view import AccountView
@@ -400,24 +400,24 @@ def test_account_view_switches_to_mtproxy_secret_field_and_serializes_it(monkeyp
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(AccountView, "load_settings", lambda self: None)
     view = AccountView(SimpleNamespace(), SimpleNamespace())
-    view.proxy_enabled.setChecked(True)
-    view.proxy_type.setCurrentText("MTPROXY")
-    view.api_id.setText("123")
-    view.api_hash.setText("hash")
-    view.phone.setText("+10000000000")
-    view.proxy_host.setText("173.209.232.237")
-    view.proxy_port.setText("443")
-    view.proxy_secret.setText(EE_BASE64_SECRET)
 
-    assert not view.proxy_secret.isHidden()
-    assert view.proxy_login.isHidden()
-    assert view.proxy_password.isHidden()
+    options = [view.proxy_type.itemText(index) for index in range(view.proxy_type.count())]
+    assert options == ["SOCKS5", "SOCKS4", "HTTP"]
+    assert view.proxy_secret.isHidden()
 
-    values = view._settings()
-    assert values["telegram.proxy_type"] == "MTPROXY"
-    assert values["telegram.proxy_secret"] == EE_HEX_SECRET
-    assert values["telegram.proxy_username"] == ""
-    assert values["telegram.proxy_password"] == ""
+    view._apply_settings(
+        {
+            "telegram.proxy_enabled": "1",
+            "telegram.proxy_type": "MTPROXY",
+            "telegram.proxy_host": "173.209.232.237",
+            "telegram.proxy_port": "443",
+            "telegram.proxy_secret": EE_HEX_SECRET,
+        }
+    )
+
+    assert not view.proxy_enabled.isChecked()
+    assert view.proxy_type.currentText() == "SOCKS5"
+    assert view.proxy_secret.isHidden()
 
     view.deleteLater()
     app.processEvents()

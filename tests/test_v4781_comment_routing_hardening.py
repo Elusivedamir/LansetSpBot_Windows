@@ -331,7 +331,7 @@ def test_unverified_group_stays_pending_and_is_not_a_direct_target(tmp_path):
     assert db.get_channels_for_commenting(10) == []
 
 
-def test_explicit_no_link_keeps_ordinary_group_out_of_comment_targets(tmp_path):
+def test_explicit_no_link_promotes_ordinary_group_to_direct_target(tmp_path):
     db = Database(tmp_path / "direct-confirmed.db")
     group_id = -1000000000666
     db.upsert_channels_batch(
@@ -351,9 +351,11 @@ def test_explicit_no_link_keeps_ordinary_group_out_of_comment_targets(tmp_path):
 
     result = db.refresh_group_comment_modes()
 
-    assert result == {"linked_discussion": 0, "direct_group": 0}
-    assert db.get_channel_by_id(group_id)["comment_mode"] == "pending"
-    assert db.get_channels_for_commenting(10) == []
+    assert result == {"linked_discussion": 0, "direct_group": 1}
+    assert db.get_channel_by_id(group_id)["comment_mode"] == "direct_group"
+    assert {row["channel_id"] for row in db.get_channels_for_commenting(10)} == {
+        group_id
+    }
 
 
 @pytest.mark.asyncio

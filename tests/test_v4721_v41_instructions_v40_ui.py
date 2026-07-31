@@ -10,5 +10,6 @@ def test_v41_guide_describes_v40_runtime_behaviour() -> None:
     assert "не создаёт вторую кампанию" in joined
     assert "личные переписки" in joined
     assert "Выполнено" in joined and "Отправлено" in joined
-    assert "Fake TLS EE" in joined
+    assert "SOCKS5, SOCKS4 и HTTP" in joined
+    assert "MTProxy" not in joined
     assert "LansetSpBot.exe" in joined

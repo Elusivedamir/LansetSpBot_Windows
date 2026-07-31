@@ -638,11 +638,7 @@ class CommentSlotRunner:
         if schedule_guard is not None:
             schedule_guard.require_active()
         if state.comment_mode == "direct_group":
-            state.final_status = "skipped"
-            state.final_message = (
-                "Пропущено: прямая отправка в обычные группы отключена"
-            )
-            state.consume_channel = False
+            await self._send_direct_group_message()
             return
         if not self.target_allows_rpc(state.channel_id, state.linked_chat_id):
             state.final_status = "skipped"
@@ -665,6 +661,66 @@ class CommentSlotRunner:
         if not await self._prepare_selected_text(schedule_guard):
             return
         await self._send_selected_comment()
+
+    async def _send_direct_group_message(self) -> None:
+        state = self.s
+        if not self.target_allows_rpc(state.channel_id):
+            state.final_status = "skipped"
+            state.final_message = "Пропущено: обычный чат локально заблокирован"
+            state.consume_channel = False
+            return
+
+        binder = getattr(self.worker_db, "bind_comment_slot_target", None)
+        if callable(binder) and not binder(
+            state.slot_id,
+            state.task_id,
+            channel_id=state.channel_id,
+            post_id=None,
+            linked_chat_id=state.channel_id,
+            discussion_message_id=None,
+        ):
+            raise NonRetryableTelegramError(
+                "Direct-group campaign route could not be persisted",
+                code="campaign_slot_unavailable",
+            )
+
+        state.selected = self.reserve_variant()
+        if not self._validate_selected_text():
+            return
+        self.set_runtime(
+            state.task_id,
+            f"Отправка сообщения в обычный чат: {state.channel_title}",
+            account_id=state.campaign_account_id,
+        )
+        if self.scope_is_cancelled(state.channel_id):
+            state.final_message = "Кампания приостановлена перед отправкой в чат"
+            state.consume_channel = False
+            self.suspend_cancelled_slot(state.final_message)
+            state.slot_deferred = True
+            return
+
+        barrier = self.create_dispatch_barrier(
+            state.channel_id, state.channel_id
+        )
+        state.phase = CommentSlotPhase.READY_TO_SEND
+        state.phase = CommentSlotPhase.SEND_STARTED
+        await self.comments.send_direct_message(
+            state.channel_id,
+            state.selected,
+            task_id=state.task_id,
+            account_id=state.campaign_account_id,
+            campaign_id=state.campaign_id,
+            dispatch_barrier=barrier,
+        )
+        state.sent = True
+        state.phase = CommentSlotPhase.SEND_CONFIRMED
+        state.final_status = "sent"
+        state.final_message = "Сообщение отправлено в обычный чат"
+        self._safe_log(
+            "INFO",
+            f"Сообщение отправлено в обычный чат: chat_id={state.channel_id}",
+            "successful direct-group message",
+        )
 
     def _cached_delivery_exists(self) -> bool:
         state = self.s

@@ -318,16 +318,17 @@ async def test_comment_without_confirmed_telegram_message_id_is_uncertain(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_direct_message_service_is_fail_closed_without_telegram_call(tmp_path):
-    db = Database(tmp_path / "direct-disabled.db")
+async def test_direct_message_service_is_fail_closed_without_confirmed_message_id(tmp_path):
+    db = Database(tmp_path / "direct-no-id.db")
     task_id = db.insert_task("direct_message", {"chat_id": 10, "text": "x"})
     telegram = _NoIdTelegram()
     service = CommentService(telegram, db=db)
 
     with pytest.raises(NonRetryableTelegramError) as caught:
         await service.send_direct_message(10, "x", task_id=task_id)
-    assert caught.value.code == "direct_group_disabled"
-    assert db.get_direct_message_delivery(task_id) is None
+    assert caught.value.code == "direct_message_result_unknown"
+    delivery = db.get_direct_message_delivery(task_id)
+    assert delivery["status"] == "uncertain"
 
 
 class _JoinRequestedTelegram:

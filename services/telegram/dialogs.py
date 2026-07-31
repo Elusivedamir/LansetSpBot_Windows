@@ -100,7 +100,7 @@ class TelegramDialogsMixin(_MixinHost):
             "link_status": (
                 "Связанное обсуждение · только комментарии к постам"
                 if is_linked_discussion
-                else "Обычная группа · прямая отправка отключена"
+                else "Обычная группа · сообщение без привязки к посту"
             ),
             "access_hash": int(access_hash) if access_hash is not None else None,
             "peer_type": peer_type,

@@ -455,10 +455,11 @@ def create_worker_handlers(
     )
 
     async def direct_message(_task: dict[str, Any]) -> None:
-        # Compatibility handler for old databases only. Marlen comments below
-        # channel posts and never sends unrelated plain messages to groups/users.
+        # Compatibility handler for old arbitrary queue tasks only. Ordinary-group
+        # delivery is allowed exclusively through an account-owned campaign slot,
+        # where the durable receipt ledger blocks duplicate replay.
         raise NonRetryableTelegramError(
-            "Прямая отправка сообщений в обычные группы отключена",
+            "Произвольная отправка в обычные группы вне кампании отключена",
             code="direct_group_disabled",
         )
 

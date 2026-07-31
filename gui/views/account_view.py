@@ -130,7 +130,7 @@ class AccountView(QWidget):
         self.proxy_grid = proxy_grid
         proxy_grid.setContentsMargins(0, 0, 0, 0)
         self.proxy_type = QComboBox()
-        self.proxy_type.addItems(["SOCKS5", "SOCKS4", "HTTP", "MTPROXY"])
+        self.proxy_type.addItems(["SOCKS5", "SOCKS4", "HTTP"])
         self.proxy_type.currentTextChanged.connect(self._sync_proxy_type_fields)
         self.proxy_host = QLineEdit()
         self.proxy_host.setPlaceholderText("127.0.0.1")
@@ -732,21 +732,19 @@ class AccountView(QWidget):
         if hasattr(self, "root_layout"):
             self._refresh_dynamic_layout()
 
-    def _sync_proxy_type_fields(self, proxy_type: str) -> None:
-        is_mtproxy = str(proxy_type or "").strip().upper() in {
-            "MTPROXY",
-            "MTPROTO",
-        }
+    def _sync_proxy_type_fields(self, _proxy_type: str) -> None:
         for widget in (
             self.proxy_login_label,
             self.proxy_login,
             self.proxy_password_label,
             self.proxy_password,
         ):
-            widget.setVisible(not is_mtproxy)
-        self.proxy_secret_label.setVisible(is_mtproxy)
-        self.proxy_secret.setVisible(is_mtproxy)
-        self.proxy_port.setPlaceholderText("443" if is_mtproxy else "1080")
+            widget.setVisible(True)
+        # Legacy MTProxy widgets remain internal only so old encrypted settings
+        # can be cleared safely; MTProxy is not offered by the Windows UI.
+        self.proxy_secret_label.setVisible(False)
+        self.proxy_secret.setVisible(False)
+        self.proxy_port.setPlaceholderText("1080")
         if self.proxy_enabled.isChecked():
             self._refresh_dynamic_layout()
 
@@ -910,16 +908,22 @@ class AccountView(QWidget):
             "yes",
             "on",
         }
+        proxy_type = str(values.get("telegram.proxy_type") or "SOCKS5").upper()
+        if proxy_type not in {"SOCKS5", "SOCKS4", "HTTP"}:
+            # MTProxy was removed from the product UI. Fail closed for a legacy
+            # profile until the operator chooses a supported proxy explicitly.
+            enabled = False
+            proxy_type = "SOCKS5"
+            self.proxy_secret.clear()
         self.proxy_enabled.setChecked(enabled)
         self._toggle_proxy(enabled)
-        proxy_type = str(values.get("telegram.proxy_type") or "SOCKS5")
         index = self.proxy_type.findText(proxy_type)
         self.proxy_type.setCurrentIndex(max(0, index))
         self.proxy_host.setText(str(values.get("telegram.proxy_host") or ""))
         self.proxy_port.setText(str(values.get("telegram.proxy_port") or ""))
         self.proxy_login.setText(str(values.get("telegram.proxy_username") or ""))
         self.proxy_password.setText(str(values.get("telegram.proxy_password") or ""))
-        self.proxy_secret.setText(str(values.get("telegram.proxy_secret") or ""))
+        self.proxy_secret.clear()
         self._sync_proxy_type_fields(self.proxy_type.currentText())
         self._applying_settings = True
         try:
@@ -1033,9 +1037,7 @@ class AccountView(QWidget):
             "telegram.proxy_password": proxy.password
             if proxy
             else self.proxy_password.text(),
-            "telegram.proxy_secret": proxy.secret
-            if proxy
-            else self.proxy_secret.text(),
+            "telegram.proxy_secret": "",
         }
         values.update(self._schedule_settings())
         return values

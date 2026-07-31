@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 import shiboken6
@@ -144,8 +145,8 @@ def test_v25_disables_legacy_direct_group_work_before_worker_start(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_direct_group_path_is_rejected_by_api_and_service(tmp_path):
-    db = Database(tmp_path / "direct-group-closed.db")
+async def test_direct_group_path_is_campaign_only_and_persists_receipt(tmp_path):
+    db = Database(tmp_path / "direct-group-enabled.db")
     db.set_setting("telegram.account_id", 202)
     api = ServiceAPI(db)
     assert api.wait_for_secret_migration(5_000)
@@ -153,18 +154,28 @@ async def test_direct_group_path_is_rejected_by_api_and_service(tmp_path):
         api.create_task("direct_message", {"chat_id": -1001, "text": "x"})
     api.prepare_shutdown()
 
+    task_id = db.insert_task(
+        "direct_message", {"account_id": 202, "chat_id": -1001, "text": "x"}
+    )
+
     class Telegram:
         calls = 0
 
         async def send_message(self, *_args, **_kwargs):
             self.calls += 1
+            return SimpleNamespace(id=777)
 
     telegram = Telegram()
     service = CommentService(telegram, db=db)
-    with pytest.raises(NonRetryableTelegramError) as caught:
-        await service.send_direct_message(-1001, "x", task_id=1)
-    assert caught.value.code == "direct_group_disabled"
-    assert telegram.calls == 0
+    result = await service.send_direct_message(
+        -1001, "x", task_id=task_id, account_id=202, campaign_id=5
+    )
+
+    assert result.id == 777
+    assert telegram.calls == 1
+    delivery = db.get_direct_message_delivery(task_id)
+    assert delivery["status"] == "sent"
+    assert delivery["message_id"] == 777
 
 
 def test_lifecycle_safe_background_callbacks_ignore_deleted_owner():

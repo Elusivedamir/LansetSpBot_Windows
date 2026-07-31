@@ -90,7 +90,8 @@ def test_instruction_slideshow_documents_current_gui_routes_and_help() -> None:
     assert "каждую секунду" in joined
     assert "личные переписки" in joined
     assert "Выполнено" in joined and "Отправлено" in joined
-    assert "Fake TLS EE" in joined
+    assert "SOCKS5, SOCKS4 и HTTP" in joined
+    assert "MTProxy" not in joined
     assert "LansetSpBot.exe" in joined
 
     assert "поддержка" in view.STEPS[-1][0].lower()

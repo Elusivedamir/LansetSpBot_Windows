@@ -96,7 +96,7 @@ async def test_iter_channels_yields_broadcasts_and_groups_with_safe_modes():
     assert len(rows) == 3
 
 
-def test_group_classification_keeps_only_linked_discussions_as_comment_targets(
+def test_group_classification_keeps_linked_and_direct_group_targets(
     tmp_path,
 ):
     db = Database(tmp_path / "groups.db")
@@ -137,12 +137,12 @@ def test_group_classification_keeps_only_linked_discussions_as_comment_targets(
     rows = {row["channel_id"]: row for row in db.get_channels()}
     targets = {row["channel_id"] for row in db.get_channels_for_commenting(10)}
 
-    assert result == {"linked_discussion": 1, "direct_group": 0}
+    assert result == {"linked_discussion": 1, "direct_group": 1}
     assert rows[linked_group_id]["comment_mode"] == "linked_discussion"
-    assert rows[direct_group_id]["comment_mode"] == "pending"
-    assert targets == {10}
+    assert rows[direct_group_id]["comment_mode"] == "direct_group"
+    assert targets == {10, direct_group_id}
 
-    # Repeated Telegram synchronization must keep an ordinary group disabled.
+    # Repeated Telegram synchronization must preserve the explicit direct-group route.
     db.upsert_channels_batch(
         [
             {
@@ -155,7 +155,7 @@ def test_group_classification_keeps_only_linked_discussions_as_comment_targets(
             }
         ]
     )
-    assert db.get_channel_by_id(direct_group_id)["comment_mode"] == "pending"
+    assert db.get_channel_by_id(direct_group_id)["comment_mode"] == "direct_group"
 
 
 def test_v15_database_migrates_work_targets_to_v16(tmp_path):
@@ -230,7 +230,7 @@ def test_v15_database_migrates_work_targets_to_v16(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_comment_slot_never_sends_plain_message_to_standalone_group(monkeypatch):
+async def test_comment_slot_sends_one_plain_message_to_standalone_group(monkeypatch):
     db = _comment_database()
     group_id = -1000000000030
     db.get_channels_for_commenting.return_value = [
@@ -252,11 +252,12 @@ async def test_comment_slot_never_sends_plain_message_to_standalone_group(monkey
     assert telegram.latest_calls == 0
     assert telegram.member_calls == []
     assert telegram.join_calls == []
-    assert comments.sent == []
-    assert db.finish_comment_slot.call_args.kwargs["status"] == "skipped"
+    assert len(comments.sent) == 1
+    assert comments.sent[0]["chat_id"] == group_id
+    assert comments.sent[0]["text"] == "hello"
+    assert db.finish_comment_slot.call_args.kwargs["status"] == "sent"
     assert db.finish_comment_slot.call_args.kwargs["post_id"] is None
-    assert db.finish_comment_slot.call_args.kwargs["sent"] is False
-    db.update_group_link_classification.assert_called_once()
+    assert db.finish_comment_slot.call_args.kwargs["sent"] is True
 
 
 @pytest.mark.asyncio

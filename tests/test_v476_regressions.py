@@ -248,8 +248,8 @@ def test_join_schedule_respects_configured_hourly_limit():
 
 
 @pytest.mark.asyncio
-async def test_direct_message_service_never_calls_telegram(tmp_path):
-    db = Database(tmp_path / "dm-disabled.db")
+async def test_direct_message_service_calls_telegram_once_and_records_receipt(tmp_path):
+    db = Database(tmp_path / "dm-enabled.db")
     task_id = db.insert_task("direct_message", {"chat_id": 100, "text": "hello"})
 
     class Telegram:
@@ -262,11 +262,13 @@ async def test_direct_message_service_never_calls_telegram(tmp_path):
 
     telegram = Telegram()
     service = CommentService(telegram, db=db)
-    with pytest.raises(NonRetryableTelegramError) as caught:
-        await service.send_direct_message(100, "hello", task_id=task_id)
-    assert caught.value.code == "direct_group_disabled"
-    assert telegram.calls == 0
-    assert db.get_direct_message_delivery(task_id) is None
+    result = await service.send_direct_message(100, "hello", task_id=task_id)
+
+    assert result.id == 321
+    assert telegram.calls == 1
+    delivery = db.get_direct_message_delivery(task_id)
+    assert delivery["status"] == "sent"
+    assert delivery["message_id"] == 321
 
 
 @pytest.mark.asyncio
