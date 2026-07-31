@@ -55,7 +55,12 @@ SECRET_ACCOUNT_SETTING_KEYS = frozenset(
 
 def _positive_account_id(value: object) -> int:
     try:
-        parsed = int(value or 0)
+        if value is None:
+            parsed = 0
+        elif isinstance(value, (str, bytes, bytearray, int)):
+            parsed = int(value)
+        else:
+            raise TypeError(f"unsupported account id type: {type(value).__name__}")
     except (TypeError, ValueError, OverflowError) as exc:
         raise DatabaseError(f"Invalid Telegram account id: {value!r}") from exc
     if parsed <= 0:
@@ -329,7 +334,7 @@ class AccountRepositoryMixin(_MixinHost):
                        WHERE telegram_account_id=? AND session_name=?""",
                     (owner, clean_session),
                 )
-                return cursor.rowcount == 1
+                return bool(cursor.rowcount == 1)
         except DatabaseError:
             raise
         except Exception as exc:

@@ -45,7 +45,7 @@ class CommentReconciliationMixin(_MixinHost):
                                         s.task_id IS NULL
                                         OR t.id IS NULL
                                     )"""
-                orphan_params = ()
+                orphan_params: tuple[object, ...] = ()
                 if owner_account_id > 0:
                     orphan_query += " AND c.account_id=?"
                     orphan_params = (owner_account_id,)
@@ -117,7 +117,7 @@ class CommentReconciliationMixin(_MixinHost):
                                               'cancelled',
                                               'completed'
                                           )"""
-                completed_params = ()
+                completed_params: tuple[object, ...] = ()
                 if owner_account_id > 0:
                     completed_query += " AND c.account_id=?"
                     completed_params = (owner_account_id,)
