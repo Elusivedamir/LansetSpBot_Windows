@@ -61,3 +61,20 @@ def test_manifest_failure_keeps_expected_and_actual_evidence() -> None:
     assert "SHA256SUMS.actual.txt" in workflow
     assert "manifest-regeneration.txt" in workflow
     assert "git checkout -- SHA256SUMS.txt" in workflow
+
+def test_packaged_self_tests_are_waited_for_and_time_limited() -> None:
+    text = (ROOT / "build" / "build_windows_x64.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+
+    assert "--label packaged-self-test" in text
+    assert "--label relocated-packaged-self-test" in text
+    assert 'ci-proof\\packaged-self-test.log' in text
+    assert 'ci-proof\\relocated-packaged-self-test.log' in text
+    assert text.count("--total-timeout-seconds 180") >= 2
+    assert text.count("--idle-timeout-seconds 120") >= 2
+
+    # Оконный PyInstaller EXE нельзя запускать напрямую через PowerShell "&":
+    # оболочка может продолжить выполнение до фактического завершения процесса.
+    assert "& $BuiltExe --self-test" not in text
+    assert '& (Join-Path $RelocatedDir ($AppName + ".exe")) --self-test' not in text

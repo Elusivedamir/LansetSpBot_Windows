@@ -232,16 +232,35 @@ $RelocationRoot = $null
 try {
     $env:QT_QPA_PLATFORM = "offscreen"
     Write-BuildStage "Running packaged self-test"
-    & $BuiltExe --self-test
-    if ($LASTEXITCODE -ne 0) { throw "Packaged self-test failed." }
+    & $BuildPython tools\run_ci_subprocess.py `
+        --label packaged-self-test `
+        --log "ci-proof\packaged-self-test.log" `
+        --idle-timeout-seconds 120 `
+        --total-timeout-seconds 180 `
+        -- `
+        $BuiltExe --self-test
+    $packagedSelfTestExit = $LASTEXITCODE
+    if ($packagedSelfTestExit -ne 0) {
+        throw "Packaged self-test failed with exit code $packagedSelfTestExit."
+    }
 
     $RelocationRoot = Join-Path $env:TEMP ("LansetSpBot Проверка " + [guid]::NewGuid().ToString("N"))
     $RelocatedDir = Join-Path $RelocationRoot $AppName
     New-Item -ItemType Directory -Path $RelocatedDir -Force | Out-Null
     Copy-Item -Path (Join-Path $BuiltDir "*") -Destination $RelocatedDir -Recurse -Force
     Write-BuildStage "Running relocated packaged self-test"
-    & (Join-Path $RelocatedDir ($AppName + ".exe")) --self-test
-    if ($LASTEXITCODE -ne 0) { throw "Relocated packaged self-test failed." }
+    $RelocatedExe = Join-Path $RelocatedDir ($AppName + ".exe")
+    & $BuildPython tools\run_ci_subprocess.py `
+        --label relocated-packaged-self-test `
+        --log "ci-proof\relocated-packaged-self-test.log" `
+        --idle-timeout-seconds 120 `
+        --total-timeout-seconds 180 `
+        -- `
+        $RelocatedExe --self-test
+    $relocatedSelfTestExit = $LASTEXITCODE
+    if ($relocatedSelfTestExit -ne 0) {
+        throw "Relocated packaged self-test failed with exit code $relocatedSelfTestExit."
+    }
 }
 finally {
     if ($null -eq $oldQt) { Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue } else { $env:QT_QPA_PLATFORM = $oldQt }
