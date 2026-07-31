@@ -32,3 +32,18 @@ def test_discard_empty_database_file_keeps_nonempty_database(tmp_path) -> None:
 
     assert database_path.read_bytes() == b"not-empty"
     database.close_thread_connection.assert_not_called()
+
+
+def test_missing_file_is_detected_through_exception_cause() -> None:
+    missing = FileNotFoundError("SQLite sidecar disappeared")
+    wrapper = RuntimeError("artifact validation failed")
+    wrapper.__cause__ = missing
+
+    assert Database._caused_by_missing_file(wrapper) is True
+
+
+def test_unrelated_exception_is_not_treated_as_missing_file() -> None:
+    wrapper = RuntimeError("permission denied")
+    wrapper.__cause__ = ValueError("invalid artifact")
+
+    assert Database._caused_by_missing_file(wrapper) is False
