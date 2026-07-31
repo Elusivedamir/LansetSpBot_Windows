@@ -228,6 +228,9 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $BuiltExe -PathType Lea
 }
 
 $oldQt = [Environment]::GetEnvironmentVariable("QT_QPA_PLATFORM", "Process")
+$oldAppData = [Environment]::GetEnvironmentVariable("APPDATA", "Process")
+$oldCanonicalDataDir = [Environment]::GetEnvironmentVariable("LANSETSPBOT_DATA_DIR", "Process")
+$oldLegacyDataDir = [Environment]::GetEnvironmentVariable("MARLEN_DATA_DIR", "Process")
 $RelocationRoot = $null
 try {
     $env:QT_QPA_PLATFORM = "offscreen"
@@ -239,12 +242,78 @@ try {
     $RelocatedDir = Join-Path $RelocationRoot $AppName
     New-Item -ItemType Directory -Path $RelocatedDir -Force | Out-Null
     Copy-Item -Path (Join-Path $BuiltDir "*") -Destination $RelocatedDir -Recurse -Force
+    $RelocatedExe = Join-Path $RelocatedDir ($AppName + ".exe")
+
     Write-BuildStage "Running relocated packaged self-test"
-    & (Join-Path $RelocatedDir ($AppName + ".exe")) --self-test
+    & $RelocatedExe --self-test
     if ($LASTEXITCODE -ne 0) { throw "Relocated packaged self-test failed." }
+
+    Write-BuildStage "Running packaged profile migration smoke test"
+    $MigrationAppData = Join-Path $RelocationRoot "MigrationAppData"
+    $LegacyProfile = Join-Path $MigrationAppData "Marlen"
+    $CanonicalProfile = Join-Path $MigrationAppData "LansetSpBot"
+    $LegacySessions = Join-Path $LegacyProfile "sessions"
+    New-Item -ItemType Directory -Path $LegacySessions -Force | Out-Null
+
+    [System.IO.File]::WriteAllBytes(
+        (Join-Path $LegacyProfile "marlen.db"),
+        [byte[]](0x4c, 0x53, 0x42, 0x2d, 0x44, 0x42)
+    )
+    [System.IO.File]::WriteAllBytes(
+        (Join-Path $LegacySessions "build.session"),
+        [byte[]](0x53, 0x45, 0x53, 0x53, 0x49, 0x4f, 0x4e)
+    )
+
+    $ExpectedDatabaseHash = (
+        Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $LegacyProfile "marlen.db")
+    ).Hash
+    $ExpectedSessionHash = (
+        Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $LegacySessions "build.session")
+    ).Hash
+
+    $env:APPDATA = $MigrationAppData
+    Remove-Item Env:LANSETSPBOT_DATA_DIR -ErrorAction SilentlyContinue
+    Remove-Item Env:MARLEN_DATA_DIR -ErrorAction SilentlyContinue
+
+    $MigrationProcess = Start-Process -FilePath $RelocatedExe `
+        -ArgumentList "--migrate-profile" `
+        -PassThru
+
+    if (-not $MigrationProcess.WaitForExit(30000)) {
+        Stop-Process -Id $MigrationProcess.Id -Force -ErrorAction SilentlyContinue
+        throw "Packaged profile migration command did not exit within 30 seconds."
+    }
+    if ($MigrationProcess.ExitCode -ne 0) {
+        throw "Packaged profile migration command failed with exit code $($MigrationProcess.ExitCode)."
+    }
+    if (Test-Path -LiteralPath $LegacyProfile) {
+        throw "Packaged profile migration left the legacy profile behind."
+    }
+    if (-not (Test-Path -LiteralPath $CanonicalProfile -PathType Container)) {
+        throw "Packaged profile migration did not create the canonical profile."
+    }
+
+    $ActualDatabaseHash = (
+        Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $CanonicalProfile "marlen.db")
+    ).Hash
+    $ActualSessionHash = (
+        Get-FileHash -Algorithm SHA256 -LiteralPath (
+            Join-Path $CanonicalProfile "sessions\build.session"
+        )
+    ).Hash
+
+    if ($ActualDatabaseHash -ne $ExpectedDatabaseHash) {
+        throw "Packaged profile migration changed the database bytes."
+    }
+    if ($ActualSessionHash -ne $ExpectedSessionHash) {
+        throw "Packaged profile migration changed the session bytes."
+    }
 }
 finally {
     if ($null -eq $oldQt) { Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue } else { $env:QT_QPA_PLATFORM = $oldQt }
+    if ($null -eq $oldAppData) { Remove-Item Env:APPDATA -ErrorAction SilentlyContinue } else { $env:APPDATA = $oldAppData }
+    if ($null -eq $oldCanonicalDataDir) { Remove-Item Env:LANSETSPBOT_DATA_DIR -ErrorAction SilentlyContinue } else { $env:LANSETSPBOT_DATA_DIR = $oldCanonicalDataDir }
+    if ($null -eq $oldLegacyDataDir) { Remove-Item Env:MARLEN_DATA_DIR -ErrorAction SilentlyContinue } else { $env:MARLEN_DATA_DIR = $oldLegacyDataDir }
     if ($RelocationRoot -and (Test-Path -LiteralPath $RelocationRoot)) {
         Remove-Item -LiteralPath $RelocationRoot -Recurse -Force -ErrorAction SilentlyContinue
     }

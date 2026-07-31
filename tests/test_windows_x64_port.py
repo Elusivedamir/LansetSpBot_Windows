@@ -77,6 +77,12 @@ def test_windows_build_pipeline_has_native_self_tests_and_release_zip() -> None:
     assert "-m mypy" in build
     assert "$BuiltExe --self-test" in build
     assert "LansetSpBot Проверка" in build
+    assert 'Write-BuildStage "Running packaged profile migration smoke test"' in build
+    assert '-ArgumentList "--migrate-profile"' in build
+    assert "$MigrationProcess.WaitForExit(30000)" in build
+    assert "Get-FileHash -Algorithm SHA256" in build
+    assert "Packaged profile migration changed the database bytes." in build
+    assert "Packaged profile migration changed the session bytes." in build
     assert "Compress-Archive" in build
     assert '$ReleaseReadme = Join-Path $ProjectRoot "README.txt"' in build
     assert "Test-Path -LiteralPath $ReleaseReadme -PathType Leaf" in build
