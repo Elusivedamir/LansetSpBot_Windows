@@ -295,6 +295,32 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     assert worker.lifecycle_state == worker.STATE_DRAINING
 
 
+def test_comment_delivery_mutations_use_full_unique_scope() -> None:
+    source = (
+        ROOT / "storage/comment_campaigns/reconciliation.py"
+    ).read_text(encoding="utf-8")
+
+    release_start = source.index("def release_comment_delivery(")
+    uncertain_start = source.index("def mark_comment_delivery_uncertain(")
+    finalize_start = source.index("def finalize_comment_delivery(")
+
+    release_block = source[release_start:uncertain_start]
+    uncertain_block = source[uncertain_start:finalize_start]
+    finalize_block = source[finalize_start:]
+
+    required_scope = (
+        "account_id=?",
+        "campaign_id=?",
+        "action_type=?",
+        "channel_id=?",
+        "post_id=?",
+        "linked_chat_id=?",
+    )
+    for block in (release_block, uncertain_block, finalize_block):
+        for predicate in required_scope:
+            assert predicate in block
+
+
 def test_queue_worker_blocks_unavailable_account_before_handler() -> None:
     source = (ROOT / "workers/queue_worker.py").read_text(encoding="utf-8")
     guard = source.index("blocked_states = {")

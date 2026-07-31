@@ -366,20 +366,27 @@ class CommentReconciliationMixin(_MixinHost):
         campaign_id=None,
         action_type="comment",
     ):
-        del error, linked_chat_id, action_type
+        del error
         try:
             owner_account_id = resolve_account_id(self, account_id)
-            campaign = max(0, int(campaign_id or 0))
+            campaign, action, discussion = self._delivery_context(
+                campaign_id=campaign_id,
+                action_type=action_type,
+                linked_chat_id=linked_chat_id,
+            )
             with self.get_connection() as conn:
                 conn.execute(
                     """DELETE FROM comment_deliveries
-                       WHERE account_id=? AND channel_id=? AND post_id=?
-                         AND campaign_id=? AND status='sending'""",
+                       WHERE account_id=? AND campaign_id=? AND action_type=?
+                         AND channel_id=? AND post_id=? AND linked_chat_id=?
+                         AND status='sending'""",
                     (
                         owner_account_id,
+                        campaign,
+                        action,
                         int(channel_id),
                         int(post_id),
-                        campaign,
+                        discussion,
                     ),
                 )
         except DatabaseError:
@@ -408,19 +415,19 @@ class CommentReconciliationMixin(_MixinHost):
             with self.get_connection() as conn:
                 conn.execute(
                     """UPDATE comment_deliveries
-                       SET status='uncertain', error=?, action_type=?, linked_chat_id=?,
+                       SET status='uncertain', error=?,
                            updated_at=CURRENT_TIMESTAMP
-                       WHERE account_id=? AND channel_id=? AND post_id=?
-                         AND campaign_id=?
+                       WHERE account_id=? AND campaign_id=? AND action_type=?
+                         AND channel_id=? AND post_id=? AND linked_chat_id=?
                          AND status IN ('sending','uncertain')""",
                     (
                         sanitize_text(error),
-                        action,
-                        discussion,
                         owner_account_id,
+                        campaign,
+                        action,
                         int(channel_id),
                         int(post_id),
-                        campaign,
+                        discussion,
                     ),
                 )
         except DatabaseError:
@@ -458,19 +465,19 @@ class CommentReconciliationMixin(_MixinHost):
                 cursor = conn.execute(
                     """UPDATE comment_deliveries
                        SET status='sent', comment_message_id=?, text=?, error=NULL,
-                           action_type=?, linked_chat_id=?, updated_at=CURRENT_TIMESTAMP
-                       WHERE account_id=? AND channel_id=? AND post_id=?
-                         AND campaign_id=?
+                           updated_at=CURRENT_TIMESTAMP
+                       WHERE account_id=? AND campaign_id=? AND action_type=?
+                         AND channel_id=? AND post_id=? AND linked_chat_id=?
                          AND status='sending'""",
                     (
                         data.get("comment_message_id"),
                         data.get("text"),
-                        action,
-                        discussion,
                         owner_account_id,
+                        campaign,
+                        action,
                         data.get("channel_id"),
                         data.get("post_message_id"),
-                        campaign,
+                        discussion,
                     ),
                 )
                 if cursor.rowcount != 1:
