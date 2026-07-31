@@ -47,6 +47,9 @@ class TelegramAccountRuntimeManager:
         }
         self._runtimes: dict[int, TelegramAccountRuntime] = {}
         self._creation_locks: dict[int, asyncio.Lock] = {}
+        # Accounts being disconnected must not be recreated while their old
+        # runtime is still executing or cleaning up.
+        self._stopping_accounts: set[int] = set()
         self._closed = False
 
     @staticmethod
@@ -131,11 +134,23 @@ class TelegramAccountRuntimeManager:
                 "Telegram runtime manager is shutting down",
                 code="shutdown_before_dispatch",
             )
+        if owner in self._stopping_accounts:
+            raise NonRetryableTelegramError(
+                "Telegram account runtime is stopping",
+                code="account_stopped",
+                details={"account_id": owner},
+            )
         existing = self._runtimes.get(owner)
         if existing is not None:
             return existing
         lock = self._creation_locks.setdefault(owner, asyncio.Lock())
         async with lock:
+            if owner in self._stopping_accounts:
+                raise NonRetryableTelegramError(
+                    "Telegram account runtime is stopping",
+                    code="account_stopped",
+                    details={"account_id": owner},
+                )
             existing = self._runtimes.get(owner)
             if existing is not None:
                 return existing
@@ -239,14 +254,31 @@ class TelegramAccountRuntimeManager:
 
     async def stop_runtime(self, account_id: int) -> dict[str, Any]:
         owner = int(account_id)
-        runtime = self._runtimes.pop(owner, None)
-        if runtime is None:
-            return {"account_id": owner, "disconnected": False}
-        async with runtime.lock:
-            if runtime.cleanup is not None:
-                result = runtime.cleanup()
-                if asyncio.iscoroutine(result):
-                    await asyncio.wait_for(result, timeout=15.0)
+        if owner <= 0:
+            raise ValueError("Runtime stop requires a positive account id")
+
+        # Publish the stop intent before waiting for either creation or runtime
+        # execution. get_runtime() fails closed while this marker is present,
+        # so no replacement client can be created alongside the old one.
+        self._stopping_accounts.add(owner)
+        creation_lock = self._creation_locks.setdefault(owner, asyncio.Lock())
+        try:
+            async with creation_lock:
+                runtime = self._runtimes.get(owner)
+                if runtime is None:
+                    return {"account_id": owner, "disconnected": False}
+                async with runtime.lock:
+                    if runtime.cleanup is not None:
+                        result = runtime.cleanup()
+                        if asyncio.iscoroutine(result):
+                            await asyncio.wait_for(result, timeout=15.0)
+                    # Remove only the exact runtime that was stopped. This keeps
+                    # the invariant explicit even if future code mutates the map.
+                    if self._runtimes.get(owner) is runtime:
+                        self._runtimes.pop(owner, None)
+        finally:
+            self._stopping_accounts.discard(owner)
+
         log.info("Stopped isolated Telegram runtime for account %s", owner)
         return {"account_id": owner, "disconnected": True}
 

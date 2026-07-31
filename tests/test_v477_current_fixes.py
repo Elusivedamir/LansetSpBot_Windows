@@ -36,6 +36,35 @@ def _core_app():
     return QApplication.instance() or QApplication([])
 
 
+def test_runtime_stop_cannot_overlap_runtime_recreation() -> None:
+    source = (
+        ROOT / "services/account_runtime_manager.py"
+    ).read_text(encoding="utf-8")
+
+    assert "self._stopping_accounts: set[int] = set()" in source
+
+    get_start = source.index("async def get_runtime(")
+    create_start = source.index("async def _create_runtime(")
+    # _create_runtime is defined before get_runtime in this module.
+    get_end = source.index("async def dispatch(", get_start)
+    get_block = source[get_start:get_end]
+    assert "if owner in self._stopping_accounts:" in get_block
+    assert get_block.count("if owner in self._stopping_accounts:") >= 2
+
+    stop_start = source.index("async def stop_runtime(")
+    stop_end = source.index("async def check_runtime(", stop_start)
+    stop_block = source[stop_start:stop_end]
+
+    marker = stop_block.index("self._stopping_accounts.add(owner)")
+    creation_lock = stop_block.index("async with creation_lock:")
+    runtime_lock = stop_block.index("async with runtime.lock:")
+    removal = stop_block.index("self._runtimes.pop(owner, None)")
+    cleanup_marker = stop_block.index("self._stopping_accounts.discard(owner)")
+
+    assert marker < creation_lock < runtime_lock < removal < cleanup_marker
+    assert "self._runtimes.pop(owner, None)" not in stop_block[:runtime_lock]
+
+
 def test_restriction_uses_durable_task_account_id() -> None:
     source = (ROOT / "workers/queue_worker.py").read_text(encoding="utf-8")
     start = source.index("except NonRetryableTelegramError as exc:")
