@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [switch]$SkipTests,
     [switch]$KeepBuildVenv
@@ -39,6 +39,13 @@ function Write-BuildStage {
     Write-Host "[LansetSpBot build][stage] $Name" -ForegroundColor Cyan
 }
 
+$DeferredFailures = [System.Collections.Generic.List[string]]::new()
+
+function Add-DeferredFailure {
+    param([Parameter(Mandatory = $true)][string]$Message)
+    $DeferredFailures.Add($Message)
+    Write-Host "[LansetSpBot build][deferred failure] $Message" -ForegroundColor Red
+}
 
 $BuildVenv = Join-Path $ProjectRoot ".venv-build-windows-x64"
 $BuildPython = Join-Path $BuildVenv "Scripts\python.exe"
@@ -180,33 +187,33 @@ if (-not $SkipTests) {
     ) | Set-Content -LiteralPath "ci-proof\pytest-diagnostics-summary.txt" -Encoding UTF8
 
     if ($coreTestsExit -ne 0 -or $guiTestsExit -ne 0) {
-        throw "pytest diagnostics failed: core=$coreTestsExit gui=$guiTestsExit. See ci-proof pytest logs and JUnit reports."
+        Add-DeferredFailure "pytest diagnostics failed: core=$coreTestsExit gui=$guiTestsExit. See ci-proof pytest logs and JUnit reports."
     }
     if ($coverageCombineExit -ne 0 -or $coverageJsonExit -ne 0) {
-        throw "Coverage report generation failed after split pytest runs."
+        Add-DeferredFailure "Coverage report generation failed after split pytest runs."
     }
 
     # tools/check_critical_coverage.py enforces per-module minimums for the
     # release-critical code. It was previously shipped but never executed, so a
     # module could silently lose its test coverage between releases.
     & $BuildPython tools\check_critical_coverage.py
-    if ($LASTEXITCODE -ne 0) { throw "Critical coverage gate failed." }
+    if ($LASTEXITCODE -ne 0) { Add-DeferredFailure "Critical coverage gate failed." }
     & $BuildPython -m compileall -q core services storage workers gui main.py tests tools build
-    if ($LASTEXITCODE -ne 0) { throw "compileall failed." }
+    if ($LASTEXITCODE -ne 0) { Add-DeferredFailure "compileall failed." }
     & $BuildPython -m ruff check core services storage workers gui main.py tests tools build
-    if ($LASTEXITCODE -ne 0) { throw "Ruff failed." }
+    if ($LASTEXITCODE -ne 0) { Add-DeferredFailure "Ruff failed." }
     Write-BuildStage "Running Mypy"
     & $BuildPython -m mypy --config-file mypy.ini core services storage workers gui main.py
-    if ($LASTEXITCODE -ne 0) { throw "Mypy failed." }
+    if ($LASTEXITCODE -ne 0) { Add-DeferredFailure "Mypy failed." }
     Write-BuildStage "Running source self-test"
     & $BuildPython main.py --self-test
-    if ($LASTEXITCODE -ne 0) { throw "Source self-test failed." }
+    if ($LASTEXITCODE -ne 0) { Add-DeferredFailure "Source self-test failed." }
     # A lock generated on one interpreter installs there and fails the hash
     # check on the other, which the user sees as a tampering warning. Both
     # supported interpreters must resolve before a release ships.
     Write-BuildStage "Checking runtime lock coverage"
     & $BuildPython tools\check_lock_coverage.py
-    if ($LASTEXITCODE -ne 0) { throw "Runtime lock does not cover every supported Python version." }
+    if ($LASTEXITCODE -ne 0) { Add-DeferredFailure "Runtime lock does not cover every supported Python version." }
 }
 
 & $BuildPython build\generate_windows_version_info.py
@@ -241,7 +248,7 @@ try {
         $BuiltExe --self-test
     $packagedSelfTestExit = $LASTEXITCODE
     if ($packagedSelfTestExit -ne 0) {
-        throw "Packaged self-test failed with exit code $packagedSelfTestExit."
+        Add-DeferredFailure "Packaged self-test failed with exit code $packagedSelfTestExit."
     }
 
     $RelocationRoot = Join-Path $env:TEMP ("LansetSpBot Проверка " + [guid]::NewGuid().ToString("N"))
@@ -259,7 +266,7 @@ try {
         $RelocatedExe --self-test
     $relocatedSelfTestExit = $LASTEXITCODE
     if ($relocatedSelfTestExit -ne 0) {
-        throw "Relocated packaged self-test failed with exit code $relocatedSelfTestExit."
+        Add-DeferredFailure "Relocated packaged self-test failed with exit code $relocatedSelfTestExit."
     }
 }
 finally {
@@ -293,3 +300,21 @@ Write-Host "[LansetSpBot build] Windows x64 release created:" -ForegroundColor G
 Write-Host "  $ZipPath"
 Write-Host "  $ChecksumsPath"
 Write-Host "  $SbomPath"
+
+$DiagnosticSummaryPath = Join-Path $ProjectRoot "ci-proof\deferred-failures.txt"
+
+if ($DeferredFailures.Count -gt 0) {
+    Set-Content -LiteralPath $DiagnosticSummaryPath -Encoding UTF8 `
+        -Value "Deferred diagnostic failures: $($DeferredFailures.Count)"
+
+    foreach ($failure in $DeferredFailures) {
+        Add-Content -LiteralPath $DiagnosticSummaryPath -Encoding UTF8 `
+            -Value "- $failure"
+        Write-Host "  - $failure" -ForegroundColor Red
+    }
+
+    throw "Diagnostic build reached the final stage with $($DeferredFailures.Count) failure(s). See ci-proof\deferred-failures.txt"
+}
+
+Set-Content -LiteralPath $DiagnosticSummaryPath -Encoding UTF8 `
+    -Value "Deferred diagnostic failures: 0"
