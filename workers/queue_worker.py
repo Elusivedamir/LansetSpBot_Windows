@@ -952,12 +952,12 @@ class QueueWorker(QThread):
         task_payload = task.get("payload") or {}
         try:
             column_account_id = int(task.get("account_id") or 0)
-            payload_account_id = int(
+            payload_account_value = (
                 task_payload.get("account_id")
                 if isinstance(task_payload, dict)
                 else 0
-                or 0
             )
+            payload_account_id = int(payload_account_value or 0)
         except (TypeError, ValueError, OverflowError):
             column_account_id = 0
             payload_account_id = 0
