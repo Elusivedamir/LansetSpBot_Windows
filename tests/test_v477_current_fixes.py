@@ -295,6 +295,26 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     assert worker.lifecycle_state == worker.STATE_DRAINING
 
 
+def test_comment_reconciliation_uses_full_delivery_scope() -> None:
+    source = (
+        ROOT / "storage/comment_campaigns/reconciliation.py"
+    ).read_text(encoding="utf-8")
+
+    assert "s.linked_chat_id," in source
+    assert (
+        "AND cd.linked_chat_id=COALESCE(s.linked_chat_id, 0)"
+        in source
+    )
+
+    update_anchor = '"""UPDATE comment_deliveries\n'
+    start = source.index(update_anchor)
+    end = source.index('),\n', start)
+    block = source[start:end]
+
+    assert "AND linked_chat_id=?" in block
+    assert 'int(row["linked_chat_id"] or 0)' in source[start:start + 1400]
+
+
 def test_startup_reconciles_comment_slots_after_task_recovery() -> None:
     source = (ROOT / "main.py").read_text(encoding="utf-8")
 

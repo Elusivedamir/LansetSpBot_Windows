@@ -72,6 +72,7 @@ class CommentReconciliationMixin(_MixinHost):
                     affected_campaign_ids.add(int(row["campaign_id"]))
 
                 completed_query = """SELECT s.id, s.campaign_id, c.account_id, s.task_id, s.channel_id, s.post_id,
+                              s.linked_chat_id,
                               s.selected_text AS slot_selected_text,
                               t.status, t.error,
                               d.status AS direct_delivery_status,
@@ -87,6 +88,7 @@ class CommentReconciliationMixin(_MixinHost):
                         AND cd.campaign_id=s.campaign_id
                         AND cd.action_type='campaign_comment'
                         AND cd.channel_id=s.channel_id AND cd.post_id=s.post_id
+                        AND cd.linked_chat_id=COALESCE(s.linked_chat_id, 0)
                        WHERE s.status IN ('queued','running')
                          AND t.status IN ('failed','cancelled','completed')"""
                 completed_params = ()
@@ -238,6 +240,7 @@ class CommentReconciliationMixin(_MixinHost):
                                    WHERE account_id=? AND campaign_id=?
                                      AND action_type='campaign_comment'
                                      AND channel_id=? AND post_id=?
+                                     AND linked_chat_id=?
                                      AND status='sending'""",
                                 (
                                     message,
@@ -245,6 +248,7 @@ class CommentReconciliationMixin(_MixinHost):
                                     int(row["campaign_id"]),
                                     int(row["channel_id"]),
                                     int(row["post_id"]),
+                                    int(row["linked_chat_id"] or 0),
                                 ),
                             )
                         conn.execute(
