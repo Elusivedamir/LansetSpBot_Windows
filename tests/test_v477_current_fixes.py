@@ -44,7 +44,6 @@ def test_runtime_stop_cannot_overlap_runtime_recreation() -> None:
     assert "self._stopping_accounts: set[int] = set()" in source
 
     get_start = source.index("async def get_runtime(")
-    create_start = source.index("async def _create_runtime(")
     # _create_runtime is defined before get_runtime in this module.
     get_end = source.index("async def dispatch(", get_start)
     get_block = source[get_start:get_end]
