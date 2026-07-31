@@ -295,6 +295,27 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     assert worker.lifecycle_state == worker.STATE_DRAINING
 
 
+def test_reconciliation_trusts_uncertain_delivery_state_after_crash() -> None:
+    source = (
+        ROOT / "storage/comment_campaigns/reconciliation.py"
+    ).read_text(encoding="utf-8")
+
+    assert "delivery_uncertain = (" in source
+    assert (
+        'str(row["direct_delivery_status"] or "") in {"sending", "uncertain"}'
+        in source
+    )
+    assert (
+        'str(row["comment_delivery_status"] or "")'
+        in source
+    )
+    assert (
+        'if delivery_uncertain\n'
+        '                            or "uncertain" in str(row["error"] or "").lower()'
+        in source
+    )
+
+
 def test_comment_reconciliation_uses_full_delivery_scope() -> None:
     source = (
         ROOT / "storage/comment_campaigns/reconciliation.py"

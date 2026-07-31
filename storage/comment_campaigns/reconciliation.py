@@ -192,13 +192,19 @@ class CommentReconciliationMixin(_MixinHost):
                         affected_campaign_ids.add(int(row["campaign_id"]))
                         continue
 
+                    delivery_uncertain = (
+                        str(row["direct_delivery_status"] or "") in {"sending", "uncertain"}
+                        or str(row["comment_delivery_status"] or "")
+                        in {"sending", "uncertain"}
+                    )
                     if row["status"] == "completed":
                         slot_status = "uncertain"
                         message = "Задача завершилась без результата слота; требуется проверка"
                     else:
                         slot_status = (
                             "uncertain"
-                            if "uncertain" in str(row["error"] or "")
+                            if delivery_uncertain
+                            or "uncertain" in str(row["error"] or "").lower()
                             else "failed"
                         )
                         message = str(row["error"] or "Задача остановлена")
