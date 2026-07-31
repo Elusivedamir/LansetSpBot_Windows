@@ -295,6 +295,29 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     assert worker.lifecycle_state == worker.STATE_DRAINING
 
 
+def test_link_task_payload_read_modify_write_uses_immediate_transactions() -> None:
+    source = (ROOT / "storage" / "db_tasks.py").read_text(encoding="utf-8")
+
+    method_names = (
+        "pause_pending_link_task",
+        "pause_running_link_task",
+        "resume_link_task",
+        "update_task_checkpoint",
+    )
+    for index, name in enumerate(method_names):
+        start = source.index(f"    def {name}(")
+        if index + 1 < len(method_names):
+            next_name = method_names[index + 1]
+            end = source.index(f"    def {next_name}(", start)
+        else:
+            end = source.index("    def update_task_status_text(", start)
+        method_source = source[start:end]
+        assert 'conn.execute("BEGIN IMMEDIATE")' in method_source
+        assert method_source.index('conn.execute("BEGIN IMMEDIATE")') < method_source.index(
+            '"SELECT payload FROM tasks'
+        )
+
+
 def test_queue_worker_uses_durable_account_id_for_legacy_payload() -> None:
     source = (ROOT / "workers" / "queue_worker.py").read_text(encoding="utf-8")
 

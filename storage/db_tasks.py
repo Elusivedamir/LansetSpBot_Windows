@@ -289,6 +289,10 @@ class TaskRepositoryMixin:
     ):
         try:
             with self.get_connection() as conn:
+                # Reserve the write transaction before reading payload so a
+                # concurrent checkpoint cannot overwrite the pause decision.
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
                     "SELECT payload FROM tasks WHERE id=? AND type='link_channels'",
                     (int(task_id),),
@@ -321,6 +325,9 @@ class TaskRepositoryMixin:
     ):
         try:
             with self.get_connection() as conn:
+                # Serialize payload read-modify-write with checkpoint updates.
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
                     "SELECT payload FROM tasks WHERE id=? AND type='link_channels'",
                     (int(task_id),),
@@ -350,6 +357,10 @@ class TaskRepositoryMixin:
     def resume_link_task(self, task_id):
         try:
             with self.get_connection() as conn:
+                # Prevent a stale concurrent payload write from restoring the
+                # removed pause marker after this resume operation commits.
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
                     "SELECT payload FROM tasks WHERE id=? AND type='link_channels'",
                     (int(task_id),),
@@ -1134,6 +1145,11 @@ class TaskRepositoryMixin:
             value = max(0, min(100, int(progress)))
             checkpoint_payload = self._decode_task_payload(payload)
             with self.get_connection() as conn:
+                # Acquire the write reservation before reading the current
+                # payload. This keeps a concurrent pause request from being
+                # lost between the SELECT and UPDATE below.
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
                 current = conn.execute(
                     "SELECT payload FROM tasks WHERE id=? AND status='running'",
                     (int(task_id),),
