@@ -15,6 +15,16 @@ Run
   2_RUN_LANSETSPBOT_DIRECT_PY314.bat
     Direct Python 3.14 launch for an environment that already exists.
 
+Migrate an old profile in the packaged release
+  2_MIGRATE_OLD_PROFILE.bat
+    Close LansetSpBot first, then run this file next to LansetSpBot.exe.
+    It invokes the built-in fail-closed migration command and moves an existing
+    %APPDATA%\Marlen profile to %APPDATA%\LansetSpBot only after validating
+    the state. It does not copy, merge or manually delete profile files.
+    Exit code 0 means success or already migrated; 2 means no data was changed
+    because the state was unsupported or unsafe; 3 means migration failed and
+    rollback/recovery logic was used.
+
 Diagnose a failed start
   3_COLLECT_DIAGNOSTICS.cmd
     Writes lansetspbot-diagnostics.txt next to the program: environment,

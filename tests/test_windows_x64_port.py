@@ -83,6 +83,13 @@ def test_windows_build_pipeline_has_native_self_tests_and_release_zip() -> None:
     assert "Get-FileHash -Algorithm SHA256" in build
     assert "Packaged profile migration changed the database bytes." in build
     assert "Packaged profile migration changed the session bytes." in build
+    assert '"2_MIGRATE_OLD_PROFILE.bat"' in build
+    assert 'tasklist /FI `"IMAGENAME eq $AppName.exe`"' in build
+    assert '" --migrate-profile"' in build
+    assert '`"EXIT_CODE=%%ERRORLEVEL%%`"' in build
+    assert "migration completed or was already complete" in build
+    assert "migration was refused because the state is unsupported or unsafe" in build
+    assert "migration started but could not complete safely" in build
     assert "Compress-Archive" in build
     assert '$ReleaseReadme = Join-Path $ProjectRoot "README.txt"' in build
     assert "Test-Path -LiteralPath $ReleaseReadme -PathType Leaf" in build

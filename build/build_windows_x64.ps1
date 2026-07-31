@@ -330,6 +330,35 @@ Copy-Item -Path (Join-Path $BuiltDir "*") -Destination $ReleaseRoot -Recurse -Fo
 Copy-Item -LiteralPath $ReleaseReadme -Destination (Join-Path $ReleaseRoot "WINDOWS_X64_README.txt")
 Set-Content -LiteralPath (Join-Path $ReleaseRoot "1_START_LANSETSPBOT.bat") -Encoding Ascii -Value "@echo off`r`ncd /d `"%~dp0`"`r`nstart `"`" `"%~dp0$AppName.exe`"`r`n"
 
+$MigrationLauncher = @(
+    "@echo off"
+    "setlocal"
+    "cd /d `"%~dp0`""
+    "echo LansetSpBot legacy profile migration"
+    "echo."
+    "if not exist `"%~dp0$AppName.exe`" ("
+    "  echo ERROR: $AppName.exe was not found next to this launcher."
+    "  exit /b 2"
+    ")"
+    "tasklist /FI `"IMAGENAME eq $AppName.exe`" /NH 2^>nul | find /I `"$AppName.exe`" ^>nul"
+    "if not errorlevel 1 ("
+    "  echo ERROR: $AppName.exe is running. Close the application and retry."
+    "  exit /b 2"
+    ")"
+    "echo Migrating %%APPDATA%%\Marlen to %%APPDATA%%\LansetSpBot..."
+    "`"%~dp0$AppName.exe`" --migrate-profile"
+    "set `"EXIT_CODE=%%ERRORLEVEL%%`""
+    "echo."
+    "if `"%%EXIT_CODE%%`"==`"0`" echo SUCCESS: migration completed or was already complete."
+    "if `"%%EXIT_CODE%%`"==`"2`" echo NOT CHANGED: migration was refused because the state is unsupported or unsafe."
+    "if `"%%EXIT_CODE%%`"==`"3`" echo FAILED: migration started but could not complete safely."
+    "if not `"%%EXIT_CODE%%`"==`"0`" if not `"%%EXIT_CODE%%`"==`"2`" if not `"%%EXIT_CODE%%`"==`"3`" echo FAILED: unexpected exit code %%EXIT_CODE%%."
+    "echo."
+    "pause"
+    "exit /b %%EXIT_CODE%%"
+) -join "`r`n"
+Set-Content -LiteralPath (Join-Path $ReleaseRoot "2_MIGRATE_OLD_PROFILE.bat") -Encoding Ascii -Value ($MigrationLauncher + "`r`n")
+
 & $BuildPython build\generate_sbom.py --version $AppVersion --requirements requirements-runtime.lock --requirements requirements-openai.lock --name $AppName --output $SbomPath
 if ($LASTEXITCODE -ne 0) { throw "SBOM generation failed." }
 Copy-Item -LiteralPath $SbomPath -Destination $ReleaseRoot
