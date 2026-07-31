@@ -758,6 +758,7 @@ class QueueWorker(QThread):
         active: dict[asyncio.Task, int] = {}
         idle_since: float | None = None
         consecutive_processing_failures = 0
+        consecutive_claim_failures = 0
 
         async def reap(done_tasks) -> bool:
             nonlocal consecutive_processing_failures
@@ -794,21 +795,29 @@ class QueueWorker(QThread):
                     self.stats_changed.emit(self.get_stats())
 
                 claimed_any = False
+                fatal_claim_error: DatabaseError | None = None
                 if not self.paused:
                     while len(active) < self.max_parallel_accounts:
                         excluded = set(active.values())
                         try:
                             task = self.get_db().claim_next_pending_task(excluded)
                         except DatabaseError as exc:
-                            consecutive_processing_failures += 1
-                            log.warning("Task claim failed (%s/5): %s", consecutive_processing_failures, sanitize_exception(exc))
-                            if consecutive_processing_failures >= 5:
+                            consecutive_claim_failures += 1
+                            log.warning(
+                                "Task claim failed (%s/5): %s",
+                                consecutive_claim_failures,
+                                sanitize_exception(exc),
+                            )
+                            if consecutive_claim_failures >= 5:
+                                fatal_claim_error = exc
                                 break
                             if not await self.safe_sleep(0.05):
                                 break
                             continue
                         if task is None:
+                            consecutive_claim_failures = 0
                             break
+                        consecutive_claim_failures = 0
                         consecutive_processing_failures = 0
                         payload = task.get("payload") or {}
                         try:
@@ -827,6 +836,16 @@ class QueueWorker(QThread):
                         active[future] = account_id
                         claimed_any = True
                         idle_since = None
+
+                if fatal_claim_error is not None:
+                    self._set_lifecycle_state(self.STATE_DRAINING)
+                    safe_error = sanitize_exception(fatal_claim_error)
+                    log.error(
+                        "Queue worker stopped after five consecutive task claim failures: %s",
+                        safe_error,
+                    )
+                    self.worker_error.emit(safe_error)
+                    raise fatal_claim_error
 
                 if claimed_any:
                     continue
@@ -933,12 +952,12 @@ class QueueWorker(QThread):
         task_payload = task.get("payload") or {}
         try:
             column_account_id = int(task.get("account_id") or 0)
-            payload_account_id = int(
+            payload_account_value = (
                 task_payload.get("account_id")
                 if isinstance(task_payload, dict)
                 else 0
-                or 0
             )
+            payload_account_id = int(payload_account_value or 0)
         except (TypeError, ValueError, OverflowError):
             column_account_id = 0
             payload_account_id = 0
@@ -957,13 +976,9 @@ class QueueWorker(QThread):
             self.task_failed.emit(task_id, message)
             return
 
-        raw_task_account_id: Any = (
-            task_payload.get("account_id") if isinstance(task_payload, dict) else 0
-        )
-        try:
-            task_account_id = int(raw_task_account_id or 0)
-        except (TypeError, ValueError, OverflowError):
-            task_account_id = 0
+        # The durable account_id column is authoritative for legacy tasks
+        # whose payload does not yet contain account_id.
+        task_account_id = column_account_id or payload_account_id
         if task_type in self.ACCOUNT_RPC_TASK_TYPES and task_account_id > 0:
             current_account_id = 0
             try:

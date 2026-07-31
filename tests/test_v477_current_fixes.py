@@ -291,8 +291,17 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     )
     with pytest.raises(DatabaseError, match="locked"):
         await worker._run_async()
-    assert worker._db.calls == 1
-    assert worker.lifecycle_state == worker.STATE_ACTIVE
+    assert worker._db.calls == 5
+    assert worker.lifecycle_state == worker.STATE_DRAINING
+
+
+def test_queue_worker_uses_durable_account_id_for_legacy_payload() -> None:
+    source = (ROOT / "workers" / "queue_worker.py").read_text(encoding="utf-8")
+
+    assert "payload_account_value = (" in source
+    assert "payload_account_id = int(payload_account_value or 0)" in source
+    assert "task_account_id = column_account_id or payload_account_id" in source
+    assert "raw_task_account_id: Any" not in source
 
 
 @pytest.mark.asyncio
