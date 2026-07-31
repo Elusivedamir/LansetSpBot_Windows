@@ -373,21 +373,22 @@ class CommentScheduleMixin(_MixinHost):
             connection.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
             connection.execute("PRAGMA synchronous=NORMAL")
             connection.execute("BEGIN IMMEDIATE")
-            active_task = connection.execute(
-                """SELECT 1 FROM comment_schedule s
-                   JOIN tasks t ON t.id=s.task_id
-                   WHERE s.status IN ('queued','running')
-                     AND t.status IN ('pending','running') LIMIT 1"""
-            ).fetchone()
-            if active_task is not None:
-                connection.commit()
-                return None
             row = connection.execute(
                 """SELECT s.id AS slot_id, s.campaign_id, c.account_id
                    FROM comment_schedule s
                    JOIN comment_campaigns c ON c.id=s.campaign_id
                    WHERE c.status='running' AND s.status='pending'
                      AND s.scheduled_at<=? AND c.ends_at>?
+                     AND NOT EXISTS(
+                         SELECT 1
+                         FROM comment_schedule active_s
+                         JOIN comment_campaigns active_c
+                           ON active_c.id=active_s.campaign_id
+                         JOIN tasks active_t ON active_t.id=active_s.task_id
+                         WHERE active_c.account_id=c.account_id
+                           AND active_s.status IN ('queued','running')
+                           AND active_t.status IN ('pending','running')
+                     )
                    ORDER BY s.scheduled_at ASC, s.id ASC LIMIT 1""",
                 (now_text, now_text),
             ).fetchone()

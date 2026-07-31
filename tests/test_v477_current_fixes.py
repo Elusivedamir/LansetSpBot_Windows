@@ -295,6 +295,19 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     assert worker.lifecycle_state == worker.STATE_DRAINING
 
 
+def test_comment_slot_queue_blocks_only_same_account() -> None:
+    source = (
+        ROOT / "storage/comment_campaigns/schedule.py"
+    ).read_text(encoding="utf-8")
+
+    start = source.index("def queue_due_comment_slot(")
+    end = source.index("def mark_comment_slot_running(", start)
+    block = source[start:end]
+
+    assert "WHERE active_c.account_id=c.account_id" in block
+    assert "SELECT 1 FROM comment_schedule s" not in block
+
+
 def test_comment_slot_queue_persists_task_account_id() -> None:
     source = (
         ROOT / "storage/comment_campaigns/schedule.py"
