@@ -1052,10 +1052,16 @@ class QueueWorker(QThread):
         if task_type in self.ACCOUNT_RPC_TASK_TYPES and task_account_id > 0:
             account = self.get_db().get_telegram_account(task_account_id) or {}
             runtime_state = str(account.get("runtime_state") or "").strip().lower()
-            if runtime_state == "restricted":
+            blocked_states = {
+                "stopping",
+                "stopped",
+                "authorization_required",
+                "restricted",
+            }
+            if runtime_state in blocked_states:
                 message = (
-                    "account_restricted_before_execution: Telegram RPC blocked "
-                    f"for restricted account {task_account_id}"
+                    "account_unavailable_before_execution: Telegram RPC blocked "
+                    f"for account {task_account_id} in state {runtime_state}"
                 )
                 self.get_db().set_failed(task_id, message, retry=False)
                 self.failed_count += 1
