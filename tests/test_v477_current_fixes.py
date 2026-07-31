@@ -36,6 +36,38 @@ def _core_app():
     return QApplication.instance() or QApplication([])
 
 
+def test_restriction_uses_durable_task_account_id() -> None:
+    source = (ROOT / "workers/queue_worker.py").read_text(encoding="utf-8")
+    start = source.index("except NonRetryableTelegramError as exc:")
+    end = source.index("except Exception as exc:", start)
+    block = source[start:end]
+
+    assert "restriction_account_id = (" in block
+    assert "task_account_id" in block
+    assert "if task_account_id > 0" in block
+    assert "account_id=restriction_account_id" in block
+
+    assignment = block.index("restriction_account_id = (")
+    activation = block.index("state = activate_account_restriction(")
+    assert assignment < activation
+
+
+def test_openai_deterministic_local_errors_are_not_retried() -> None:
+    source = (
+        ROOT / "services/openai_comment_service.py"
+    ).read_text(encoding="utf-8")
+    start = source.index("NON_RETRYABLE_ERROR_CODES = frozenset(")
+    end = source.index("\n\n\nclass OpenAICommentError", start)
+    block = source[start:end]
+
+    for code in (
+        '"api_key_missing"',
+        '"system_prompt_missing"',
+        '"insufficient_post_text"',
+    ):
+        assert code in block
+
+
 def test_periodic_delivery_reconciliation_moves_only_stale_rows_to_uncertain(tmp_path):
     path = tmp_path / "delivery-recovery.db"
     db = Database(path)

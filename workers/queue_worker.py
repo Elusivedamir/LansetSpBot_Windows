@@ -1190,10 +1190,18 @@ class QueueWorker(QThread):
             message = sanitize_text(f"{code}: {exc}")
             if code in RESTRICTION_CODES:
                 task_payload = task.get("payload") or {}
-                restriction_account_id: Any = (
+                payload_restriction_account_id: Any = (
                     task_payload.get("account_id")
                     if isinstance(task_payload, dict)
                     else None
+                )
+                # The durable tasks.account_id column is authoritative. Legacy
+                # payloads may omit account_id; falling back to the GUI-selected
+                # compatibility setting could restrict a different account.
+                restriction_account_id = (
+                    task_account_id
+                    if task_account_id > 0
+                    else payload_restriction_account_id
                 )
                 state = activate_account_restriction(
                     self.get_db(),

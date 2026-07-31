@@ -25,6 +25,11 @@ NON_RETRYABLE_ERROR_CODES = frozenset(
         "invalid_api_key",
         "insufficient_balance",
         "invalid_request",
+        # Local input/configuration failures cannot become valid by repeating
+        # the same provider attempt.
+        "api_key_missing",
+        "system_prompt_missing",
+        "insufficient_post_text",
     }
 )
 
