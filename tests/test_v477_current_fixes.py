@@ -295,6 +295,21 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     assert worker.lifecycle_state == worker.STATE_DRAINING
 
 
+def test_claim_normalizes_legacy_account_before_active_account_exclusion() -> None:
+    source = (ROOT / "storage" / "db_tasks.py").read_text(encoding="utf-8")
+    start = source.index("    def claim_next_pending_task(")
+    end = source.index("    def seconds_until_next_pending_task(", start)
+    method = source[start:end]
+
+    normalize = method.index("if account_id != column_account:")
+    exclusion = method.index("if account_id in excluded:")
+    final_claim = method.index("SET account_id=?, status='running'")
+
+    assert normalize < exclusion < final_claim
+    assert "WHERE id=? AND status='pending'" in method
+    assert "The normalized row is excluded by the next SELECT." in method
+
+
 def test_link_task_payload_read_modify_write_uses_immediate_transactions() -> None:
     source = (ROOT / "storage" / "db_tasks.py").read_text(encoding="utf-8")
 
