@@ -1049,6 +1049,19 @@ class QueueWorker(QThread):
             )
             return
 
+        if task_type in self.ACCOUNT_RPC_TASK_TYPES and task_account_id > 0:
+            account = self.get_db().get_telegram_account(task_account_id) or {}
+            runtime_state = str(account.get("runtime_state") or "").strip().lower()
+            if runtime_state == "restricted":
+                message = (
+                    "account_restricted_before_execution: Telegram RPC blocked "
+                    f"for restricted account {task_account_id}"
+                )
+                self.get_db().set_failed(task_id, message, retry=False)
+                self.failed_count += 1
+                self.task_failed.emit(task_id, message)
+                return
+
         # A FloodWait may be activated while this task is waiting behind other
         # local work. Re-read it at the final handler boundary so a stale claim
         # cannot cross into Telegram after the embargo was installed.

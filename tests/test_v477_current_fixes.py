@@ -295,6 +295,14 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     assert worker.lifecycle_state == worker.STATE_DRAINING
 
 
+def test_queue_worker_blocks_restricted_account_before_handler() -> None:
+    source = (ROOT / "workers/queue_worker.py").read_text(encoding="utf-8")
+    guard = source.index('runtime_state == "restricted"')
+    handler = source.index('await handler(task)')
+    assert guard < handler
+    assert "account_restricted_before_execution" in source[guard:handler]
+
+
 def test_multiaccount_scheduler_skips_restricted_accounts() -> None:
     source = (ROOT / "services/multiaccount_scheduler.py").read_text(
         encoding="utf-8"
