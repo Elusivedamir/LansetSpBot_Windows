@@ -10,7 +10,7 @@ from core.campaign_schedule import (
     to_db_time,
     utc_now,
 )
-from storage.db_common import DatabaseError
+from storage.db_common import DatabaseError, resolve_account_id
 
 log = logging.getLogger(__name__)
 
@@ -214,21 +214,29 @@ class JoinRecoveryMixin(_MixinHost):
                 f"Failed to pause join campaign for network: {exc}"
             ) from exc
 
-    def reconcile_join_schedule(self):
+    def reconcile_join_schedule(self, account_id=None):
+        owner_account_id = (
+            resolve_account_id(self, account_id)
+            if account_id is not None
+            else 0
+        )
         try:
             with self.get_connection() as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 repaired = 0
                 affected_campaign_ids = set()
 
-                orphan_rows = conn.execute(
-                    """SELECT s.id, s.campaign_id, c.status AS campaign_status
+                orphan_query = """SELECT s.id, s.campaign_id, c.status AS campaign_status
                        FROM join_schedule s
                        JOIN join_campaigns c ON c.id=s.campaign_id
                        LEFT JOIN tasks t ON t.id=s.task_id
                        WHERE s.status IN ('queued','running')
                          AND (s.task_id IS NULL OR t.id IS NULL)"""
-                ).fetchall()
+                orphan_params = ()
+                if owner_account_id > 0:
+                    orphan_query += " AND c.account_id=?"
+                    orphan_params = (owner_account_id,)
+                orphan_rows = conn.execute(orphan_query, orphan_params).fetchall()
                 for row in orphan_rows:
                     campaign_id = int(row["campaign_id"])
                     if row["campaign_status"] in {"running", "paused", "network_wait"}:
@@ -252,15 +260,18 @@ class JoinRecoveryMixin(_MixinHost):
                     repaired += 1
                     affected_campaign_ids.add(campaign_id)
 
-                rows = conn.execute(
-                    """SELECT s.id, s.campaign_id, s.saved_dialog_id,
+                completed_query = """SELECT s.id, s.campaign_id, s.saved_dialog_id,
                               c.account_id, t.status, t.error
                        FROM join_schedule s
                        JOIN join_campaigns c ON c.id=s.campaign_id
                        JOIN tasks t ON t.id=s.task_id
                        WHERE s.status IN ('queued','running')
                          AND t.status IN ('failed','cancelled','completed')"""
-                ).fetchall()
+                completed_params = ()
+                if owner_account_id > 0:
+                    completed_query += " AND c.account_id=?"
+                    completed_params = (owner_account_id,)
+                rows = conn.execute(completed_query, completed_params).fetchall()
                 for row in rows:
                     if row["status"] == "cancelled":
                         msg = str(row["error"] or "Задача отменена пользователем")

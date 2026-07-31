@@ -58,6 +58,16 @@ class AccountCampaignDatabaseView(AccountDatabaseView):
             ).fetchone()
         return row is not None
 
+    def reconcile_comment_schedule(self, account_id=None):
+        """Reconcile only comment schedule rows owned by this account."""
+        del account_id
+        return self._base.reconcile_comment_schedule(account_id=self.account_id)
+
+    def reconcile_join_schedule(self, account_id=None):
+        """Reconcile only join schedule rows owned by this account."""
+        del account_id
+        return self._base.reconcile_join_schedule(account_id=self.account_id)
+
     def queue_due_comment_slot(self, *, now=None):
         """Atomically queue one due comment slot owned by this account."""
         now = now or utc_now()
