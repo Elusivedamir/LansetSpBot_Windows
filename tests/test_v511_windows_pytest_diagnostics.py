@@ -13,7 +13,7 @@ def test_windows_pytest_diagnostics_are_split_and_fail_fast() -> None:
     assert '--ignore "tests/test_gui_v45.py" tests' in text
     assert 'Write-BuildStage "Running GUI pytest diagnostics in isolated process"' in text
     assert '"tests/test_gui_v45.py"' in text
-    assert text.count("tools\\run_ci_subprocess.py") == 2
+    assert text.count("tools\\run_ci_subprocess.py") == 4
     assert text.count("--tb=long") == 2
     assert text.count("-p tools.pytest_ci_watchdog") == 2
     assert "--maxfail=1" not in text
