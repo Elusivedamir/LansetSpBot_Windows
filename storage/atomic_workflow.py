@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+ARCHITECTURE_STATUS = "experimental"
+
+
 
 
 from contextlib import AbstractContextManager

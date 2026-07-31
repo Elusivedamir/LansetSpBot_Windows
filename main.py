@@ -56,6 +56,9 @@ from core.factory_reset_runtime import (  # noqa: E402
 from core.single_instance import SingleInstance  # noqa: E402
 from core.version import APP_NAME, __version__  # noqa: E402
 from gui.app import LansetSpBotApp  # noqa: E402
+from gui.instruction_asset_runtime import (  # noqa: E402
+    prepare_source_instruction_assets,
+)
 
 log = logging.getLogger(__name__)
 
@@ -383,6 +386,14 @@ def main() -> int:
                     f"{APP_NAME} — ошибка сброса",
                     message,
                 )
+
+        instruction_assets = prepare_source_instruction_assets(
+            profile_root=config.paths.root,
+            project_root=Path(__file__).resolve().parent,
+            frozen=bool(getattr(sys, "frozen", False)),
+        )
+        if instruction_assets.status == "generation_failed":
+            log.warning("Instruction screenshot generation failed closed")
 
         container = ApplicationContainer(config)
         container.database.reset_running_tasks()

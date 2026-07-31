@@ -10,10 +10,13 @@ so packaged builds do not silently fall back to missing pixmaps.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 _PACKAGE_ROOT = Path(__file__).resolve().parent
+INSTRUCTION_ASSET_OVERRIDE_ENV = "LANSETSPBOT_INSTRUCTION_ASSETS_DIR"
+INSTRUCTION_ASSET_STATUS_ENV = "LANSETSPBOT_INSTRUCTION_ASSETS_STATUS"
 
 
 def resource_root() -> Path:
@@ -26,9 +29,32 @@ def resource_root() -> Path:
 
 
 def asset_path(*parts: str) -> Path:
-    """Return one path inside ``gui/assets`` for source and frozen builds."""
+    """Return one path inside ``gui/assets`` for source and frozen builds.
 
+    Source runs may render instruction screenshots into the protected user
+    profile instead of mutating the Git checkout. Only that one resource
+    subtree accepts an override; every other bundled asset remains immutable.
+    """
+
+    if parts and parts[0] == "instructions":
+        override = os.environ.get(INSTRUCTION_ASSET_OVERRIDE_ENV, "").strip()
+        if override:
+            safe_parts = parts[1:]
+            if any(
+                part in {"", ".", ".."}
+                or "/" in part
+                or "\\" in part
+                or Path(part).is_absolute()
+                for part in safe_parts
+            ):
+                raise ValueError("invalid instruction asset path")
+            return Path(override).joinpath(*safe_parts)
     return resource_root().joinpath("assets", *parts)
 
 
-__all__ = ["asset_path", "resource_root"]
+__all__ = [
+    "INSTRUCTION_ASSET_OVERRIDE_ENV",
+    "INSTRUCTION_ASSET_STATUS_ENV",
+    "asset_path",
+    "resource_root",
+]

@@ -31,6 +31,13 @@ from core.redaction import sanitize_exception, sanitize_text
 from storage.database import Database
 from storage.db_common import DatabaseError
 from workers.flood_wait_guard import install_account_flood_wait
+from workers.queue_task_decisions import (
+    CancellationPersistence,
+    TaskExecutionContext,
+    cancellation_persistence,
+    parse_account_identity,
+    unexpected_retry_allowed,
+)
 
 log = logging.getLogger(__name__)
 TaskHandler = Callable[[dict], Awaitable[Any]]
@@ -935,348 +942,428 @@ class QueueWorker(QThread):
             )
 
     async def _process_task_impl(self, task: dict) -> None:
+        context = self._prepare_task_execution(task)
+        if context is None:
+            return
+        if not self._task_preflight_allows_execution(context):
+            return
+
+        try:
+            await context.handler(task)
+        except asyncio.CancelledError:
+            self._persist_cancelled_task(context)
+            raise
+        except TaskPausedError as exc:
+            self._persist_paused_task(context, exc)
+            return
+        except DeferredTelegramError as exc:
+            self._persist_deferred_task(context, task, exc)
+            return
+        except NonRetryableTelegramError as exc:
+            self._persist_nonretryable_task(context, task, exc)
+            return
+        except Exception as exc:
+            self._persist_unexpected_task(context, task, exc)
+            return
+
+        self._persist_successful_task(context)
+
+    def _prepare_task_execution(
+        self, task: dict
+    ) -> TaskExecutionContext | None:
         task_id = int(task["id"])
         task_type = str(task["type"])
         handler = self._handlers.get(task_type)
         if handler is None:
-            message = f"handler_missing: No handler for task type: {task_type}"
-            self.get_db().set_failed(task_id, message, retry=False)
-            self.failed_count += 1
-            self.task_failed.emit(task_id, message)
-            return
-
+            self._fail_without_retry(
+                task_id,
+                f"handler_missing: No handler for task type: {task_type}",
+            )
+            return None
         if self.isInterruptionRequested():
-            self.get_db().requeue_task(task_id, "Worker interrupted before execution")
-            return
-
-        task_payload = task.get("payload") or {}
-        try:
-            column_account_id = int(task.get("account_id") or 0)
-            payload_account_value = (
-                task_payload.get("account_id")
-                if isinstance(task_payload, dict)
-                else 0
+            self.get_db().requeue_task(
+                task_id, "Worker interrupted before execution"
             )
-            payload_account_id = int(payload_account_value or 0)
-        except (TypeError, ValueError, OverflowError):
-            column_account_id = 0
-            payload_account_id = 0
-        if (
-            column_account_id > 0
-            and payload_account_id > 0
-            and column_account_id != payload_account_id
-        ):
-            message = (
+            return None
+        identity = parse_account_identity(task)
+        if identity.mismatch:
+            self._fail_without_retry(
+                task_id,
                 "account_state_mismatch: task account column does not match "
-                f"payload (column={column_account_id}, "
-                f"payload={payload_account_id})"
+                f"payload (column={identity.column_account_id}, "
+                f"payload={identity.payload_account_id})",
             )
-            self.get_db().set_failed(task_id, message, retry=False)
-            self.failed_count += 1
-            self.task_failed.emit(task_id, message)
-            return
+            return None
+        payload = task.get("payload") or {}
+        return TaskExecutionContext(
+            task_id=task_id,
+            task_type=task_type,
+            handler=handler,
+            payload=dict(payload) if isinstance(payload, dict) else {},
+            column_account_id=identity.column_account_id,
+            payload_account_id=identity.payload_account_id,
+            account_id=identity.account_id,
+        )
 
-        # The durable account_id column is authoritative for legacy tasks
-        # whose payload does not yet contain account_id.
-        task_account_id = column_account_id or payload_account_id
-        # Do not compare the task owner with the GUI-selected compatibility
-        # setting here. TelegramAccountRuntimeManager routes each account-bound
-        # task to its own isolated handler/client graph using task_account_id.
-        if (
-            task_type in self.ACCOUNT_RPC_TASK_TYPES
-            and task_account_id > 0
+    def _task_preflight_allows_execution(
+        self, context: TaskExecutionContext
+    ) -> bool:
+        if self._account_cooldown_blocks(context):
+            return False
+        if self._pause_due_link_task(context):
+            return False
+        if self._account_runtime_blocks(context):
+            return False
+        # A cooldown may be installed while the task waits behind local work.
+        return not self._account_cooldown_blocks(context)
+
+    def _account_cooldown_blocks(self, context: TaskExecutionContext) -> bool:
+        return bool(
+            context.task_type in self.ACCOUNT_RPC_TASK_TYPES
+            and context.account_id > 0
             and self._postpone_for_account_rpc_cooldown(
-                task_id=task_id,
-                task_type=task_type,
-                account_id=task_account_id,
-            )
-        ):
-            return
-
-        link_pause_requested = bool(
-            task_type == "link_channels"
-            and (
-                (
-                    isinstance(task_payload, dict)
-                    and task_payload.get("_link_pause_requested")
-                )
-                or self.is_scope_cancelled("task", task_id)
+                task_id=context.task_id,
+                task_type=context.task_type,
+                account_id=context.account_id,
             )
         )
-        if link_pause_requested:
-            changed = self.get_db().pause_running_link_task(
-                task_id,
-                "Остановлено после завершения FloodWait/задержки; прогресс сохранён",
-            )
-            if not changed:
-                current = self.get_db().get_task(task_id) or {}
-                if str(current.get("status") or "") != "paused":
-                    raise RuntimeError(f"Could not pause due link task {task_id}")
-            self._persist_link_activity(
-                "INFO",
-                "FloodWait и защитная задержка завершены. Связки остановлены; "
-                "продолжение возможно только по кнопке «Продолжить связки».",
-                account_id=task_account_id,
-            )
-            return
 
-        if task_type in self.ACCOUNT_RPC_TASK_TYPES and task_account_id > 0:
-            account = self.get_db().get_telegram_account(task_account_id) or {}
-            runtime_state = str(account.get("runtime_state") or "").strip().lower()
-            blocked_states = {
-                "stopping",
-                "stopped",
-                "authorization_required",
-                "restricted",
-            }
-            if runtime_state in blocked_states:
-                message = (
-                    "account_unavailable_before_execution: Telegram RPC blocked "
-                    f"for account {task_account_id} in state {runtime_state}"
+    def _pause_due_link_task(self, context: TaskExecutionContext) -> bool:
+        pause_requested = bool(
+            context.task_type == "link_channels"
+            and (
+                context.payload.get("_link_pause_requested")
+                or self.is_scope_cancelled("task", context.task_id)
+            )
+        )
+        if not pause_requested:
+            return False
+        changed = self.get_db().pause_running_link_task(
+            context.task_id,
+            "Остановлено после завершения FloodWait/задержки; прогресс сохранён",
+        )
+        if not changed:
+            current = self.get_db().get_task(context.task_id) or {}
+            if str(current.get("status") or "") != "paused":
+                raise RuntimeError(
+                    f"Could not pause due link task {context.task_id}"
                 )
-                self.get_db().set_failed(task_id, message, retry=False)
-                self.failed_count += 1
-                self.task_failed.emit(task_id, message)
-                return
+        self._persist_link_activity(
+            "INFO",
+            "FloodWait и защитная задержка завершены. Связки остановлены; "
+            "продолжение возможно только по кнопке «Продолжить связки».",
+            account_id=context.account_id,
+        )
+        return True
 
-        # A FloodWait may be activated while this task is waiting behind other
-        # local work. Re-read it at the final handler boundary so a stale claim
-        # cannot cross into Telegram after the embargo was installed.
+    def _account_runtime_blocks(self, context: TaskExecutionContext) -> bool:
         if (
-            task_type in self.ACCOUNT_RPC_TASK_TYPES
-            and task_account_id > 0
-            and self._postpone_for_account_rpc_cooldown(
-                task_id=task_id,
-                task_type=task_type,
-                account_id=task_account_id,
-            )
+            context.task_type not in self.ACCOUNT_RPC_TASK_TYPES
+            or context.account_id <= 0
         ):
-            return
+            return False
+        account = self.get_db().get_telegram_account(context.account_id) or {}
+        runtime_state = str(account.get("runtime_state") or "").strip().lower()
+        if runtime_state not in {
+            "stopping",
+            "stopped",
+            "authorization_required",
+            "restricted",
+        }:
+            return False
+        self._fail_without_retry(
+            context.task_id,
+            "account_unavailable_before_execution: Telegram RPC blocked "
+            f"for account {context.account_id} in state {runtime_state}",
+        )
+        return True
 
-        try:
-            await handler(task)
-        except asyncio.CancelledError:
-            if task_type in self.IDEMPOTENT_TASK_TYPES:
-                self.get_db().requeue_task(
-                    task_id, "Worker cancelled before completion"
-                )
-            else:
-                self.get_db().set_failed(
-                    task_id,
-                    "Execution interrupted with uncertain external result; review before retry",
-                    retry=False,
-                )
-            raise
-        except TaskPausedError as exc:
-            changed = self.get_db().pause_running_link_task(task_id, str(exc))
-            if not changed:
-                current = self.get_db().get_task(task_id) or {}
-                if str(current.get("status") or "") != "paused":
-                    raise RuntimeError(f"Could not pause link task {task_id}")
-            if task_type == "link_channels":
-                stored = self.get_db().get_task(task_id) or task
-                progress = max(0, min(100, int(stored.get("progress") or 0)))
-                self._persist_link_activity(
-                    "INFO",
-                    f"Остановлено пользователем. Прогресс сохранён на {progress}%. "
-                    "Повторный запуск продолжит с сохранённой позиции.",
-                    account_id=task_account_id,
-                )
-            return
-        except DeferredTelegramError as exc:
-            message = sanitize_text(f"{getattr(exc, 'code', 'deferred')}: {exc}")
-            wait_seconds = max(1, int(exc.retry_after))
-            retry_at = utc_now() + timedelta(seconds=wait_seconds)
-            code = str(getattr(exc, "code", "deferred") or "deferred")
-            if code == "flood_wait_deferred" and task_account_id > 0:
-                try:
-                    cooldown = install_account_flood_wait(
-                        queue_worker=self,
-                        worker_db=self.get_db(),
-                        account_id=task_account_id,
-                        retry_at=retry_at,
-                        code=code,
-                        source_task_id=task_id,
-                        wait_seconds=wait_seconds,
-                    )
-                except Exception:
-                    # Continue trying to defer the current task. Even if every
-                    # SQLite write fails, the process-local embargo remains active
-                    # and prevents another Telegram RPC for this account.
-                    log.exception(
-                        "Could not persist account FloodWait; "
-                        "local embargo remains active"
-                    )
-                else:
-                    persisted_retry_at = from_db_time(
-                        cooldown.get("next_allowed_at")
-                    )
-                    if persisted_retry_at is not None and persisted_retry_at > retry_at:
-                        retry_at = persisted_retry_at
-            defer_result = self.get_db().defer_task(
-                task_id, retry_at=retry_at, error=message
-            )
-            if defer_result == "exhausted":
-                diagnostics = self.get_db().get_task_defer_diagnostics(task_id)
-                defer_count = self._safe_non_negative_int(
-                    diagnostics.get("defer_count"), 0
-                )
-                elapsed = self._safe_non_negative_int(
-                    diagnostics.get("elapsed_since_first_defer_seconds"), 0
-                )
-                reason = str(getattr(exc, "code", "telegram_deferred"))
-                exhausted_message = (
-                    "defer_limit_exceeded: Задача остановлена: превышен лимит "
-                    f"отложенных попыток. task_id={task_id}. "
-                    f"Последняя причина: {reason}. "
-                    f"Telegram потребовал ожидание: {int(exc.retry_after)} сек. "
-                    f"Количество отложенных попыток: {defer_count}. "
-                    f"Время с первого отложения: {elapsed} сек. "
-                    "Автоматический повтор отключён; требуется проверка."
-                )
-                self.failed_count += 1
-                self.task_failed.emit(task_id, exhausted_message)
-                log.error(exhausted_message)
-                if task_type == "link_channels":
-                    self._persist_link_activity(
-                        "ERROR",
-                        "Автоматическое продолжение остановлено: превышен лимит "
-                        "отложенных попыток. Проверьте аккаунт и запустите связки вручную.",
-                        account_id=task_account_id,
-                    )
-                return
-            if defer_result != "deferred":
-                raise RuntimeError(f"Could not defer task {task_id}")
-            self.retry_count += 1
-            if task_type == "link_channels":
-                stored = self.get_db().get_task(task_id) or task
-                progress = max(0, min(100, int(stored.get("progress") or 0)))
-                stored_payload = stored.get("payload") or {}
-                if isinstance(stored_payload, str):
-                    try:
-                        stored_payload = json.loads(stored_payload)
-                    except (TypeError, ValueError, json.JSONDecodeError):
-                        stored_payload = {}
-                stop_after_wait = bool(
-                    isinstance(stored_payload, dict)
-                    and stored_payload.get("_link_pause_requested")
-                ) or self.is_scope_cancelled("task", task_id)
-                if stop_after_wait:
-                    message = (
-                        "Telegram установил FloodWait. Стоп принят: задача дождётся "
-                        f"всех {self._format_wait_duration(int(exc.retry_after))}, "
-                        f"сохранит прогресс {progress}% и перейдёт в паузу без нового RPC."
-                    )
-                else:
-                    message = (
-                        "Telegram установил FloodWait. Связки сохранены на "
-                        f"{progress}%. Канал, вызвавший FloodWait, пропущен; "
-                        "работа продолжится со следующего объекта через "
-                        f"{self._format_wait_duration(int(exc.retry_after))}."
-                    )
-                self._persist_link_activity(
-                    "WARNING",
-                    message,
-                    account_id=task_account_id,
-                )
-            log.info(
-                "Task %s deferred for %ss without blocking the worker",
-                task_id,
-                exc.retry_after,
-            )
-            return
-        except NonRetryableTelegramError as exc:
-            code = str(getattr(exc, "code", "non_retryable") or "non_retryable")
-            message = sanitize_text(f"{code}: {exc}")
-            if code in RESTRICTION_CODES:
-                task_payload = task.get("payload") or {}
-                payload_restriction_account_id: Any = (
-                    task_payload.get("account_id")
-                    if isinstance(task_payload, dict)
-                    else None
-                )
-                # The durable tasks.account_id column is authoritative. Legacy
-                # payloads may omit account_id; falling back to the GUI-selected
-                # compatibility setting could restrict a different account.
-                restriction_account_id = (
-                    task_account_id
-                    if task_account_id > 0
-                    else payload_restriction_account_id
-                )
-                state = activate_account_restriction(
-                    self.get_db(),
-                    code=code,
-                    message=str(exc),
-                    details=dict(getattr(exc, "details", {}) or {}),
-                    account_id=restriction_account_id,
-                )
-                if task_account_id > 0:
-                    state_setter = getattr(
-                        self.get_db(), "set_account_runtime_state", None
-                    )
-                    if callable(state_setter):
-                        state_setter(
-                            task_account_id,
-                            "restricted",
-                            error=message,
-                        )
-                comment_id = state.get("comment_campaign_id")
-                if comment_id:
-                    self.request_scope_cancellation("comment_campaign", int(comment_id))
-                join_id = state.get("join_campaign_id")
-                if join_id:
-                    self.request_scope_cancellation("join_campaign", int(join_id))
-            self.get_db().set_failed(task_id, message, retry=False)
-            self.failed_count += 1
-            self.task_failed.emit(task_id, message)
-            return
-        except Exception as exc:
-            retry_count = self._safe_non_negative_int(task.get("retry_count"), 0)
-            max_retries = self._safe_non_negative_int(
-                task.get("max_retries"), self.max_retries
-            )
-            message = sanitize_exception(exc)
-            retry = (
-                task_type in self.IDEMPOTENT_TASK_TYPES and retry_count < max_retries
-            )
-            self.get_db().set_failed(task_id, message, retry=retry)
-            self.retry_count += int(retry)
-            self.failed_count += int(not retry)
-            self.task_failed.emit(task_id, message)
-            return
+    def _fail_without_retry(self, task_id: int, message: str) -> None:
+        self.get_db().set_failed(task_id, message, retry=False)
+        self.failed_count += 1
+        self.task_failed.emit(task_id, message)
 
-        # The handler returned successfully, so an external side effect may already
-        # exist. Never put this task back into pending if the completion write fails.
+    def _persist_cancelled_task(self, context: TaskExecutionContext) -> None:
+        action = cancellation_persistence(
+            context.task_type, self.IDEMPOTENT_TASK_TYPES
+        )
+        if action is CancellationPersistence.REQUEUE:
+            self.get_db().requeue_task(
+                context.task_id, "Worker cancelled before completion"
+            )
+            return
+        self.get_db().set_failed(
+            context.task_id,
+            "Execution interrupted with uncertain external result; review before retry",
+            retry=False,
+        )
+
+    def _persist_paused_task(
+        self, context: TaskExecutionContext, exc: TaskPausedError
+    ) -> None:
+        changed = self.get_db().pause_running_link_task(
+            context.task_id, str(exc)
+        )
+        if not changed:
+            current = self.get_db().get_task(context.task_id) or {}
+            if str(current.get("status") or "") != "paused":
+                raise RuntimeError(
+                    f"Could not pause link task {context.task_id}"
+                )
+        if context.task_type != "link_channels":
+            return
+        stored = self.get_db().get_task(context.task_id) or {}
+        progress = max(0, min(100, int(stored.get("progress") or 0)))
+        self._persist_link_activity(
+            "INFO",
+            f"Остановлено пользователем. Прогресс сохранён на {progress}%. "
+            "Повторный запуск продолжит с сохранённой позиции.",
+            account_id=context.account_id,
+        )
+
+    def _persist_deferred_task(
+        self,
+        context: TaskExecutionContext,
+        task: dict,
+        exc: DeferredTelegramError,
+    ) -> None:
+        message = sanitize_text(
+            f"{getattr(exc, 'code', 'deferred')}: {exc}"
+        )
+        wait_seconds = max(1, int(exc.retry_after))
+        retry_at = utc_now() + timedelta(seconds=wait_seconds)
+        code = str(getattr(exc, "code", "deferred") or "deferred")
+        retry_at = self._install_task_flood_wait(
+            context=context,
+            code=code,
+            wait_seconds=wait_seconds,
+            retry_at=retry_at,
+        )
+        result = self.get_db().defer_task(
+            context.task_id, retry_at=retry_at, error=message
+        )
+        if result == "exhausted":
+            self._persist_defer_exhaustion(context, exc)
+            return
+        if result != "deferred":
+            raise RuntimeError(f"Could not defer task {context.task_id}")
+        self.retry_count += 1
+        if context.task_type == "link_channels":
+            self._persist_link_defer_activity(context, task, exc)
+        log.info(
+            "Task %s deferred for %ss without blocking the worker",
+            context.task_id,
+            exc.retry_after,
+        )
+
+    def _install_task_flood_wait(
+        self,
+        *,
+        context: TaskExecutionContext,
+        code: str,
+        wait_seconds: int,
+        retry_at,
+    ):
+        if code != "flood_wait_deferred" or context.account_id <= 0:
+            return retry_at
         try:
-            changed = self.get_db().set_done(task_id)
+            cooldown = install_account_flood_wait(
+                queue_worker=self,
+                worker_db=self.get_db(),
+                account_id=context.account_id,
+                retry_at=retry_at,
+                code=code,
+                source_task_id=context.task_id,
+                wait_seconds=wait_seconds,
+            )
+        except Exception:
+            log.exception(
+                "Could not persist account FloodWait; "
+                "local embargo remains active"
+            )
+            return retry_at
+        persisted = from_db_time(cooldown.get("next_allowed_at"))
+        if persisted is not None and persisted > retry_at:
+            return persisted
+        return retry_at
+
+    def _persist_defer_exhaustion(
+        self, context: TaskExecutionContext, exc: DeferredTelegramError
+    ) -> None:
+        diagnostics = self.get_db().get_task_defer_diagnostics(
+            context.task_id
+        )
+        defer_count = self._safe_non_negative_int(
+            diagnostics.get("defer_count"), 0
+        )
+        elapsed = self._safe_non_negative_int(
+            diagnostics.get("elapsed_since_first_defer_seconds"), 0
+        )
+        reason = str(getattr(exc, "code", "telegram_deferred"))
+        message = (
+            "defer_limit_exceeded: Задача остановлена: превышен лимит "
+            f"отложенных попыток. task_id={context.task_id}. "
+            f"Последняя причина: {reason}. "
+            f"Telegram потребовал ожидание: {int(exc.retry_after)} сек. "
+            f"Количество отложенных попыток: {defer_count}. "
+            f"Время с первого отложения: {elapsed} сек. "
+            "Автоматический повтор отключён; требуется проверка."
+        )
+        self.failed_count += 1
+        self.task_failed.emit(context.task_id, message)
+        log.error(message)
+        if context.task_type == "link_channels":
+            self._persist_link_activity(
+                "ERROR",
+                "Автоматическое продолжение остановлено: превышен лимит "
+                "отложенных попыток. Проверьте аккаунт и запустите связки вручную.",
+                account_id=context.account_id,
+            )
+
+    def _persist_link_defer_activity(
+        self,
+        context: TaskExecutionContext,
+        task: dict,
+        exc: DeferredTelegramError,
+    ) -> None:
+        stored = self.get_db().get_task(context.task_id) or task
+        progress = max(0, min(100, int(stored.get("progress") or 0)))
+        payload = stored.get("payload") or {}
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+        stop_after_wait = bool(
+            isinstance(payload, dict)
+            and payload.get("_link_pause_requested")
+        ) or self.is_scope_cancelled("task", context.task_id)
+        if stop_after_wait:
+            message = (
+                "Telegram установил FloodWait. Стоп принят: задача дождётся "
+                f"всех {self._format_wait_duration(int(exc.retry_after))}, "
+                f"сохранит прогресс {progress}% и перейдёт в паузу без нового RPC."
+            )
+        else:
+            message = (
+                "Telegram установил FloodWait. Связки сохранены на "
+                f"{progress}%. Канал, вызвавший FloodWait, пропущен; "
+                "работа продолжится со следующего объекта через "
+                f"{self._format_wait_duration(int(exc.retry_after))}."
+            )
+        self._persist_link_activity(
+            "WARNING", message, account_id=context.account_id
+        )
+
+    def _persist_nonretryable_task(
+        self,
+        context: TaskExecutionContext,
+        task: dict,
+        exc: NonRetryableTelegramError,
+    ) -> None:
+        code = str(getattr(exc, "code", "non_retryable") or "non_retryable")
+        message = sanitize_text(f"{code}: {exc}")
+        if code in RESTRICTION_CODES:
+            self._activate_task_account_restriction(
+                context=context,
+                task=task,
+                exc=exc,
+                code=code,
+                message=message,
+            )
+        self._fail_without_retry(context.task_id, message)
+
+    def _activate_task_account_restriction(
+        self,
+        *,
+        context: TaskExecutionContext,
+        task: dict,
+        exc: NonRetryableTelegramError,
+        code: str,
+        message: str,
+    ) -> None:
+        payload = task.get("payload") or {}
+        payload_account_id: Any = (
+            payload.get("account_id") if isinstance(payload, dict) else None
+        )
+        restriction_account_id = (
+            context.account_id
+            if context.account_id > 0
+            else payload_account_id
+        )
+        state = activate_account_restriction(
+            self.get_db(),
+            code=code,
+            message=str(exc),
+            details=dict(getattr(exc, "details", {}) or {}),
+            account_id=restriction_account_id,
+        )
+        if context.account_id > 0:
+            setter = getattr(self.get_db(), "set_account_runtime_state", None)
+            if callable(setter):
+                setter(context.account_id, "restricted", error=message)
+        comment_id = state.get("comment_campaign_id")
+        if comment_id:
+            self.request_scope_cancellation(
+                "comment_campaign", int(comment_id)
+            )
+        join_id = state.get("join_campaign_id")
+        if join_id:
+            self.request_scope_cancellation("join_campaign", int(join_id))
+
+    def _persist_unexpected_task(
+        self, context: TaskExecutionContext, task: dict, exc: Exception
+    ) -> None:
+        retry_count = self._safe_non_negative_int(task.get("retry_count"), 0)
+        max_retries = self._safe_non_negative_int(
+            task.get("max_retries"), self.max_retries
+        )
+        message = sanitize_exception(exc)
+        retry = unexpected_retry_allowed(
+            task_type=context.task_type,
+            retry_count=retry_count,
+            max_retries=max_retries,
+            idempotent_task_types=self.IDEMPOTENT_TASK_TYPES,
+        )
+        self.get_db().set_failed(context.task_id, message, retry=retry)
+        self.retry_count += int(retry)
+        self.failed_count += int(not retry)
+        self.task_failed.emit(context.task_id, message)
+
+    def _persist_successful_task(self, context: TaskExecutionContext) -> None:
+        try:
+            changed = self.get_db().set_done(context.task_id)
         except Exception as exc:
             message = (
                 "completion_state_uncertain: handler succeeded but SQLite could not "
                 f"record completion: {sanitize_exception(exc)}"
             )
-            log.critical("Task %s: %s", task_id, message)
+            log.critical("Task %s: %s", context.task_id, message)
             try:
-                self.get_db().set_failed(task_id, message, retry=False)
+                self.get_db().set_failed(
+                    context.task_id, message, retry=False
+                )
             except Exception:
                 log.exception(
-                    "Could not mark uncertain task %s for manual review", task_id
+                    "Could not mark uncertain task %s for manual review",
+                    context.task_id,
                 )
             self.failed_count += 1
-            self.task_failed.emit(task_id, message)
+            self.task_failed.emit(context.task_id, message)
             return
-
         if not changed:
-            current = self.get_db().get_task(task_id) or {}
+            current = self.get_db().get_task(context.task_id) or {}
             if str(current.get("status") or "") == "completed":
-                # Side-effect handlers may atomically commit their domain result
-                # together with the task completion marker.
                 self.processed_count += 1
-                self.task_completed.emit(task_id)
+                self.task_completed.emit(context.task_id)
                 return
-            log.warning("Task %s finished but was no longer in running state", task_id)
+            log.warning(
+                "Task %s finished but was no longer in running state",
+                context.task_id,
+            )
             return
         self.processed_count += 1
-        self.task_completed.emit(task_id)
+        self.task_completed.emit(context.task_id)
 
     @staticmethod
     def _safe_non_negative_int(value, default: int) -> int:

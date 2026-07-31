@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -13,11 +14,19 @@ __version__ = str(VERSION_NAMESPACE["__version__"])
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path(__file__).with_name("windows_version_info.txt"),
+    )
+    arguments = parser.parse_args()
     parts = [int(part) for part in __version__.split(".")]
     while len(parts) < 4:
         parts.append(0)
     version_tuple = tuple(parts[:4])
-    output = Path(__file__).with_name("windows_version_info.txt")
+    output = arguments.output.resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
         f"""VSVersionInfo(
   ffi=FixedFileInfo(

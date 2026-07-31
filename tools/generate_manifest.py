@@ -95,7 +95,17 @@ def main() -> int:
         action="store_true",
         help="exit non-zero if SHA256SUMS.txt is out of date",
     )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=MANIFEST,
+        help=(
+            "write or check the rendered manifest at this path; the shipped file "
+            "set is still derived from the project checkout"
+        ),
+    )
     arguments = parser.parse_args()
+    output = arguments.output.resolve()
 
     try:
         expected = render_manifest()
@@ -103,15 +113,16 @@ def main() -> int:
         print(f"ERROR: {exc}")
         return 2
     if arguments.check:
-        current = MANIFEST.read_text(encoding="utf-8") if MANIFEST.is_file() else ""
+        current = output.read_text(encoding="utf-8") if output.is_file() else ""
         if current != expected:
-            print(f"{MANIFEST_NAME} is out of date; run tools/generate_manifest.py")
+            print(f"{output} is out of date; run tools/generate_manifest.py")
             return 1
-        print(f"{MANIFEST_NAME} is up to date ({len(expected.splitlines())} files)")
+        print(f"{output} is up to date ({len(expected.splitlines())} files)")
         return 0
 
-    MANIFEST.write_text(expected, encoding="utf-8")
-    print(f"{MANIFEST_NAME}: {len(expected.splitlines())} files")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(expected, encoding="utf-8")
+    print(f"{output}: {len(expected.splitlines())} files")
     return 0
 
 

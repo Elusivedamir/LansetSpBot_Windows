@@ -13,6 +13,10 @@ outside the temporary data directory.
 Usage:
     python tools/capture_instruction_screenshots.py
     python tools/capture_instruction_screenshots.py --width 1440 --height 960
+
+The default destination is ``dist/instruction-assets`` so an ordinary proof
+run never edits committed source assets. Maintainers must pass an explicit
+destination if they intentionally refresh a reviewed source fixture.
 """
 
 from __future__ import annotations
@@ -31,8 +35,9 @@ from gui.instruction_assets import (  # noqa: E402 - project path is prepared ab
     mark_instruction_assets_stale,
     write_instruction_asset_metadata,
 )
+from gui.resources import INSTRUCTION_ASSET_OVERRIDE_ENV  # noqa: E402
 
-DESTINATION = PROJECT_ROOT / "gui" / "assets" / "instructions"
+DESTINATION = PROJECT_ROOT / "dist" / "instruction-assets"
 
 # Page index in LansetSpBotApp.stack -> screenshot name used by InstructionsView.
 PAGES = (
@@ -53,9 +58,11 @@ def main() -> int:
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     profile = Path(tempfile.mkdtemp(prefix="instruction-capture-"))
+    os.environ["LANSETSPBOT_DATA_DIR"] = str(profile)
     os.environ["MARLEN_DATA_DIR"] = str(profile)
-    destination = Path(arguments.destination)
+    destination = Path(arguments.destination).resolve()
     destination.mkdir(parents=True, exist_ok=True)
+    os.environ[INSTRUCTION_ASSET_OVERRIDE_ENV] = str(destination)
     # Mark before constructing InstructionsView so a previous successful build
     # cannot make this capture display old screenshots as current.
     mark_instruction_assets_stale(destination)

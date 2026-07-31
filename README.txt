@@ -37,13 +37,15 @@ Diagnose a failed start
 Install dependencies manually (optional)
   py -3.13-64 -m venv .venv-windows-x64
   .venv-windows-x64\Scripts\python.exe -m pip install --require-hashes -r requirements-runtime.lock
-  .venv-windows-x64\Scripts\python.exe -m pip install -r requirements-openai.txt
+  .venv-windows-x64\Scripts\python.exe -m pip install --require-hashes -r requirements-openai.lock
 
 Where your data lives
-  %APPDATA%\Marlen
+  %APPDATA%\LansetSpBot
     marlen.db          SQLCipher-encrypted database, bound to this Windows account
     sessions\          the live Telegram session
     logs\marlen.log    application log
+  %APPDATA%\Marlen is the legacy location and is used only as an explicit
+  migration source. The application does not silently merge both profiles.
   The program keeps no backups. A copy of a session file is a second working
   key to the Telegram account, and a profile archive is one more thing to
   guard, so neither is created. Closing the program does not sign you out; the
@@ -59,13 +61,16 @@ Build a Windows executable
 Maintenance tools
   tools\generate_manifest.py                rebuild SHA256SUMS.txt (--check verifies)
   tools\check_lock_coverage.py              verify the lock covers every supported Python
-  tools\capture_instruction_screenshots.py  re-render the in-app instruction images
+  tools\capture_instruction_screenshots.py  render verified images into dist\instruction-assets
   tools\check_critical_coverage.py          per-module coverage minimums
 
 Environment variables
+  LANSETSPBOT_DATA_DIR
+    Canonical optional profile-directory override.
+    Default: %APPDATA%\LansetSpBot
   MARLEN_DATA_DIR
-    Optional. Overrides the profile directory.
-    Default: %APPDATA%\Marlen
+    Legacy compatibility override. Use only while migrating older automation;
+    LANSETSPBOT_DATA_DIR takes precedence when both are present.
   LANSETSPBOT_ALLOW_PLAINTEXT_TEST_DB
   LANSETSPBOT_ALLOW_TEST_MASTER_KEY
   LANSETSPBOT_TEST_MASTER_KEY_B64

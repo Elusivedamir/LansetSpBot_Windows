@@ -164,7 +164,7 @@ class ApplicationContainer:
         )
         if not migration_stopped:
             return False
-        self.database.close_thread_connection()
+        self.database.finalize_shutdown()
         return True
 
     def shutdown(self, timeout_ms: int = 45_000) -> bool:
@@ -190,7 +190,7 @@ class ApplicationContainer:
 
         if not (worker_stopped and migration_stopped):
             return False
-        self.database.close_thread_connection()
+        self.database.finalize_shutdown()
         return True
 
     def factory_reset_local_data(self) -> FactoryResetResult:

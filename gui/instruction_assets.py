@@ -50,6 +50,18 @@ def source_fingerprint(project_root: str | Path) -> str | None:
     return digest.hexdigest()
 
 
+def instruction_asset_cache_directory(
+    profile_root: str | Path,
+    project_root: str | Path,
+) -> Path:
+    """Return the source-run cache directory bound to the current GUI sources."""
+
+    fingerprint = source_fingerprint(project_root)
+    if not fingerprint:
+        raise RuntimeError("Instruction source files are unavailable")
+    return Path(profile_root) / "instruction-assets" / fingerprint
+
+
 def _file_digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 

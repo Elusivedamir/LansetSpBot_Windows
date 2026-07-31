@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from PySide6.QtCore import QTimer, Qt, Signal
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (
 from core.version import __version__
 from gui.instruction_assets import METADATA_FILENAME, instruction_assets_ready
 
-from ..resources import asset_path
+from ..resources import INSTRUCTION_ASSET_STATUS_ENV, asset_path
 
 
 class ClickableScreenshot(QLabel):
@@ -326,8 +327,15 @@ class InstructionsView(QWidget):
             (
                 "Снимки проверены по исходникам и хешам текущей сборки."
                 if self._screenshots_ready
-                else "Старые снимки скрыты. Windows-сборка автоматически "
-                "переснимет текущий интерфейс и проверит хеши."
+                else (
+                    "Снимки скрыты: автоматическая генерация в пользовательском "
+                    "кэше не удалась. Основные функции приложения доступны; "
+                    "перезапустите программу после проверки установки PySide6."
+                    if os.environ.get(INSTRUCTION_ASSET_STATUS_ENV)
+                    == "generation_failed"
+                    else "Снимки скрыты до проверки хешей. При source-запуске они "
+                    "создаются в пользовательском кэше без изменения checkout."
+                )
             )
         )
 
@@ -408,8 +416,9 @@ class InstructionsView(QWidget):
         image.setProperty("sourcePixmap", pixmap)
         if pixmap.isNull():
             image.setText(
-                "Скриншот временно скрыт: его соответствие текущему интерфейсу "
-                "не подтверждено. Windows-сборка обновит изображение автоматически."
+                "Скриншот скрыт: его соответствие текущему интерфейсу не подтверждено. "
+                "Source-запуск создаёт проверенную копию в пользовательском кэше; "
+                "при ошибке генерации основное приложение продолжает работу."
             )
             image.setCursor(Qt.CursorShape.ArrowCursor)
             image.setFocusPolicy(Qt.FocusPolicy.NoFocus)

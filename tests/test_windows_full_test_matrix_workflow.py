@@ -1,0 +1,71 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = ROOT / ".github" / "workflows" / "windows-full-test-matrix.yml"
+RUNNER = ROOT / "tools" / "run_windows_source_ci.ps1"
+
+
+def test_windows_full_matrix_runs_both_supported_pythons() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "name: Windows Full Test Matrix" in text
+    assert '          - "3.13"' in text
+    assert '          - "3.14"' in text
+    assert "runs-on: windows-2022" in text
+    assert "fail-fast: false" in text
+
+
+def test_windows_full_matrix_installs_only_hash_locked_requirements() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    for lock in (
+        "requirements-bootstrap.txt",
+        "requirements-runtime.lock",
+        "requirements-openai.lock",
+        "requirements-dev-windows-x64.lock",
+    ):
+        assert f"--require-hashes -r {lock}" in text or (
+            lock in text and "--require-hashes --no-build-isolation" in text
+        )
+    assert "python -m pip check" in text
+    assert "requirements-openai.txt" not in text
+
+
+def test_windows_full_matrix_keeps_complete_failure_evidence() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "if: always()" in text
+    assert "dist/windows-ci/**" in text
+    assert "if-no-files-found: error" in text
+    assert "summary.json" in text
+
+
+def test_windows_source_runner_executes_all_release_relevant_gates() -> None:
+    text = RUNNER.read_text(encoding="utf-8-sig")
+    expected = (
+        '"manifest"',
+        '"openai-lock"',
+        '"runtime-lock-coverage"',
+        '"compileall"',
+        '"ruff"',
+        '"mypy"',
+        '"pytest-core"',
+        '"pytest-gui"',
+        '"coverage-report"',
+        '"critical-coverage"',
+        '"source-self-test"',
+        '"checkout-final"',
+    )
+    for gate in expected:
+        assert gate in text
+
+
+def test_windows_source_runner_preserves_ambiguous_failure_diagnostics() -> None:
+    text = RUNNER.read_text(encoding="utf-8-sig")
+    assert "--maxfail=1" not in text
+    assert '"--total-timeout-seconds", "3600"' in text
+    assert '"--total-timeout-seconds", "900"' in text
+    assert '"--junitxml", (Join-Path $EvidenceRoot "pytest-core.xml")' in text
+    assert '"--junitxml", (Join-Path $EvidenceRoot "pytest-gui.xml")' in text
+    assert "checkout-final.json" in text
+    assert "summary.json" in text

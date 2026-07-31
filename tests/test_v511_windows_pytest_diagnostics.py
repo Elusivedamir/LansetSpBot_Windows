@@ -17,17 +17,17 @@ def test_windows_pytest_diagnostics_are_split_and_fail_fast() -> None:
     assert text.count("--tb=long") == 2
     assert text.count("-p tools.pytest_ci_watchdog") == 2
     assert "--maxfail=1" not in text
-    assert "--total-timeout-seconds 1800" in text
+    assert "--total-timeout-seconds 3600" in text
     assert "--total-timeout-seconds 900" in text
 
 
 def test_split_pytest_diagnostics_keep_independent_evidence() -> None:
     text = BUILD.read_text(encoding="utf-8-sig")
 
-    assert '--log "ci-proof\\pytest-core.log"' in text
-    assert '--log "ci-proof\\pytest-gui.log"' in text
-    assert '--junitxml "ci-proof\\pytest-core.xml"' in text
-    assert '--junitxml "ci-proof\\pytest-gui.xml"' in text
+    assert '--log (Join-Path $ProofRoot "pytest-core.log")' in text
+    assert '--log (Join-Path $ProofRoot "pytest-gui.log")' in text
+    assert '--junitxml (Join-Path $ProofRoot "pytest-core.xml")' in text
+    assert '--junitxml (Join-Path $ProofRoot "pytest-gui.xml")' in text
     assert "pytest-diagnostics-summary.txt" in text
     assert "core_exit=$coreTestsExit" in text
     assert "gui_exit=$guiTestsExit" in text

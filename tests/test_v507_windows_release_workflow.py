@@ -25,7 +25,7 @@ def test_workflow_verifies_and_uploads_release_evidence() -> None:
     assert "Release ZIP checksum mismatch" in text
     assert "SBOM does not contain the OpenAI SDK" in text
     assert "coverage.json" in text
-    assert "actions/upload-artifact@v4" in text
+    assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in text
     assert "if-no-files-found: error" in text
 
 
@@ -38,7 +38,7 @@ def test_checkout_is_verified_before_ci_evidence_is_created() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     clean_check = text.index("git status --porcelain=v1 --untracked-files=all")
     proof_directory = text.index(
-        'New-Item -ItemType Directory -Path "ci-proof" -Force'
+        'New-Item -ItemType Directory -Path "dist\\ci-proof" -Force'
     )
     assert clean_check < proof_directory
     assert text.count("Checkout is not clean before the proof run.") == 1
@@ -60,4 +60,5 @@ def test_manifest_failure_keeps_expected_and_actual_evidence() -> None:
     assert "SHA256SUMS.expected.txt" in workflow
     assert "SHA256SUMS.actual.txt" in workflow
     assert "manifest-regeneration.txt" in workflow
-    assert "git checkout -- SHA256SUMS.txt" in workflow
+    assert "git checkout -- SHA256SUMS.txt" not in workflow
+    assert 'tools/generate_manifest.py `\n              --output "dist\\ci-proof\\SHA256SUMS.actual.txt"' in workflow

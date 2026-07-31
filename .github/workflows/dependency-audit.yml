@@ -1,0 +1,49 @@
+name: Dependency Audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  audit-locks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Audit every shipped lock with OSV
+        uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
+        with:
+          inputs: >-
+            requirements-runtime.lock
+            requirements-openai.lock
+            requirements-build-windows-x64.lock
+            requirements-dev-windows-x64.lock
+          require-hashes: true
+          no-deps: true
+          disable-pip: true
+          vulnerability-service: osv
+          summary: false
+          internal-be-careful-allow-failure: true
+          internal-be-careful-extra-flags: >-
+            --format=json
+            --output=dependency-audit.json
+
+      - name: Enforce fail-closed vulnerability policy
+        run: python tools/enforce_dependency_audit_policy.py dependency-audit.json
+
+      - name: Upload raw dependency audit evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dependency-audit-${{ github.sha }}
+          path: dependency-audit.json
+          if-no-files-found: error
+          retention-days: 30

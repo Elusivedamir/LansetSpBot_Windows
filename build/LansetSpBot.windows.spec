@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
@@ -7,6 +8,18 @@ project_root = Path(SPECPATH).parent
 version_namespace = {}
 exec((project_root / "core" / "version.py").read_text(encoding="utf-8"), version_namespace)
 app_name = version_namespace["APP_NAME"]
+instruction_assets = Path(
+    os.environ.get(
+        "LANSETSPBOT_BUILD_INSTRUCTION_ASSETS",
+        project_root / "gui" / "assets" / "instructions",
+    )
+).resolve()
+version_info = Path(
+    os.environ.get(
+        "LANSETSPBOT_BUILD_VERSION_INFO",
+        project_root / "build" / "windows_version_info.txt",
+    )
+).resolve()
 
 hiddenimports = (
     collect_submodules("telethon")
@@ -36,7 +49,7 @@ analysis = Analysis(
     binaries=[],
     datas=collect_data_files("tzdata") + collect_data_files("openai") + [
         (
-            str(project_root / "gui" / "assets" / "instructions"),
+            str(instruction_assets),
             "gui/assets/instructions",
         ),
         # The sidebar/menu SVG icons and the window icon are loaded at runtime
@@ -71,7 +84,7 @@ exe = EXE(
     upx=False,
     console=False,
     icon=str(project_root / "build" / "assets" / "LansetSpBot.ico"),
-    version=str(project_root / "build" / "windows_version_info.txt"),
+    version=str(version_info),
     uac_admin=False,
 )
 coll = COLLECT(

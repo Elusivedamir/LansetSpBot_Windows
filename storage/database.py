@@ -86,7 +86,7 @@ class Database(
         except OSError:
             preexisting = True
         try:
-            self._database_key = prepare_encrypted_database(
+            self._database_key: bytes | None = prepare_encrypted_database(
                 self.path, key_storage_dir=self.key_storage_dir
             )
             self.sqlite_timeout_seconds = self.busy_timeout_ms / 1000.0
@@ -744,6 +744,24 @@ class Database(
             conn.close()
         finally:
             state.connection = None
+
+    def finalize_shutdown(self) -> None:
+        """Release this thread's connection and forget cached SQLCipher key bytes.
+
+        Call this only after every worker that can own a connection has stopped and
+        closed its thread-local connection.  A later use of this ``Database`` object
+        remains supported: the SQLCipher driver will re-derive the same DPAPI-bound
+        key from ``key_storage_dir`` when the next connection is opened.
+
+        Python immutable ``bytes`` objects cannot provide a strict zeroization
+        guarantee; dropping the application and registry references is therefore
+        best-effort lifetime reduction, not proof that every historical copy was
+        overwritten in process memory.
+        """
+
+        self.close_thread_connection()
+        forget_database_key(self.path)
+        self._database_key = None
 
     def __del__(self) -> None:
         # Production owners close explicitly. This guard prevents a same-thread

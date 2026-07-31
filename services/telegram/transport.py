@@ -50,6 +50,16 @@ from services.telegram_error_translation import (
     PERMANENT_SEND_ERRORS,
     translate_permanent_send_error,
 )
+from services.telegram_transport_decisions import (
+    CancellationAction,
+    NetworkFailureAction,
+    OperationFailureAction,
+    RpcFailureAction,
+    cancellation_action,
+    network_failure_decision,
+    operation_failure_decision,
+    rpc_failure_action,
+)
 
 log = logging.getLogger(__name__)
 
@@ -418,6 +428,252 @@ class TelegramTransportMixin(_MixinHost):
     async def stop(self) -> None:
         await self.disconnect()
 
+    async def _execute_once(
+        self,
+        method,
+        args,
+        kwargs,
+        *,
+        dispatch_barrier,
+        attempt_state,
+    ):
+        """Dispatch one call while preserving the exact request boundary."""
+
+        def mark_dispatched(request):
+            if isinstance(request, self._MUTATING_REQUEST_TYPES):
+                attempt_state["request_dispatched"] = True
+            if dispatch_barrier is not None:
+                return dispatch_barrier.dispatch(request)
+            return None
+
+        async def start_fallback_call(*, timeout: float | None):
+            dispatch_context = (
+                dispatch_barrier.dispatch(None)
+                if dispatch_barrier is not None
+                else nullcontext()
+            )
+            with dispatch_context:
+                # A fallback client cannot expose the underlying MTProto request,
+                # so handing over its coroutine is the conservative boundary.
+                attempt_state["request_dispatched"] = True
+                operation = method(*args, **kwargs)
+                task = asyncio.ensure_future(operation)
+                await asyncio.sleep(0)
+            return await self._await_interruptible(task, timeout=timeout)
+
+        await self.ensure_connected()
+        if self._interruption_requested():
+            raise asyncio.CancelledError
+        if getattr(self.client, "_marlen_request_pacing", False):
+            observer = getattr(self.client, "observe_requests", None)
+            if callable(observer):
+                with observer(mark_dispatched):
+                    return await self._await_interruptible(
+                        method(*args, **kwargs), timeout=None
+                    )
+            return await start_fallback_call(timeout=None)
+
+        request_slot = getattr(self.limiter, "request_slot", None)
+        if callable(request_slot):
+            async with request_slot():
+                if self._interruption_requested():
+                    raise asyncio.CancelledError
+                return await start_fallback_call(timeout=30.0)
+
+        await self.limiter.acquire()
+        if self._interruption_requested():
+            raise asyncio.CancelledError
+        return await start_fallback_call(timeout=30.0)
+
+    async def _raise_flood_wait(self, exc: BaseException) -> None:
+        raw_wait = max(0, int(getattr(exc, "seconds", 0) or 0))
+        wait_time = self._protected_flood_wait_seconds(raw_wait)
+        log.warning(
+            "Telegram FloodWait: requested=%ss, protected_wait=%ss",
+            raw_wait,
+            wait_time,
+        )
+        await self._report_status(
+            "Ограничение Telegram: автоматическое продолжение через "
+            f"{wait_time} сек"
+        )
+        raise DeferredTelegramError(
+            "Telegram FloodWait",
+            code="flood_wait_deferred",
+            retry_after=wait_time,
+        ) from exc
+
+    async def _raise_slow_mode_wait(self, exc: BaseException) -> None:
+        raw_wait = max(0, int(getattr(exc, "seconds", 0) or 0))
+        wait_time = raw_wait + random.randint(
+            self.FLOOD_WAIT_BUFFER_MIN_SECONDS,
+            self.FLOOD_WAIT_BUFFER_MAX_SECONDS,
+        )
+        log.warning(
+            "Telegram SlowModeWait: requested=%ss, protected_wait=%ss",
+            raw_wait,
+            wait_time,
+        )
+        await self._report_status(
+            f"Медленный режим чата: задача отложена на {wait_time} сек"
+        )
+        raise DeferredTelegramError(
+            "Telegram SlowModeWait",
+            code="slow_mode_wait_deferred",
+            retry_after=wait_time,
+        ) from exc
+
+    def _raise_generic_flood(self, exc: BaseException) -> None:
+        raw_wait = max(0, int(getattr(exc, "seconds", 0) or 0))
+        if raw_wait <= 0:
+            raise NonRetryableTelegramError(
+                "Telegram flood control returned no retry interval; account activity stopped",
+                code="peer_flood",
+                details={
+                    "rpc_error": type(exc).__name__,
+                    "rpc_message": str(exc),
+                },
+            ) from exc
+        wait_time = self._protected_flood_wait_seconds(raw_wait)
+        log.warning(
+            "Telegram generic FloodError: requested=%ss, protected_wait=%ss",
+            raw_wait,
+            wait_time,
+        )
+        raise DeferredTelegramError(
+            "Telegram generic FloodError",
+            code="flood_wait_deferred",
+            retry_after=wait_time,
+        ) from exc
+
+    async def _retry_after_network_failure(
+        self,
+        exc: BaseException,
+        *,
+        retry_network: bool,
+        request_dispatched: bool,
+        network_attempts: int,
+        max_network_attempts: int,
+        unknown_result_code: str,
+    ) -> int:
+        self._connected = False
+        decision = network_failure_decision(
+            retry_network=retry_network,
+            request_dispatched=request_dispatched,
+            attempts=network_attempts,
+            max_attempts=max_network_attempts,
+        )
+        if decision.action is NetworkFailureAction.UNCERTAIN:
+            raise NonRetryableTelegramError(
+                "Telegram delivery result is unknown after a network failure; review before retry",
+                code=unknown_result_code,
+            ) from exc
+        if decision.action is NetworkFailureAction.EXHAUSTED:
+            raise NonRetryableTelegramError(
+                "Telegram network unavailable after "
+                f"{decision.attempts} attempts: {exc}",
+                code="network_unavailable",
+            ) from exc
+
+        log.warning("Transient Telegram network error, reconnecting: %s", exc)
+        await self.disconnect()
+        if not await self.safe_sleep(min(2**decision.attempts, 5)):
+            action = cancellation_action(
+                retry_network=retry_network,
+                request_dispatched=request_dispatched,
+            )
+            if action is CancellationAction.DEFER_BEFORE_DISPATCH:
+                raise DeferredTelegramError(
+                    "Operation stopped before Telegram request dispatch",
+                    code="shutdown_before_dispatch",
+                    retry_after=1,
+                )
+            raise asyncio.CancelledError
+        return decision.attempts
+
+    async def _retry_after_operation_failure(
+        self,
+        exc: TelegramOperationError,
+        *,
+        retry_network: bool,
+        request_dispatched: bool,
+        network_attempts: int,
+        max_network_attempts: int,
+    ) -> int:
+        decision = operation_failure_decision(
+            request_dispatched=request_dispatched,
+            attempts=network_attempts,
+            max_attempts=max_network_attempts,
+        )
+        if decision.action is OperationFailureAction.PROPAGATE:
+            raise exc
+        self._connected = False
+        if decision.action is OperationFailureAction.EXHAUSTED:
+            raise NonRetryableTelegramError(
+                "Telegram network unavailable after "
+                f"{decision.attempts} attempts: {exc}",
+                code="network_unavailable",
+            ) from exc
+
+        log.warning("Telegram pre-dispatch failure, reconnecting: %s", exc)
+        await self.disconnect()
+        if not await self.safe_sleep(min(2**decision.attempts, 5)):
+            if not retry_network:
+                raise DeferredTelegramError(
+                    "Operation stopped before Telegram request dispatch",
+                    code="shutdown_before_dispatch",
+                    retry_after=1,
+                )
+            raise asyncio.CancelledError
+        return decision.attempts
+
+    def _raise_rpc_error(
+        self,
+        exc: RPCError,
+        *,
+        retry_network: bool,
+        request_dispatched: bool,
+        unknown_result_code: str,
+    ) -> None:
+        rpc_code = int(getattr(exc, "code", 0) or 0)
+        rpc_name = type(exc).__name__
+        rpc_message = str(exc)
+        action = rpc_failure_action(
+            rpc_code=rpc_code,
+            rpc_name=rpc_name,
+            rpc_text=rpc_message,
+            retry_network=retry_network,
+            request_dispatched=request_dispatched,
+        )
+        details = {"rpc_error": rpc_name, "rpc_message": rpc_message}
+        if action is RpcFailureAction.USER_RESTRICTED:
+            raise NonRetryableTelegramError(
+                "Telegram restricted this user account",
+                code="user_restricted",
+                details=details,
+            ) from exc
+        if action is RpcFailureAction.AUTH_KEY_DUPLICATED:
+            self._connected = False
+            raise NonRetryableTelegramError(
+                "Telegram invalidated the duplicated authorization key",
+                code="auth_key_duplicated",
+                details=details,
+            ) from exc
+        if action is RpcFailureAction.UNCERTAIN:
+            raise NonRetryableTelegramError(
+                "Telegram delivery result is unknown after a transient RPC failure; "
+                "review before retry",
+                code=unknown_result_code,
+                details=details,
+            ) from exc
+        if action is RpcFailureAction.DEFER:
+            raise DeferredTelegramError(
+                f"Temporary Telegram RPC error: {exc}",
+                code="telegram_rpc_deferred",
+                retry_after=random.randint(30, 90),
+            ) from exc
+        raise TelegramOperationError(f"Telegram RPC error: {exc}") from exc
+
     async def execute(
         self,
         method,
@@ -427,77 +683,26 @@ class TelegramTransportMixin(_MixinHost):
         dispatch_barrier=None,
         **kwargs,
     ):
-        """Run one Telegram call with timeout and bounded retries.
+        """Run one Telegram call with timeout and bounded, ambiguity-safe retries."""
 
-        Mutating sends must pass retry_network=False because a lost response does
-        not prove that Telegram rejected the first request. Explicit FloodWait
-        and SlowModeWait responses are treated as pre-execution rejections by
-        Telegram. They are converted to persisted deferred retries so the shared
-        queue worker can continue with unrelated due tasks.
-        """
         network_attempts = 0
         max_network_attempts = 3
         while True:
-            request_started = False
-
-            def mark_dispatched(request):
-                nonlocal request_started
-                if isinstance(request, self._MUTATING_REQUEST_TYPES):
-                    request_started = True
-                # Safety barriers are not limited to mutating calls.  A local
-                # ban/Stop/RESTRICTED committed while a route is being resolved
-                # must also block the exact GetFullChannel/GetMessages/
-                # GetDiscussionMessage MTProto boundary.  ``request_started``
-                # remains mutation-only because it controls ambiguous-delivery
-                # classification after network failures.
-                if dispatch_barrier is not None:
-                    return dispatch_barrier.dispatch(request)
-                return None
-
-            async def start_fallback_call(*, timeout: float | None):
-                nonlocal request_started
-                dispatch_context = (
-                    dispatch_barrier.dispatch(None)
-                    if dispatch_barrier is not None
-                    else nullcontext()
-                )
-                with dispatch_context:
-                    request_started = True
-                    operation = method(*args, **kwargs)
-                    task = asyncio.ensure_future(operation)
-                    await asyncio.sleep(0)
-                return await self._await_interruptible(task, timeout=timeout)
-
+            attempt_state = {"request_dispatched": False}
             try:
-                await self.ensure_connected()
-                if self._interruption_requested():
-                    raise asyncio.CancelledError
-                if getattr(self.client, "_marlen_request_pacing", False):
-                    # The client boundary paces every underlying MTProto call,
-                    # including paginator pages and helper-internal requests.
-                    observer = getattr(self.client, "observe_requests", None)
-                    if callable(observer):
-                        with observer(mark_dispatched):
-                            return await self._await_interruptible(
-                                method(*args, **kwargs), timeout=None
-                            )
-                    return await start_fallback_call(timeout=None)
-                # Fallback/mock clients do not pace their own MTProto boundary.
-                # Keep the gate for the complete request, not merely for acquire().
-                request_slot = getattr(self.limiter, "request_slot", None)
-                if callable(request_slot):
-                    async with request_slot():
-                        if self._interruption_requested():
-                            raise asyncio.CancelledError
-                        return await start_fallback_call(timeout=30.0)
-                # Compatibility for minimal test/alternate limiters. Production
-                # always supplies RateLimiter.request_slot().
-                await self.limiter.acquire()
-                if self._interruption_requested():
-                    raise asyncio.CancelledError
-                return await start_fallback_call(timeout=30.0)
+                return await self._execute_once(
+                    method,
+                    args,
+                    kwargs,
+                    dispatch_barrier=dispatch_barrier,
+                    attempt_state=attempt_state,
+                )
             except asyncio.CancelledError as exc:
-                if not retry_network and not request_started:
+                action = cancellation_action(
+                    retry_network=retry_network,
+                    request_dispatched=attempt_state["request_dispatched"],
+                )
+                if action is CancellationAction.DEFER_BEFORE_DISPATCH:
                     raise DeferredTelegramError(
                         "Operation stopped before Telegram request dispatch",
                         code="shutdown_before_dispatch",
@@ -509,68 +714,12 @@ class TelegramTransportMixin(_MixinHost):
                 FloodPremiumWaitError,
                 FloodTestPhoneWaitError,
             ) as exc:
-                raw_wait = max(0, int(exc.seconds))
-                wait_time = self._protected_flood_wait_seconds(raw_wait)
-                log.warning(
-                    "Telegram FloodWait: requested=%ss, protected_wait=%ss",
-                    raw_wait,
-                    wait_time,
-                )
-                await self._report_status(
-                    "Ограничение Telegram: автоматическое продолжение через "
-                    f"{wait_time} сек"
-                )
-                # FloodWait is an explicit pre-execution rejection. Persist the
-                # retry time and release the global worker for unrelated tasks.
-                raise DeferredTelegramError(
-                    "Telegram FloodWait",
-                    code="flood_wait_deferred",
-                    retry_after=wait_time,
-                ) from exc
+                await self._raise_flood_wait(exc)
             except SlowModeWaitError as exc:
-                raw_wait = max(0, int(exc.seconds))
-                wait_time = raw_wait + random.randint(
-                    self.FLOOD_WAIT_BUFFER_MIN_SECONDS,
-                    self.FLOOD_WAIT_BUFFER_MAX_SECONDS,
-                )
-                log.warning(
-                    "Telegram SlowModeWait: requested=%ss, protected_wait=%ss",
-                    raw_wait,
-                    wait_time,
-                )
-                await self._report_status(
-                    f"Медленный режим чата: задача отложена на {wait_time} сек"
-                )
-                raise DeferredTelegramError(
-                    "Telegram SlowModeWait",
-                    code="slow_mode_wait_deferred",
-                    retry_after=wait_time,
-                ) from exc
+                await self._raise_slow_mode_wait(exc)
             except FloodError as exc:
-                raw_wait = max(0, int(getattr(exc, "seconds", 0) or 0))
-                if raw_wait <= 0:
-                    raise NonRetryableTelegramError(
-                        "Telegram flood control returned no retry interval; account activity stopped",
-                        code="peer_flood",
-                        details={
-                            "rpc_error": type(exc).__name__,
-                            "rpc_message": str(exc),
-                        },
-                    ) from exc
-                wait_time = self._protected_flood_wait_seconds(raw_wait)
-                log.warning(
-                    "Telegram generic FloodError: requested=%ss, protected_wait=%ss",
-                    raw_wait,
-                    wait_time,
-                )
-                raise DeferredTelegramError(
-                    "Telegram generic FloodError",
-                    code="flood_wait_deferred",
-                    retry_after=wait_time,
-                ) from exc
+                self._raise_generic_flood(exc)
             except UserAlreadyParticipantError:
-                # Join operations use False to distinguish an existing membership
-                # from a newly-created one; callers must not consume join quota.
                 return False
             except PeerFloodError as exc:
                 raise NonRetryableTelegramError(
@@ -647,105 +796,31 @@ class TelegramTransportMixin(_MixinHost):
                     },
                 ) from exc
             except (asyncio.TimeoutError, ConnectionError, OSError) as exc:
-                self._connected = False
-                if not retry_network and request_started:
-                    raise NonRetryableTelegramError(
-                        "Telegram delivery result is unknown after a network failure; review before retry",
-                        code=unknown_result_code,
-                    ) from exc
-                network_attempts += 1
-                if network_attempts >= max_network_attempts:
-                    raise NonRetryableTelegramError(
-                        f"Telegram network unavailable after {network_attempts} attempts: {exc}",
-                        code="network_unavailable",
-                    ) from exc
-                log.warning("Transient Telegram network error, reconnecting: %s", exc)
-                await self.disconnect()
-                if not await self.safe_sleep(min(2**network_attempts, 5)):
-                    if not retry_network and not request_started:
-                        raise DeferredTelegramError(
-                            "Operation stopped before Telegram request dispatch",
-                            code="shutdown_before_dispatch",
-                            retry_after=1,
-                        )
-                    raise asyncio.CancelledError
+                network_attempts = await self._retry_after_network_failure(
+                    exc,
+                    retry_network=retry_network,
+                    request_dispatched=attempt_state["request_dispatched"],
+                    network_attempts=network_attempts,
+                    max_network_attempts=max_network_attempts,
+                    unknown_result_code=unknown_result_code,
+                )
             except DeferredTelegramError:
-                # Dispatch barriers and explicit persisted cooldowns are already
-                # classified by the caller. Reconnecting or retrying here could
-                # cross a committed Stop/local-ban boundary.
                 raise
             except TelegramOperationError as exc:
-                if request_started:
-                    raise
-                self._connected = False
-                network_attempts += 1
-                if network_attempts >= max_network_attempts:
-                    raise NonRetryableTelegramError(
-                        f"Telegram network unavailable after {network_attempts} attempts: {exc}",
-                        code="network_unavailable",
-                    ) from exc
-                log.warning("Telegram pre-dispatch failure, reconnecting: %s", exc)
-                await self.disconnect()
-                if not await self.safe_sleep(min(2**network_attempts, 5)):
-                    if not retry_network:
-                        raise DeferredTelegramError(
-                            "Operation stopped before Telegram request dispatch",
-                            code="shutdown_before_dispatch",
-                            retry_after=1,
-                        )
-                    raise asyncio.CancelledError
+                network_attempts = await self._retry_after_operation_failure(
+                    exc,
+                    retry_network=retry_network,
+                    request_dispatched=attempt_state["request_dispatched"],
+                    network_attempts=network_attempts,
+                    max_network_attempts=max_network_attempts,
+                )
             except RPCError as exc:
-                rpc_code = int(getattr(exc, "code", 0) or 0)
-                rpc_name = type(exc).__name__
-                rpc_text = str(exc).upper()
-                if rpc_name == "UserRestrictedError" or "USER_RESTRICTED" in rpc_text:
-                    raise NonRetryableTelegramError(
-                        "Telegram restricted this user account",
-                        code="user_restricted",
-                        details={
-                            "rpc_error": rpc_name,
-                            "rpc_message": str(exc),
-                        },
-                    ) from exc
-                if (
-                    rpc_name == "AuthKeyDuplicatedError"
-                    or "AUTH_KEY_DUPLICATED" in rpc_text
-                ):
-                    self._connected = False
-                    raise NonRetryableTelegramError(
-                        "Telegram invalidated the duplicated authorization key",
-                        code="auth_key_duplicated",
-                        details={
-                            "rpc_error": rpc_name,
-                            "rpc_message": str(exc),
-                        },
-                    ) from exc
-                transient_names = {
-                    "ServerError",
-                    "TimedOutError",
-                    "InterdcCallErrorError",
-                    "InterdcCallRichErrorError",
-                    "RpcMcgetFailError",
-                    "WorkerBusyTooLongRetryError",
-                }
-                if rpc_code >= 500 or rpc_name in transient_names:
-                    if not retry_network and request_started:
-                        raise NonRetryableTelegramError(
-                            "Telegram delivery result is unknown after a transient "
-                            "RPC failure; review before retry",
-                            code=unknown_result_code,
-                            details={
-                                "rpc_error": rpc_name,
-                                "rpc_message": str(exc),
-                            },
-                        ) from exc
-                    retry_after = random.randint(30, 90)
-                    raise DeferredTelegramError(
-                        f"Temporary Telegram RPC error: {exc}",
-                        code="telegram_rpc_deferred",
-                        retry_after=retry_after,
-                    ) from exc
-                raise TelegramOperationError(f"Telegram RPC error: {exc}") from exc
+                self._raise_rpc_error(
+                    exc,
+                    retry_network=retry_network,
+                    request_dispatched=attempt_state["request_dispatched"],
+                    unknown_result_code=unknown_result_code,
+                )
 
     async def _iter_with_timeout(
         self,
