@@ -295,6 +295,44 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     assert worker.lifecycle_state == worker.STATE_DRAINING
 
 
+def test_orphan_comment_slot_never_requeues_existing_delivery() -> None:
+    source = (
+        ROOT / "storage/comment_campaigns/reconciliation.py"
+    ).read_text(encoding="utf-8")
+
+    orphan_start = source.index('orphan_query = """SELECT')
+    completed_start = source.index('completed_query = """SELECT', orphan_start)
+    block = source[orphan_start:completed_start]
+
+    assert "direct_delivery_status" in block
+    assert "comment_delivery_status" in block
+    assert 'in {"sending", "uncertain", "sent"}' in block
+    assert "durable_delivery_exists" in block
+    assert "SET status='uncertain'" in block
+    assert "SET status='paused'" in block
+
+    guard = block.index("if durable_delivery_exists:")
+    pending_reset = block.index("SET status='pending'")
+    assert guard < pending_reset
+
+
+def test_orphan_delivery_scope_includes_linked_discussion() -> None:
+    source = (
+        ROOT / "storage/comment_campaigns/reconciliation.py"
+    ).read_text(encoding="utf-8")
+
+    orphan_start = source.index('orphan_query = """SELECT')
+    completed_start = source.index('completed_query = """SELECT', orphan_start)
+    block = source[orphan_start:completed_start]
+
+    assert "cd.account_id=c.account_id" in block
+    assert "cd.campaign_id=s.campaign_id" in block
+    assert "cd.action_type='campaign_comment'" in block
+    assert "cd.channel_id=s.channel_id" in block
+    assert "cd.post_id=s.post_id" in block
+    assert "cd.linked_chat_id=COALESCE(s.linked_chat_id, 0)" in block
+
+
 def test_multiaccount_runtime_is_not_blocked_by_gui_selection() -> None:
     scheduler = (
         ROOT / "services/multiaccount_scheduler.py"

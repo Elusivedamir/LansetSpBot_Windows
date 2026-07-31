@@ -34,10 +34,22 @@ class CommentReconciliationMixin(_MixinHost):
                 conn.execute("BEGIN IMMEDIATE")
                 affected_campaign_ids = set()
 
-                orphan_query = """SELECT s.id, s.campaign_id, c.status AS campaign_status
+                orphan_query = """SELECT s.id, s.campaign_id, c.account_id,
+                              c.status AS campaign_status, s.task_id,
+                              s.channel_id, s.post_id, s.linked_chat_id,
+                              d.status AS direct_delivery_status,
+                              cd.status AS comment_delivery_status
                        FROM comment_schedule s
                        JOIN comment_campaigns c ON c.id=s.campaign_id
                        LEFT JOIN tasks t ON t.id=s.task_id
+                       LEFT JOIN direct_message_deliveries d ON d.task_id=s.task_id
+                       LEFT JOIN comment_deliveries cd
+                         ON cd.account_id=c.account_id
+                        AND cd.campaign_id=s.campaign_id
+                        AND cd.action_type='campaign_comment'
+                        AND cd.channel_id=s.channel_id
+                        AND cd.post_id=s.post_id
+                        AND cd.linked_chat_id=COALESCE(s.linked_chat_id, 0)
                        WHERE s.status IN ('queued','running')
                          AND (s.task_id IS NULL OR t.id IS NULL)"""
                 orphan_params = ()
@@ -46,6 +58,82 @@ class CommentReconciliationMixin(_MixinHost):
                     orphan_params = (owner_account_id,)
                 orphan_rows = conn.execute(orphan_query, orphan_params).fetchall()
                 for row in orphan_rows:
+                    direct_delivery_status = str(
+                        row["direct_delivery_status"] or ""
+                    )
+                    comment_delivery_status = str(
+                        row["comment_delivery_status"] or ""
+                    )
+                    durable_delivery_exists = (
+                        direct_delivery_status in {"sending", "uncertain", "sent"}
+                        or comment_delivery_status
+                        in {"sending", "uncertain", "sent"}
+                    )
+                    if durable_delivery_exists:
+                        # A missing queue row does not prove that Telegram never
+                        # received the request. The durable delivery ledger is
+                        # authoritative: fail closed instead of returning this
+                        # slot to pending and risking a duplicate send.
+                        message = (
+                            "Задача потеряна, но журнал отправки содержит "
+                            "незавершённый или подтверждённый результат; "
+                            "требуется ручная проверка"
+                        )
+                        conn.execute(
+                            """UPDATE comment_schedule
+                               SET status='uncertain', result=?,
+                                   executed_at=CURRENT_TIMESTAMP
+                               WHERE id=? AND status IN ('queued','running')""",
+                            (message, int(row["id"])),
+                        )
+                        if row["task_id"] is not None:
+                            conn.execute(
+                                """UPDATE direct_message_deliveries
+                                   SET status='uncertain', error=?,
+                                       updated_at=CURRENT_TIMESTAMP
+                                   WHERE task_id=?
+                                     AND status IN ('sending','sent')""",
+                                (message, int(row["task_id"])),
+                            )
+                        if (
+                            row["channel_id"] is not None
+                            and row["post_id"] is not None
+                        ):
+                            conn.execute(
+                                """UPDATE comment_deliveries
+                                   SET status='uncertain', error=?,
+                                       updated_at=CURRENT_TIMESTAMP
+                                   WHERE account_id=? AND campaign_id=?
+                                     AND action_type='campaign_comment'
+                                     AND channel_id=? AND post_id=?
+                                     AND linked_chat_id=?
+                                     AND status IN ('sending','sent')""",
+                                (
+                                    message,
+                                    int(row["account_id"]),
+                                    int(row["campaign_id"]),
+                                    int(row["channel_id"]),
+                                    int(row["post_id"]),
+                                    int(row["linked_chat_id"] or 0),
+                                ),
+                            )
+                        conn.execute(
+                            """UPDATE comment_campaigns
+                               SET status='paused', pause_reason=?,
+                                   network_retry_at=NULL,
+                                   updated_at=CURRENT_TIMESTAMP
+                               WHERE id=? AND status IN (
+                                   'running','network_wait','cycle_wait'
+                               )""",
+                            (
+                                "Кампания приостановлена: задача потеряна, "
+                                "но результат отправки нельзя безопасно повторить",
+                                int(row["campaign_id"]),
+                            ),
+                        )
+                        affected_campaign_ids.add(int(row["campaign_id"]))
+                        continue
+
                     if row["campaign_status"] in {
                         "running",
                         "paused",
