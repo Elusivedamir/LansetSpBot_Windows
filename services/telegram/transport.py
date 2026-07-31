@@ -729,6 +729,16 @@ class TelegramTransportMixin(_MixinHost):
                     "WorkerBusyTooLongRetryError",
                 }
                 if rpc_code >= 500 or rpc_name in transient_names:
+                    if not retry_network and request_started:
+                        raise NonRetryableTelegramError(
+                            "Telegram delivery result is unknown after a transient "
+                            "RPC failure; review before retry",
+                            code=unknown_result_code,
+                            details={
+                                "rpc_error": rpc_name,
+                                "rpc_message": str(exc),
+                            },
+                        ) from exc
                     retry_after = random.randint(30, 90)
                     raise DeferredTelegramError(
                         f"Temporary Telegram RPC error: {exc}",
