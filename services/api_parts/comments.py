@@ -261,13 +261,32 @@ class CommentCampaignAPIMixin(_MixinHost):
                 "max_generation_attempts"
             ),
         }
-        self.database.save_campaign_comment_settings(
-            campaign_id=successor_id,
-            account_id=source_account_id,
-            comment_source=comment_source,
-            settings=CommentGenerationSettings.from_mapping(snapshot_mapping),
-            system_prompt=str(source_settings.get("system_prompt") or ""),
-        )
+        try:
+            self.database.save_campaign_comment_settings(
+                campaign_id=successor_id,
+                account_id=source_account_id,
+                comment_source=comment_source,
+                settings=CommentGenerationSettings.from_mapping(snapshot_mapping),
+                system_prompt=str(source_settings.get("system_prompt") or ""),
+            )
+        except Exception:
+            # A successor without its immutable source snapshot must never run:
+            # prepared/OpenAI mode, model and prompt are part of campaign state,
+            # not optional decoration. Fail closed and leave it paused for an
+            # explicit operator decision instead of sending with defaults.
+            try:
+                self.database.pause_comment_campaign(
+                    successor_id,
+                    reason=(
+                        "Новый 24-часовой цикл приостановлен: "
+                        "не удалось сохранить настройки комментариев"
+                    ),
+                )
+            except Exception:
+                log.exception(
+                    "Could not pause successor after comment-settings failure"
+                )
+            raise
         QTimer.singleShot(0, self._campaign_tick)
         return True
 

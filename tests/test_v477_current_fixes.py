@@ -295,6 +295,25 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     assert worker.lifecycle_state == worker.STATE_DRAINING
 
 
+def test_continuous_successor_fails_closed_without_settings_snapshot() -> None:
+    source = (
+        ROOT / "services/api_parts/comments.py"
+    ).read_text(encoding="utf-8")
+
+    start = source.index(
+        "        try:\n"
+        "            self.database.save_campaign_comment_settings("
+    )
+    end = source.index("        QTimer.singleShot(0, self._campaign_tick)", start)
+    block = source[start:end]
+
+    assert "except Exception:" in block
+    assert "self.database.pause_comment_campaign(" in block
+    assert "successor_id," in block
+    assert "не удалось сохранить настройки комментариев" in block
+    assert block.rstrip().endswith("raise")
+
+
 def test_reconciliation_trusts_uncertain_delivery_state_after_crash() -> None:
     source = (
         ROOT / "storage/comment_campaigns/reconciliation.py"
