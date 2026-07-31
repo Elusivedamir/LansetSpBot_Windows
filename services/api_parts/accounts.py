@@ -60,31 +60,10 @@ class AccountsAPIMixin(_MixinHost):
         }
 
     def select_telegram_account(self, account_id: int) -> dict[str, Any]:
-        owner = int(account_id)
-        if owner <= 0:
-            raise ValueError("Некорректный Telegram-аккаунт")
-        current = self.get_selected_account_id()
-        if current == owner:
-            account = self.database.get_telegram_account(owner)
-            if not account:
-                raise ValueError("Telegram-аккаунт не найден")
-            return account
-
-        # QueueWorker creates its handler set and live Telethon client once per
-        # thread lifecycle. Changing the compatibility selected-account setting
-        # while that worker remains alive would leave the old session attached
-        # to tasks of the newly selected account. Require a clean idle shutdown
-        # first; unfinished account work remains a deliberate switch blocker.
-        prepare = getattr(self, "prepare_account_change", None)
-        if callable(prepare) and not bool(prepare()):
-            raise RuntimeError(
-                "Нельзя переключить аккаунт, пока выполняются или ожидают "
-                "завершения фоновые задачи"
-            )
-
-        result = self.database.select_telegram_account(owner)
-        # The next scheduler/queue start recreates handlers from the newly
-        # selected account and therefore opens the matching Telethon session.
+        result = self.database.select_telegram_account(account_id)
+        # TelegramAccountRuntimeManager owns one isolated Telethon runtime per
+        # task account. Changing the GUI-selected account only changes the
+        # compatibility/default context; it must not stop unrelated runtimes.
         return result
 
     def _strict_account_secret(

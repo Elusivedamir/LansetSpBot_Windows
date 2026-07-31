@@ -979,38 +979,9 @@ class QueueWorker(QThread):
         # The durable account_id column is authoritative for legacy tasks
         # whose payload does not yet contain account_id.
         task_account_id = column_account_id or payload_account_id
-        if task_type in self.ACCOUNT_RPC_TASK_TYPES and task_account_id > 0:
-            current_account_id = 0
-            try:
-                current_account_id = int(
-                    self.get_db().get_setting("telegram.account_id", 0) or 0
-                )
-            except Exception:
-                current_account_id = task_account_id
-            if current_account_id > 0 and current_account_id != task_account_id:
-                message = (
-                    "account_state_mismatch: selected Telegram account changed "
-                    f"after task creation (task={task_account_id}, "
-                    f"current={current_account_id})"
-                )
-                self.get_db().set_failed(task_id, message, retry=False)
-                campaign_id = int(task_payload.get("campaign_id") or 0)
-                if campaign_id > 0:
-                    reason = "Кампания приостановлена: Telegram-сессия не совпадает с локальным аккаунтом"
-                    slot_id = int(task_payload.get("slot_id") or 0)
-                    if task_type == "auto_comment_slot":
-                        self.get_db().pause_comment_campaign(campaign_id, reason=reason)
-                        if slot_id > 0:
-                            self.get_db().defer_comment_slot(
-                                slot_id, scheduled_at=utc_now(), result=reason
-                            )
-                    elif task_type == "join_saved_slot":
-                        self.get_db().pause_join_campaign(campaign_id, reason=reason)
-                        if slot_id > 0:
-                            self.get_db().defer_join_slot(slot_id, utc_now(), reason)
-                self.failed_count += 1
-                self.task_failed.emit(task_id, message)
-                return
+        # Do not compare the task owner with the GUI-selected compatibility
+        # setting here. TelegramAccountRuntimeManager routes each account-bound
+        # task to its own isolated handler/client graph using task_account_id.
         if (
             task_type in self.ACCOUNT_RPC_TASK_TYPES
             and task_account_id > 0

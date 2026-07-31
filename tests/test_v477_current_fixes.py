@@ -295,53 +295,32 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     assert worker.lifecycle_state == worker.STATE_DRAINING
 
 
-def test_account_selection_restarts_session_boundary_safely() -> None:
-    source = (
-        ROOT / "services/api_parts/accounts.py"
-    ).read_text(encoding="utf-8")
-
-    start = source.index(
-        "    def select_telegram_account(self, account_id: int) -> dict[str, Any]:"
-    )
-    end = source.index(
-        "    def _strict_account_secret(",
-        start,
-    )
-    block = source[start:end]
-
-    assert 'prepare = getattr(self, "prepare_account_change", None)' in block
-    assert "if callable(prepare) and not bool(prepare()):" in block
-    assert "self.database.select_telegram_account(owner)" in block
-    assert block.index("prepare_account_change") < block.index(
-        "self.database.select_telegram_account(owner)"
-    )
-
-
-def test_multiaccount_scheduler_does_not_queue_against_wrong_session() -> None:
-    source = (
+def test_multiaccount_runtime_is_not_blocked_by_gui_selection() -> None:
+    scheduler = (
         ROOT / "services/multiaccount_scheduler.py"
     ).read_text(encoding="utf-8")
+    accounts = (
+        ROOT / "services/api_parts/accounts.py"
+    ).read_text(encoding="utf-8")
+    worker = (
+        ROOT / "workers/queue_worker.py"
+    ).read_text(encoding="utf-8")
+    manager = (
+        ROOT / "services/account_runtime_manager.py"
+    ).read_text(encoding="utf-8")
 
-    assert (
-        'selected_account_id = int(\n'
-        '        root.database.get_setting("telegram.account_id", 0) or 0\n'
-        '    )'
-        in source
-    )
-    assert (
-        'if selected_account_id <= 0 or account_id != selected_account_id:'
-        in source
-    )
-    assert 'outcomes[account_id] = "skipped:not_selected"' in source
-
-    selected_guard = source.index(
-        "if selected_account_id <= 0 or account_id != selected_account_id:"
-    )
-    context_creation = source.index(
-        "context = AccountCampaignContext(root, account_id)",
-        selected_guard,
-    )
-    assert selected_guard < context_creation
+    assert "class TelegramAccountRuntimeManager:" in manager
+    assert "return await manager.dispatch(_name, task)" in manager
+    assert 'outcomes[account_id] = "skipped:not_selected"' not in scheduler
+    assert "prepare_account_change" not in accounts[
+        accounts.index(
+            "    def select_telegram_account(self, account_id: int) -> dict[str, Any]:"
+        ):
+        accounts.index("    def _strict_account_secret(", accounts.index(
+            "    def select_telegram_account(self, account_id: int) -> dict[str, Any]:"
+        ))
+    ]
+    assert "selected Telegram account changed after task creation" not in worker
 
 
 def test_continuous_successor_fails_closed_without_settings_snapshot() -> None:
