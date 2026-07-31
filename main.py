@@ -21,6 +21,11 @@ if _SELF_TEST:
     _SELF_TEST_ROOT = Path(tempfile.mkdtemp(prefix="marlen-self-test-"))
     os.environ["MARLEN_DATA_DIR"] = str(_SELF_TEST_ROOT)
 
+if "--migrate-profile" in sys.argv:
+    from core.profile_migration_cli import run_profile_migration_command
+
+    raise SystemExit(run_profile_migration_command())
+
 from core.profile_bootstrap import (  # noqa: E402
     ProfileBootstrapError,
     prepare_profile_environment,
