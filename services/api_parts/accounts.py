@@ -557,10 +557,13 @@ class AccountsAPIMixin(_MixinHost):
             raise ValueError(
                 "Сначала переключитесь с другого подключённого аккаунта."
             )
-        return self.database.import_comment_profile_between_accounts(
-            source_account_id=source,
-            target_account_id=target,
-            mode=mode,
+        return cast(
+            dict[str, Any],
+            self.database.import_comment_profile_between_accounts(
+                source_account_id=source,
+                target_account_id=target,
+                mode=mode,
+            ),
         )
 
     def import_channels_from_previous_account(self) -> dict[str, int]:
@@ -570,7 +573,10 @@ class AccountsAPIMixin(_MixinHost):
             raise ValueError(
                 "Сначала переключитесь с другого подключённого аккаунта."
             )
-        return self.database.import_channels_between_accounts(
-            source_account_id=source,
-            target_account_id=target,
+        return cast(
+            dict[str, int],
+            self.database.import_channels_between_accounts(
+                source_account_id=source,
+                target_account_id=target,
+            ),
         )
