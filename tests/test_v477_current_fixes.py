@@ -295,6 +295,33 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     assert worker.lifecycle_state == worker.STATE_DRAINING
 
 
+def test_multiaccount_scheduler_does_not_queue_against_wrong_session() -> None:
+    source = (
+        ROOT / "services/multiaccount_scheduler.py"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        'selected_account_id = int(\n'
+        '        root.database.get_setting("telegram.account_id", 0) or 0\n'
+        '    )'
+        in source
+    )
+    assert (
+        'if selected_account_id <= 0 or account_id != selected_account_id:'
+        in source
+    )
+    assert 'outcomes[account_id] = "skipped:not_selected"' in source
+
+    selected_guard = source.index(
+        "if selected_account_id <= 0 or account_id != selected_account_id:"
+    )
+    context_creation = source.index(
+        "context = AccountCampaignContext(root, account_id)",
+        selected_guard,
+    )
+    assert selected_guard < context_creation
+
+
 def test_continuous_successor_fails_closed_without_settings_snapshot() -> None:
     source = (
         ROOT / "services/api_parts/comments.py"

@@ -357,9 +357,20 @@ def run_multiaccount_campaign_tick(root) -> dict[int, str]:
                 "runtime_state": "active",
                 "stopped": False,
             }]
+    selected_account_id = int(
+        root.database.get_setting("telegram.account_id", 0) or 0
+    )
     for account in accounts:
         account_id = int(account.get("telegram_account_id") or 0)
         if account_id <= 0:
+            continue
+        # QueueWorker owns one handler set and one live Telethon session created
+        # from the currently selected account. Until handlers are instantiated
+        # per account, scheduling another account would create a task that the
+        # worker must reject as account_state_mismatch and would pause a healthy
+        # campaign. Keep non-selected campaigns durable but unscheduled.
+        if selected_account_id <= 0 or account_id != selected_account_id:
+            outcomes[account_id] = "skipped:not_selected"
             continue
         state = str(account.get("runtime_state") or "")
         if bool(account.get("stopped")) or state in {
