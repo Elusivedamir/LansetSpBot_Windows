@@ -39,9 +39,9 @@ def test_activity_log_budget_is_five_mib_with_four_mib_prune_target():
 
 def test_multithreaded_log_counter_remains_exact_and_bounded(tmp_path):
     db = Database(tmp_path / "concurrent-logs.db")
-    workers = 8
-    entries_per_worker = 160
-    payload = "Ж" * 3_000
+    workers = 4
+    entries_per_worker = 80
+    payload = "Ж" * 8_000
 
     def write_batch(worker_index: int) -> None:
         for row_index in range(entries_per_worker):

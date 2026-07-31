@@ -71,6 +71,7 @@ def test_secret_store_rejects_non_string_and_oversized_values(tmp_path):
         SecretStore(target).get_strict_optional("telegram.api_hash")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission-bit assertion")
 def test_secret_store_hardens_existing_world_readable_file(tmp_path):
     if os.name == "nt":
         pytest.skip("POSIX mode assertion")

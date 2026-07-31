@@ -3,10 +3,8 @@ from __future__ import annotations
 import re
 import secrets
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-from core.config import MAX_COMMENT_VARIANTS
 from services.account_context import (
     SECRET_SETTING_KEYS,
     account_secret_key,
@@ -22,7 +20,6 @@ from services.account_sessions import (
     validate_session_name,
     write_account_lifecycle_journal,
 )
-from storage.db_common import DatabaseError
 
 if TYPE_CHECKING:  # pragma: no cover
     from core.mixin_host import MixinHost as _MixinHost
@@ -38,7 +35,10 @@ class AccountsAPIMixin(_MixinHost):
     MAX_TELEGRAM_ACCOUNTS = 5
 
     def list_telegram_accounts(self) -> list[dict[str, Any]]:
-        return self.database.list_telegram_accounts()
+        return cast(
+            list[dict[str, Any]],
+            self.database.list_telegram_accounts(),
+        )
 
     def get_selected_account_id(self) -> int:
         return int(self.database.get_selected_account_id() or 0)
@@ -63,7 +63,7 @@ class AccountsAPIMixin(_MixinHost):
         result = self.database.select_telegram_account(account_id)
         # Account-scoped values are authoritative. The compatibility mirror in
         # settings is updated by the repository for older GUI/service methods.
-        return result
+        return cast(dict[str, Any], result)
 
     def _strict_account_secret(
         self, account_id: int, key: str
@@ -115,7 +115,7 @@ class AccountsAPIMixin(_MixinHost):
                 value = self._strict_account_secret(owner, key)
                 if value:
                     values[key] = value
-        return values
+        return cast(dict[str, Any], values)
 
     def save_account_settings(
         self,
@@ -300,7 +300,7 @@ class AccountsAPIMixin(_MixinHost):
             selected["created"] = False
             selected["duplicate"] = True
             selected["reauthorized"] = True
-            return selected
+            return cast(dict[str, Any], selected)
 
         check = self.can_add_telegram_account()
         if not bool(check["allowed"]):
@@ -352,7 +352,7 @@ class AccountsAPIMixin(_MixinHost):
             )
             clear_account_lifecycle_journal(self.secret_store, telegram_id)
             selected["created"] = created
-            return selected
+            return cast(dict[str, Any], selected)
         except BaseException:
             if created:
                 self.database.rollback_new_telegram_account(
@@ -388,7 +388,7 @@ class AccountsAPIMixin(_MixinHost):
             phone=str(account.get("phone") or ""),
             authorized=True,
         )
-        return row
+        return cast(dict[str, Any], row)
 
     def stop_telegram_account(
         self, account_id: int, *, timeout_seconds: float = 20.0
@@ -446,7 +446,7 @@ class AccountsAPIMixin(_MixinHost):
         result["message"] = (
             "Работа аккаунта остановлена. Telegram-сессия сохранена."
         )
-        return result
+        return cast(dict[str, Any], result)
 
     def resume_telegram_account(self, account_id: int) -> dict[str, Any]:
         owner = int(account_id)
@@ -528,7 +528,7 @@ class AccountsAPIMixin(_MixinHost):
                 else ""
             )
         )
-        return result
+        return cast(dict[str, Any], result)
 
     def check_telegram_account_runtime(
         self, account_id: int, *, timeout_seconds: float = 20.0
@@ -557,10 +557,13 @@ class AccountsAPIMixin(_MixinHost):
             raise ValueError(
                 "Сначала переключитесь с другого подключённого аккаунта."
             )
-        return self.database.import_comment_profile_between_accounts(
-            source_account_id=source,
-            target_account_id=target,
-            mode=mode,
+        return cast(
+            dict[str, Any],
+            self.database.import_comment_profile_between_accounts(
+                source_account_id=source,
+                target_account_id=target,
+                mode=mode,
+            ),
         )
 
     def import_channels_from_previous_account(self) -> dict[str, int]:
@@ -570,7 +573,10 @@ class AccountsAPIMixin(_MixinHost):
             raise ValueError(
                 "Сначала переключитесь с другого подключённого аккаунта."
             )
-        return self.database.import_channels_between_accounts(
-            source_account_id=source,
-            target_account_id=target,
+        return cast(
+            dict[str, int],
+            self.database.import_channels_between_accounts(
+                source_account_id=source,
+                target_account_id=target,
+            ),
         )

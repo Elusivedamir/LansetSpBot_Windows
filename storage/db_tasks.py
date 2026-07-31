@@ -289,6 +289,10 @@ class TaskRepositoryMixin:
     ):
         try:
             with self.get_connection() as conn:
+                # Serialize this payload read-modify-write operation with
+                # checkpoint persistence and external pause requests.
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
                     "SELECT payload FROM tasks WHERE id=? AND type='link_channels'",
                     (int(task_id),),
@@ -321,6 +325,10 @@ class TaskRepositoryMixin:
     ):
         try:
             with self.get_connection() as conn:
+                # Serialize this payload read-modify-write operation with
+                # checkpoint persistence and external pause requests.
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
                     "SELECT payload FROM tasks WHERE id=? AND type='link_channels'",
                     (int(task_id),),
@@ -350,6 +358,10 @@ class TaskRepositoryMixin:
     def resume_link_task(self, task_id):
         try:
             with self.get_connection() as conn:
+                # Serialize this payload read-modify-write operation with
+                # checkpoint persistence and external pause requests.
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
                     "SELECT payload FROM tasks WHERE id=? AND type='link_channels'",
                     (int(task_id),),
@@ -682,6 +694,25 @@ class TaskRepositoryMixin:
                     if column_account and payload_account and column_account != payload_account:
                         raise ValueError("task account column does not match payload")
                     account_id = column_account or payload_account
+
+                    # Legacy tasks may keep account_id only inside payload.
+                    # Normalize the indexed column before applying the active-
+                    # account exclusion, otherwise two tasks for one Telegram
+                    # account could be claimed concurrently.
+                    if account_id != column_account:
+                        normalized = conn.execute(
+                            """UPDATE tasks
+                               SET account_id=?, updated_at=CURRENT_TIMESTAMP
+                               WHERE id=? AND status='pending'""",
+                            (account_id, claimed["id"]),
+                        )
+                        if normalized.rowcount != 1:
+                            continue
+                        claimed["account_id"] = account_id
+
+                    if account_id in excluded:
+                        # The normalized row will be excluded by the next SELECT.
+                        continue
                 except (json.JSONDecodeError, TypeError, ValueError) as exc:
                     conn.execute(
                         """UPDATE tasks SET status='failed', error=?,
@@ -1134,6 +1165,12 @@ class TaskRepositoryMixin:
             value = max(0, min(100, int(progress)))
             checkpoint_payload = self._decode_task_payload(payload)
             with self.get_connection() as conn:
+                # Serialize checkpoint persistence with request_link_task_pause().
+                # Without an early write reservation, a pause request could commit
+                # between this method's SELECT and UPDATE and then be overwritten
+                # by a stale checkpoint payload.
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
                 current = conn.execute(
                     "SELECT payload FROM tasks WHERE id=? AND status='running'",
                     (int(task_id),),

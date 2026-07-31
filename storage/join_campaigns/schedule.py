@@ -121,9 +121,12 @@ class JoinScheduleMixin(_MixinHost):
                 }
             )
             cur = conn.execute(
-                """INSERT INTO tasks(type,payload,status,progress,max_retries,created_at,updated_at)
-                   VALUES('join_saved_slot',?,'pending',0,0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)""",
-                (payload,),
+                """INSERT INTO tasks(
+                       account_id, type, payload, status, progress, max_retries,
+                       created_at, updated_at)
+                   VALUES(?, 'join_saved_slot', ?, 'pending', 0, 0,
+                          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+                (int(row["account_id"]), payload),
             )
             if cur.lastrowid is None:
                 raise DatabaseError("SQLite did not return a task id")

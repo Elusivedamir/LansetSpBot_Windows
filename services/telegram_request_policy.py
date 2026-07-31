@@ -8,7 +8,6 @@ from dataclasses import dataclass
 
 from enum import StrEnum
 
-from typing import Any
 
 
 
@@ -91,14 +90,14 @@ class FloodWaitPolicy:
         raw = max(0.0, float(telegram_seconds))
 
         buffer = source.uniform(
-
             float(self.minimum_buffer_seconds),
-
             float(self.maximum_buffer_seconds),
-
         )
-
-        return raw + buffer
+        operator_floor = source.uniform(
+            float(self.long_pause_minimum_seconds),
+            float(self.long_pause_maximum_seconds),
+        )
+        return max(raw + buffer, operator_floor)
 
 
 

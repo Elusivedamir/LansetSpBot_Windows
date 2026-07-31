@@ -22,20 +22,37 @@ else:
 class CommentReconciliationMixin(_MixinHost):
     """Crash recovery and durable comment delivery ledger."""
 
-    def reconcile_comment_schedule(self):
-        """Resolve slots whose worker task ended without finalizing the slot."""
+    def reconcile_comment_schedule(self, account_id=None):
+        """Resolve unfinished slots, optionally limited to one account."""
+        owner_account_id = (
+            resolve_account_id(self, account_id)
+            if account_id is not None
+            else 0
+        )
         try:
             with self.get_connection() as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 affected_campaign_ids = set()
 
+                orphan_query = """SELECT s.id, s.campaign_id,
+                                         c.status AS campaign_status
+                                  FROM comment_schedule s
+                                  JOIN comment_campaigns c
+                                    ON c.id=s.campaign_id
+                                  LEFT JOIN tasks t ON t.id=s.task_id
+                                  WHERE s.status IN ('queued','running')
+                                    AND (
+                                        s.task_id IS NULL
+                                        OR t.id IS NULL
+                                    )"""
+                orphan_params: tuple[object, ...] = ()
+                if owner_account_id > 0:
+                    orphan_query += " AND c.account_id=?"
+                    orphan_params = (owner_account_id,)
+
                 orphan_rows = conn.execute(
-                    """SELECT s.id, s.campaign_id, c.status AS campaign_status
-                       FROM comment_schedule s
-                       JOIN comment_campaigns c ON c.id=s.campaign_id
-                       LEFT JOIN tasks t ON t.id=s.task_id
-                       WHERE s.status IN ('queued','running')
-                         AND (s.task_id IS NULL OR t.id IS NULL)"""
+                    orphan_query,
+                    orphan_params,
                 ).fetchall()
                 for row in orphan_rows:
                     if row["campaign_status"] in {
@@ -63,25 +80,51 @@ class CommentReconciliationMixin(_MixinHost):
                         )
                     affected_campaign_ids.add(int(row["campaign_id"]))
 
+                completed_query = """SELECT
+                                             s.id,
+                                             s.campaign_id,
+                                             c.account_id,
+                                             s.task_id,
+                                             s.channel_id,
+                                             s.post_id,
+                                             s.selected_text
+                                                 AS slot_selected_text,
+                                             t.status,
+                                             t.error,
+                                             d.status
+                                                 AS direct_delivery_status,
+                                             d.chat_id AS direct_chat_id,
+                                             d.text AS direct_text,
+                                             cd.status
+                                                 AS comment_delivery_status,
+                                             cd.text AS comment_text
+                                        FROM comment_schedule s
+                                        JOIN comment_campaigns c
+                                          ON c.id=s.campaign_id
+                                        JOIN tasks t
+                                          ON t.id=s.task_id
+                                        LEFT JOIN direct_message_deliveries d
+                                          ON d.task_id=s.task_id
+                                        LEFT JOIN comment_deliveries cd
+                                          ON cd.account_id=c.account_id
+                                         AND cd.campaign_id=s.campaign_id
+                                         AND cd.action_type='campaign_comment'
+                                         AND cd.channel_id=s.channel_id
+                                         AND cd.post_id=s.post_id
+                                        WHERE s.status IN ('queued','running')
+                                          AND t.status IN (
+                                              'failed',
+                                              'cancelled',
+                                              'completed'
+                                          )"""
+                completed_params: tuple[object, ...] = ()
+                if owner_account_id > 0:
+                    completed_query += " AND c.account_id=?"
+                    completed_params = (owner_account_id,)
+
                 rows = conn.execute(
-                    """SELECT s.id, s.campaign_id, c.account_id, s.task_id, s.channel_id, s.post_id,
-                              s.selected_text AS slot_selected_text,
-                              t.status, t.error,
-                              d.status AS direct_delivery_status,
-                              d.chat_id AS direct_chat_id, d.text AS direct_text,
-                              cd.status AS comment_delivery_status,
-                              cd.text AS comment_text
-                       FROM comment_schedule s
-                       JOIN comment_campaigns c ON c.id=s.campaign_id
-                       JOIN tasks t ON t.id=s.task_id
-                       LEFT JOIN direct_message_deliveries d ON d.task_id=s.task_id
-                       LEFT JOIN comment_deliveries cd
-                         ON cd.account_id=c.account_id
-                        AND cd.campaign_id=s.campaign_id
-                        AND cd.action_type='campaign_comment'
-                        AND cd.channel_id=s.channel_id AND cd.post_id=s.post_id
-                       WHERE s.status IN ('queued','running')
-                         AND t.status IN ('failed','cancelled','completed')"""
+                    completed_query,
+                    completed_params,
                 ).fetchall()
                 for row in rows:
                     if row["status"] == "cancelled":

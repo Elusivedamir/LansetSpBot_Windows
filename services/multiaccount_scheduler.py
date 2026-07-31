@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from core.campaign_schedule import to_db_time, utc_now
 from services.api_parts.comments import CommentCampaignAPIMixin
@@ -57,6 +57,16 @@ class AccountCampaignDatabaseView(AccountDatabaseView):
                 (self.account_id,),
             ).fetchone()
         return row is not None
+
+    def reconcile_comment_schedule(self, account_id: Any = None):
+        """Reconcile only comment schedule rows owned by this account."""
+        del account_id
+        return self._base.reconcile_comment_schedule(account_id=self.account_id)
+
+    def reconcile_join_schedule(self, account_id: Any = None):
+        """Reconcile only join schedule rows owned by this account."""
+        del account_id
+        return self._base.reconcile_join_schedule(account_id=self.account_id)
 
     def queue_due_comment_slot(self, *, now=None):
         """Atomically queue one due comment slot owned by this account."""
@@ -310,8 +320,12 @@ class AccountCampaignContext(
         return None
 
     def _strict_openai_key(self) -> str | None:
-        return self.root._strict_account_secret(
-            self.account_id, "openai.api_key"
+        return cast(
+            str | None,
+            self.root._strict_account_secret(
+                self.account_id,
+                "openai.api_key",
+            ),
         )
 
     def set_comment_daily_limit(self, value: int) -> int:
@@ -356,6 +370,7 @@ def run_multiaccount_campaign_tick(root) -> dict[int, str]:
             "stopping",
             "stopped",
             "authorization_required",
+            "restricted",
             "error",
         }:
             outcomes[account_id] = "skipped"

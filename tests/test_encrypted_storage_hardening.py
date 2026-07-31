@@ -41,6 +41,7 @@ def test_encrypted_blob_detects_single_byte_tampering():
         codec.decrypt(bytes(encrypted), purpose="test")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission-bit assertion")
 def test_secret_store_never_persists_plaintext(tmp_path: Path):
     path = tmp_path / ".secrets.json"
     store = SecretStore(path, codec=_codec())

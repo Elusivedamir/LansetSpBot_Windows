@@ -90,6 +90,7 @@ async def test_persistent_idle_worker_does_not_poll_empty_sqlite_queue():
     assert queue.claims == 1
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission-bit assertion")
 def test_posix_database_permission_hardening_is_cached(tmp_path, monkeypatch):
     import storage.database as database_module
 
