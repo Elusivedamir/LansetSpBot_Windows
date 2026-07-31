@@ -295,6 +295,28 @@ async def test_queue_worker_stops_after_bounded_claim_failures(monkeypatch):
     assert worker.lifecycle_state == worker.STATE_DRAINING
 
 
+def test_account_selection_restarts_session_boundary_safely() -> None:
+    source = (
+        ROOT / "services/api_parts/accounts.py"
+    ).read_text(encoding="utf-8")
+
+    start = source.index(
+        "    def select_telegram_account(self, account_id: int) -> dict[str, Any]:"
+    )
+    end = source.index(
+        "    def _strict_account_secret(",
+        start,
+    )
+    block = source[start:end]
+
+    assert 'prepare = getattr(self, "prepare_account_change", None)' in block
+    assert "if callable(prepare) and not bool(prepare()):" in block
+    assert "self.database.select_telegram_account(owner)" in block
+    assert block.index("prepare_account_change") < block.index(
+        "self.database.select_telegram_account(owner)"
+    )
+
+
 def test_multiaccount_scheduler_does_not_queue_against_wrong_session() -> None:
     source = (
         ROOT / "services/multiaccount_scheduler.py"
