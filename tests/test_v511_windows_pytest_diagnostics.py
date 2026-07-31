@@ -17,7 +17,7 @@ def test_windows_pytest_diagnostics_are_split_and_fail_fast() -> None:
     assert text.count("--tb=long") == 2
     assert text.count("-p tools.pytest_ci_watchdog") == 2
     assert "--maxfail=1" not in text
-    assert "--total-timeout-seconds 1800" in text
+    assert "--total-timeout-seconds 3600" in text
     assert "--total-timeout-seconds 900" in text
 
 
@@ -36,7 +36,8 @@ def test_split_pytest_diagnostics_keep_independent_evidence() -> None:
 def test_watchdog_dumps_all_threads_and_exits_on_hung_test() -> None:
     text = WATCHDOG.read_text(encoding="utf-8")
 
-    assert "TEST_TIMEOUT_SECONDS = 180" in text
+    assert "DEFAULT_TEST_TIMEOUT_SECONDS = 180" in text
+    assert "SLOW_TEST_TIMEOUT_SECONDS = 600" in text
     assert "COLLECTION_TIMEOUT_SECONDS = 300" in text
     assert "faulthandler.dump_traceback_later" in text
     assert "all_threads=True" in text

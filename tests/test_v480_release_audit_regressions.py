@@ -64,7 +64,7 @@ def test_production_call_sites_build_the_session_base_from_a_path() -> None:
     service = (ROOT / "services" / "telegram_service.py").read_text(encoding="utf-8")
     worker = (ROOT / "gui" / "auth_worker.py").read_text(encoding="utf-8")
     assert 'session_base = settings.session_dir / "main"' in service
-    assert 'EncryptedSQLiteSession(self.session_dir / "main")' in worker
+    assert "EncryptedSQLiteSession(self._session_base())" in worker
 
 
 # --------------------------------------------------------------------------
