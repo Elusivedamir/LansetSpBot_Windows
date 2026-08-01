@@ -156,7 +156,15 @@ try {
             Where-Object { $_.Name -ne "test_gui_v45.py" } |
             Sort-Object FullName |
             ForEach-Object {
-                [System.IO.Path]::GetRelativePath($ProjectRoot, $_.FullName)
+                $FullTestPath = [System.IO.Path]::GetFullPath($_.FullName)
+                $RootPrefix = $ProjectRoot + [System.IO.Path]::DirectorySeparatorChar
+                if (-not $FullTestPath.StartsWith(
+                    $RootPrefix,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )) {
+                    throw "Test file is outside the project root: $FullTestPath"
+                }
+                $FullTestPath.Substring($RootPrefix.Length)
             }
     )
     $CoreShardCount = 4

@@ -81,6 +81,8 @@ def test_core_pytest_is_sharded_with_independent_watchdogs() -> None:
         encoding="utf-8-sig"
     )
     for text in (source_runner, release_runner):
+        assert "[System.IO.Path]::GetRelativePath" not in text
+        assert "$FullTestPath.Substring($RootPrefix.Length)" in text
         assert "$CoreShardCount = 4" in text
         assert "pytest-core-shard-$ShardNumber.log" in text
         assert "pytest-core-shard-$ShardNumber.xml" in text

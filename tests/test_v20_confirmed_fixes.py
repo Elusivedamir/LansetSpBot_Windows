@@ -12,7 +12,6 @@ from PySide6.QtCore import QObject
 from core.campaign_schedule import utc_now
 from core.logging_setup import _BoundedFormatter
 from core.redaction import sanitize_text
-from core.exceptions import NonRetryableTelegramError
 from gui.background import BackgroundCall, connect_lifecycle_safe
 from services.api import ServiceAPI
 from services.comment_service import CommentService

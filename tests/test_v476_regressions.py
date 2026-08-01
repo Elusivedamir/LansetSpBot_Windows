@@ -7,7 +7,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from core.campaign_schedule import generate_join_slots, utc_now
-from core.exceptions import NonRetryableTelegramError
 from core.secret_store import SecretStore
 from services.comment_service import CommentService
 from storage.database import Database, DatabaseError
