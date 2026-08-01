@@ -144,7 +144,7 @@ def test_real_comment_atomic_finalizer_is_bound_and_updates_all_local_state(tmp_
 
 
 @pytest.mark.asyncio
-async def test_manual_telegram_task_snapshots_account_and_is_blocked_after_switch(
+async def test_manual_telegram_task_keeps_its_account_snapshot_after_ui_switch(
     tmp_path,
 ):
     db = Database(tmp_path / "manual-account-isolation.db")
@@ -170,18 +170,18 @@ async def test_manual_telegram_task_snapshots_account_and_is_blocked_after_switc
     db.set_setting("telegram.account_id", 2222)
     calls: list[int] = []
 
-    async def handler(_task):
-        calls.append(1)
+    async def handler(owned_task):
+        calls.append(int(owned_task["payload"]["account_id"]))
 
     queue = QueueWorker(lambda: {})
     queue._db = db
     queue._handlers = {"comment": handler}
     await queue._process_task(task)
 
-    assert calls == []
+    assert calls == [1111]
     stored = db.get_task(task["id"])
-    assert stored["status"] == "failed"
-    assert "account_state_mismatch" in stored["error"]
+    assert stored["status"] == "completed"
+    assert int(stored["account_id"]) == 1111
 
 
 @pytest.mark.asyncio
@@ -717,7 +717,11 @@ def test_model_based_100_independent_business_state_sequences(tmp_path, monkeypa
                         final_status = "sent"
                     elif outcome == "uncertain":
                         db.mark_comment_delivery_uncertain(
-                            10, post_id, "model uncertain", account_id=owner
+                            10,
+                            post_id,
+                            "model uncertain",
+                            account_id=owner,
+                            linked_chat_id=20,
                         )
                         final_status = "uncertain"
                     else:

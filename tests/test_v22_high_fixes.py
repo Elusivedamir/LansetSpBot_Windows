@@ -154,13 +154,12 @@ async def test_restriction_and_structured_exception_redact_every_persistent_sink
     assert "private-user" not in all_sinks
     assert "<redacted>" in all_sinks
 
+    # Clear both the durable restriction and its account runtime state before
+    # exercising the unrelated generic exception sink.
+    db.clear_account_restriction(account_id=601, checked_at=utc_now().isoformat())
+    db.set_account_runtime_state(601, "connected")
     second_id = db.insert_task("comment", {"account_id": 601})
     second = db.claim_next_pending_task()
-    # The restriction may prevent a normal claim. Exercise the generic sink with
-    # a separate account so nested Python repr and chained exceptions are covered.
-    if second is None:
-        db.clear_account_restriction(account_id=601, checked_at=utc_now().isoformat())
-        second = db.claim_next_pending_task()
     assert second and second["id"] == second_id
 
     async def structured(_task):

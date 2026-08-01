@@ -377,9 +377,12 @@ class _BarrierCapturingComments:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cancelled_account", (701, 702))
-async def test_legacy_direct_group_never_dispatches_after_v25(
-    tmp_path: Path, cancelled_account: int
+@pytest.mark.parametrize(
+    ("cancelled_account", "expected_calls"),
+    ((701, 0), (702, 1)),
+)
+async def test_direct_group_cancellation_is_scoped_to_the_owning_account(
+    tmp_path: Path, cancelled_account: int, expected_calls: int
 ) -> None:
     account_id = 701
     peer_id = -1007001
@@ -407,9 +410,13 @@ async def test_legacy_direct_group_never_dispatches_after_v25(
 
     await worker._process_task(task)
 
-    assert comments.calls == 0
-    assert comments.scopes == ()
-    assert db.get_comment_campaign(campaign["id"])["sent_count"] == 0
+    assert comments.calls == expected_calls
+    stored_campaign = db.get_comment_campaign(campaign["id"])
+    assert stored_campaign["sent_count"] == expected_calls
+    if expected_calls:
+        assert ("channel", peer_id, account_id) in comments.scopes
+    else:
+        assert comments.scopes == ()
 
 
 def _make_due_join_task(

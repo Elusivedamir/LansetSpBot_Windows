@@ -256,7 +256,10 @@ Invoke-PythonGate `
 
 Invoke-PythonGate `
     -Name "critical-coverage" `
-    -Arguments @("tools\check_critical_coverage.py") `
+    -Arguments @(
+        "tools\check_critical_coverage.py",
+        (Join-Path $EvidenceRoot "coverage.json")
+    ) `
     -LogName "critical-coverage.txt" | Out-Null
 
 Invoke-PythonGate `

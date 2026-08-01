@@ -241,11 +241,11 @@ def test_campaign_schedule_deferral_does_not_enter_network_wait() -> None:
         Path(__file__).resolve().parents[1]
         / "workers"
         / "comment_slot"
-        / "handler.py"
+        / "runner.py"
     ).read_text(encoding="utf-8")
-    branch = source.split('if deferred_code == "local_quiet_hours":', 1)[1].split(
-        'if deferred_code == "local_ban_before_dispatch":', 1
-    )[0]
+    start = source.index("    def _defer_quiet_hours(")
+    end = source.index("    def _defer_telegram_wait(", start)
+    branch = source[start:end]
 
     assert "defer_comment_slot(" in branch
     assert "defer_comment_slot_and_set_network_wait" not in branch

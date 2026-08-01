@@ -68,13 +68,14 @@ def test_runtime_stop_cannot_overlap_runtime_recreation() -> None:
 
 def test_restriction_uses_durable_task_account_id() -> None:
     source = (ROOT / "workers/queue_worker.py").read_text(encoding="utf-8")
-    start = source.index("except NonRetryableTelegramError as exc:")
-    end = source.index("except Exception as exc:", start)
+    start = source.index("    def _activate_task_account_restriction(")
+    end = source.index("    def _persist_unexpected_task(", start)
     block = source[start:end]
 
-    assert "restriction_account_id = (" in block
-    assert "task_account_id" in block
-    assert "if task_account_id > 0" in block
+    assert "payload_account_id: Any" in block
+    assert "context.account_id" in block
+    assert "if context.account_id > 0" in block
+    assert "else payload_account_id" in block
     assert "account_id=restriction_account_id" in block
 
     assignment = block.index("restriction_account_id = (")
@@ -495,19 +496,24 @@ def test_startup_reconciles_comment_slots_after_task_recovery() -> None:
 
 
 def test_mutating_rpc_500_is_not_automatically_retried() -> None:
-    source = (
-        ROOT / "services/telegram/transport.py"
+    decisions = (
+        ROOT / "services/telegram_transport_decisions.py"
     ).read_text(encoding="utf-8")
+    transport = (ROOT / "services/telegram/transport.py").read_text(
+        encoding="utf-8"
+    )
 
-    start = source.index("except RPCError as exc:")
-    block = source[start:]
+    decision_start = decisions.index("def rpc_failure_action(")
+    decision_block = decisions[decision_start:]
+    assert "if int(rpc_code or 0) >= 500" in decision_block
+    assert "if not retry_network and request_dispatched:" in decision_block
+    assert "return RpcFailureAction.UNCERTAIN" in decision_block
 
-    guard = block.index("if rpc_code >= 500 or rpc_name in transient_names:")
-    unknown = block.index("if not retry_network and request_started:", guard)
-    deferred = block.index("raise DeferredTelegramError(", unknown)
-
-    assert unknown < deferred
-    assert "code=unknown_result_code" in block[unknown:deferred]
+    start = transport.index("    def _raise_rpc_error(")
+    end = transport.index("    async def execute(", start)
+    block = transport[start:end]
+    assert "if action is RpcFailureAction.UNCERTAIN:" in block
+    assert "code=unknown_result_code" in block
 
 
 def test_comment_slot_queue_blocks_only_same_account() -> None:
@@ -565,10 +571,9 @@ def test_comment_delivery_mutations_use_full_unique_scope() -> None:
 
 def test_queue_worker_blocks_unavailable_account_before_handler() -> None:
     source = (ROOT / "workers/queue_worker.py").read_text(encoding="utf-8")
-    guard = source.index("blocked_states = {")
-    handler = source.index('await handler(task)')
-    block = source[guard:handler]
-    assert guard < handler
+    start = source.index("    def _account_runtime_blocks(")
+    end = source.index("    def _fail_without_retry(", start)
+    block = source[start:end]
     for state in (
         "stopping",
         "stopped",
@@ -577,6 +582,7 @@ def test_queue_worker_blocks_unavailable_account_before_handler() -> None:
     ):
         assert f'"{state}",' in block
     assert "account_unavailable_before_execution" in block
+    assert "self._fail_without_retry(" in block
 
 
 def test_multiaccount_scheduler_skips_restricted_accounts() -> None:
@@ -632,12 +638,16 @@ def test_link_task_payload_read_modify_write_uses_immediate_transactions() -> No
 
 
 def test_queue_worker_uses_durable_account_id_for_legacy_payload() -> None:
-    source = (ROOT / "workers" / "queue_worker.py").read_text(encoding="utf-8")
+    source = (ROOT / "workers" / "queue_task_decisions.py").read_text(
+        encoding="utf-8"
+    )
 
-    assert "payload_account_value = (" in source
-    assert "payload_account_id = int(payload_account_value or 0)" in source
-    assert "task_account_id = column_account_id or payload_account_id" in source
-    assert "raw_task_account_id: Any" not in source
+    start = source.index("def parse_account_identity(")
+    block = source[start:]
+    assert 'column_account_id = int(task.get("account_id") or 0)' in block
+    assert "payload_account_id = int(payload_value or 0)" in block
+    assert "account_id=column_account_id or payload_account_id" in block
+    assert "column_account_id != payload_account_id" in block
 
 
 @pytest.mark.asyncio

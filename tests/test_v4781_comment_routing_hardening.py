@@ -399,7 +399,7 @@ async def test_invalid_root_fallback_persists_post_route_not_stale_root():
     assert db.finalized["reply_to"] == 20
 
 
-def test_failed_group_rescan_demotes_old_direct_target_to_pending(tmp_path):
+def test_failed_group_rescan_preserves_confirmed_direct_target(tmp_path):
     db = Database(tmp_path / "rescan-failure.db")
     group_id = -1000000000777
     db.upsert_channels_batch(
@@ -417,14 +417,16 @@ def test_failed_group_rescan_demotes_old_direct_target_to_pending(tmp_path):
         group_id, is_linked=False, status="Группа · связь не обнаружена"
     )
     db.refresh_group_comment_modes()
-    assert db.get_channel_by_id(group_id)["comment_mode"] == "pending"
+    assert db.get_channel_by_id(group_id)["comment_mode"] == "direct_group"
 
     db.update_group_link_classification(
         group_id, is_linked=None, status="Группа · связь не проверена: timeout"
     )
 
-    assert db.get_channel_by_id(group_id)["comment_mode"] == "pending"
-    assert db.get_channels_for_commenting(10) == []
+    assert db.get_channel_by_id(group_id)["comment_mode"] == "direct_group"
+    assert {row["channel_id"] for row in db.get_channels_for_commenting(10)} == {
+        group_id
+    }
 
 
 @pytest.mark.parametrize(

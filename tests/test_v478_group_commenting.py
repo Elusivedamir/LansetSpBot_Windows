@@ -254,7 +254,7 @@ async def test_comment_slot_sends_one_plain_message_to_standalone_group(monkeypa
     assert telegram.join_calls == []
     assert len(comments.sent) == 1
     assert comments.sent[0]["chat_id"] == group_id
-    assert comments.sent[0]["text"] == "hello"
+    assert comments.sent[0]["text"] == "second"
     assert db.finish_comment_slot.call_args.kwargs["status"] == "sent"
     assert db.finish_comment_slot.call_args.kwargs["post_id"] is None
     assert db.finish_comment_slot.call_args.kwargs["sent"] is True

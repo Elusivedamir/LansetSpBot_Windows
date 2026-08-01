@@ -22,7 +22,7 @@ def test_container_shutdown_paths():
     container.queue_worker.isRunning.return_value = False
     assert container.shutdown(123) is True
     container.api.prepare_shutdown.assert_called_once()
-    container.database.close_thread_connection.assert_called_once()
+    container.database.finalize_shutdown.assert_called_once()
 
     container.queue_worker.isRunning.return_value = True
     container.queue_worker.stop.return_value = False

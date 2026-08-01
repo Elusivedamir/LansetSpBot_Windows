@@ -88,3 +88,4 @@ def test_core_pytest_is_sharded_with_independent_watchdogs() -> None:
         assert "pytest-core-shard-$ShardNumber.xml" in text
         assert '"--idle-timeout-seconds", "300"' in text
         assert '"--total-timeout-seconds", "1500"' in text
+    assert '(Join-Path $EvidenceRoot "coverage.json")' in source_runner

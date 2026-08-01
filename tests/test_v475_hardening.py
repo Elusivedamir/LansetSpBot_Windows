@@ -391,8 +391,12 @@ def test_service_api_uses_configured_campaign_duration(tmp_path):
     )
     db.select_telegram_account(101)
     db.insert_channel(
-        {"channel_id": 1, "linked_chat_id": 2, "title": "A"},
-        account_id=101,
+        {
+            "account_id": 101,
+            "channel_id": 1,
+            "linked_chat_id": 2,
+            "title": "A",
+        }
     )
     api = ServiceAPI(db, campaign_hours=6)
     api._campaign_timer.stop()

@@ -119,7 +119,8 @@ def test_instruction_view_is_a_real_multi_step_slideshow() -> None:
         assert image.pixmap() is not None and not image.pixmap().isNull()
     else:
         assert image.pixmap() is None or image.pixmap().isNull()
-        assert "временно скрыт" in image.text()
+        assert "Скриншот скрыт" in image.text()
+        assert "не подтверждено" in image.text()
     view.next_step()
     assert view.progress_label.text() == f"Шаг 2 из {total}"
     assert view.back_button.isEnabled()

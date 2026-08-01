@@ -181,9 +181,23 @@ def test_legacy_secret_migration_closes_its_thread_connection():
     from services.api import ServiceAPI
 
     database = MagicMock()
-    database.get_setting.return_value = "legacy-secret"
+    database.get_selected_account_id.return_value = 0
+    database.get_telegram_account.return_value = None
+    database.list_telegram_accounts.return_value = []
+    sqlite_values = {"telegram.api_hash": "legacy-secret"}
+    database.get_setting.side_effect = (
+        lambda key, default="": sqlite_values.get(key, default)
+    )
+    database.delete_setting.side_effect = lambda key: sqlite_values.pop(key, None)
+
+    secret_values: dict[str, str] = {}
     secret_store = MagicMock()
-    secret_store.get.return_value = ""
+    secret_store.get.side_effect = lambda key, default="": secret_values.get(
+        key, default
+    )
+    secret_store.set.side_effect = lambda key, value: secret_values.__setitem__(
+        key, value
+    )
 
     ServiceAPI._migrate_legacy_secrets(
         database,
@@ -192,7 +206,7 @@ def test_legacy_secret_migration_closes_its_thread_connection():
         threading.RLock(),
     )
 
-    secret_store.set.assert_called_once_with("account.1.telegram.api_hash", "legacy-secret")
+    secret_store.set.assert_called_once_with("telegram.api_hash", "legacy-secret")
     database.delete_setting.assert_called_once_with("telegram.api_hash")
     database.close_thread_connection.assert_called_once_with()
 

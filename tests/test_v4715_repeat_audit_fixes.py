@@ -285,7 +285,7 @@ def test_successful_container_shutdown_closes_gui_thread_connection() -> None:
 
     container.api.prepare_shutdown.assert_called_once_with()
     container.queue_worker.stop.assert_called_once_with(25)
-    container.database.close_thread_connection.assert_called_once_with()
+    container.database.finalize_shutdown.assert_called_once_with()
 
 
 def test_new_campaign_start_reconciles_sent_receipt_before_active_guard(
