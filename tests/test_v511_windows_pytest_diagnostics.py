@@ -46,3 +46,20 @@ def test_watchdog_dumps_all_threads_and_exits_on_hung_test() -> None:
     assert "exit=True" in text
     assert "pytest_runtest_logstart" in text
     assert "pytest_runtest_logfinish" in text
+
+
+def test_release_copy_preserves_empty_runtime_directories_and_hashes_in_process() -> None:
+    text = BUILD.read_text(encoding="utf-8-sig")
+
+    assert "function Copy-DirectoryTree" in text
+    assert 'Get-Command "robocopy.exe"' in text
+    assert "/E /COPY:DAT /DCOPY:DAT" in text
+    assert text.count("Copy-DirectoryTree -Source $BuiltDir") == 2
+    assert "function Get-Sha256Hex" in text
+    assert "System.Security.Cryptography.SHA256" in text
+    assert "Get-FileHash" not in text
+    assert "function Invoke-PackagedProcess" in text
+    assert text.count("Invoke-PackagedProcess `") == 3
+    assert "$Process.WaitForExit($TimeoutMilliseconds)" in text
+    assert '& $BuiltExe --self-test' not in text
+    assert '& $RelocatedExe --self-test' not in text

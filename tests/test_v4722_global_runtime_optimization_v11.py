@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from core.campaign_schedule import to_db_time, utc_now
+from core.campaign_schedule import from_db_time, to_db_time
 from gui.views.channels_view import ChannelsView
 from gui.views.commenting_view import CommentingView
 from gui.views.common import TaskWatcher
@@ -36,15 +36,19 @@ def test_pending_task_deadline_supports_event_driven_worker(tmp_path):
     db.set_done(due_id)
 
     future_id = db.insert_task("noop", {}, 0)
-    retry_at = utc_now() + timedelta(seconds=2)
     with db.get_connection() as conn:
+        database_now = from_db_time(
+            conn.execute("SELECT CURRENT_TIMESTAMP").fetchone()[0]
+        )
+        assert database_now is not None
+        retry_at = database_now + timedelta(seconds=2)
         conn.execute(
             "UPDATE tasks SET not_before=? WHERE id=?",
             (to_db_time(retry_at), future_id),
         )
     delay = db.seconds_until_next_pending_task()
     assert delay is not None
-    assert 0.5 <= delay <= 2.1
+    assert delay == pytest.approx(2.0, abs=0.15)
 
 
 @pytest.mark.asyncio
