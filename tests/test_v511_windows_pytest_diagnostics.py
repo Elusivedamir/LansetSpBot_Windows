@@ -63,3 +63,9 @@ def test_release_copy_preserves_empty_runtime_directories_and_hashes_in_process(
     assert "$Process.WaitForExit($TimeoutMilliseconds)" in text
     assert '& $BuiltExe --self-test' not in text
     assert '& $RelocatedExe --self-test' not in text
+
+def test_robocopy_error_message_uses_valid_powershell_interpolation() -> None:
+    text = BUILD.read_text(encoding="utf-8-sig")
+
+    assert "$RobocopyExit:" not in text
+    assert "${RobocopyExit}: $Source -> $Destination" in text

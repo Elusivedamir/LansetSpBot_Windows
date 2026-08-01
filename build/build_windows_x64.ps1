@@ -92,7 +92,7 @@ function Copy-DirectoryTree {
         /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 /NFL /NDL /NJH /NJS /NP
     $RobocopyExit = $LASTEXITCODE
     if ($RobocopyExit -ge 8) {
-        throw "robocopy failed with exit code $RobocopyExit: $Source -> $Destination"
+        throw "robocopy failed with exit code ${RobocopyExit}: $Source -> $Destination"
     }
 }
 
