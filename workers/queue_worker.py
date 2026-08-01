@@ -948,8 +948,15 @@ class QueueWorker(QThread):
         if not self._task_preflight_allows_execution(context):
             return
 
+        handler_task = dict(task)
+        handler_payload = dict(context.payload)
+        if context.account_id is not None:
+            handler_payload["account_id"] = int(context.account_id)
+            handler_task["account_id"] = int(context.account_id)
+        handler_task["payload"] = handler_payload
+
         try:
-            await context.handler(task)
+            await context.handler(handler_task)
         except asyncio.CancelledError:
             self._persist_cancelled_task(context)
             raise

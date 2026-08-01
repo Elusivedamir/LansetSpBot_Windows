@@ -117,3 +117,20 @@ def test_failure_evidence_does_not_upload_the_entire_dist_tree():
     failure_section = failure_section.split("prove-python-314-source:", 1)[0]
     assert "dist/**" not in failure_section
     assert "dist/ci-proof/**" in failure_section
+
+
+
+def test_release_build_uses_external_process_watchdog():
+    workflow = (WORKFLOW_ROOT / "windows-release-proof.yml").read_text(
+        encoding="utf-8"
+    )
+    section = workflow.split(
+        "- name: Run complete Windows release pipeline", 1
+    )[1].split("- name: Verify release evidence", 1)[0]
+
+    assert "python tools/run_ci_subprocess.py" in section
+    assert "--label windows-release" in section
+    assert '--log "dist\\ci-proof\\build.log"' in section
+    assert "--idle-timeout-seconds 900" in section
+    assert "--total-timeout-seconds 6600" in section
+    assert "Tee-Object" not in section

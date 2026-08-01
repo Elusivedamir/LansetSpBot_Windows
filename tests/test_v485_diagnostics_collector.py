@@ -6,6 +6,7 @@ Safe: it must never carry a credential, a session or the database itself.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -25,17 +26,20 @@ PLANTED = {
 
 def _run_collector(tmp_path: Path, profile: Path, *extra: str) -> tuple[int, str]:
     output = tmp_path / "report.txt"
-    environment = {
-        **dict(__import__("os").environ),
-        "MARLEN_DATA_DIR": str(profile),
-        "APPDATA": str(
-            tmp_path
-            / "LansetAuditSensitiveUser42"
-            / "AppData"
-            / "Roaming"
-        ),
-        "QT_QPA_PLATFORM": "offscreen",
-    }
+    environment = dict(os.environ)
+    environment.pop("LANSETSPBOT_DATA_DIR", None)
+    environment.update(
+        {
+            "MARLEN_DATA_DIR": str(profile),
+            "APPDATA": str(
+                tmp_path
+                / "LansetAuditSensitiveUser42"
+                / "AppData"
+                / "Roaming"
+            ),
+            "QT_QPA_PLATFORM": "offscreen",
+        }
+    )
     completed = subprocess.run(
         [sys.executable, str(COLLECTOR), "--output", str(output), *extra],
         cwd=str(ROOT),

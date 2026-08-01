@@ -277,20 +277,20 @@ def parse_lock(path: Path = LOCK) -> dict[str, dict[str, Any]]:
 def check_lock(path: Path = LOCK) -> None:
     locked = parse_lock(path)
     installed: dict[str, metadata.Distribution] = {}
-    for distribution in metadata.distributions():
-        raw_name = distribution.metadata.get("Name")
+    for installed_distribution in metadata.distributions():
+        raw_name = installed_distribution.metadata.get("Name")
         if raw_name:
-            installed[_canonicalize(raw_name)] = distribution
+            installed[_canonicalize(raw_name)] = installed_distribution
 
     failures: list[str] = []
     for normalized, item in locked.items():
-        distribution = installed.get(normalized)
-        if distribution is None:
+        locked_distribution = installed.get(normalized)
+        if locked_distribution is None:
             failures.append(f"missing installed package: {item['name']}=={item['version']}")
-        elif distribution.version != item["version"]:
+        elif locked_distribution.version != item["version"]:
             failures.append(
                 f"installed version mismatch: {item['name']} "
-                f"{distribution.version} != {item['version']}"
+                f"{locked_distribution.version} != {item['version']}"
             )
 
     try:
@@ -305,10 +305,10 @@ def check_lock(path: Path = LOCK) -> None:
         if normalized in visited:
             continue
         visited.add(normalized)
-        distribution = installed.get(normalized)
-        if distribution is None:
+        current_distribution = installed.get(normalized)
+        if current_distribution is None:
             continue
-        for raw_requirement in distribution.requires or []:
+        for raw_requirement in current_distribution.requires or []:
             requirement = Requirement(raw_requirement)
             if requirement.marker is not None and not requirement.marker.evaluate(
                 {"extra": ""}
@@ -317,7 +317,7 @@ def check_lock(path: Path = LOCK) -> None:
             dependency = _canonicalize(requirement.name)
             if dependency not in locked:
                 failures.append(
-                    f"unlocked runtime dependency: {distribution.metadata.get('Name')} -> "
+                    f"unlocked runtime dependency: {current_distribution.metadata.get('Name')} -> "
                     f"{requirement.name}"
                 )
                 continue

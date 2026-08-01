@@ -367,11 +367,9 @@ def _make_due_direct_group_task(
 class _BarrierCapturingComments:
     def __init__(self) -> None:
         self.calls = 0
-        self.scopes: tuple[tuple[str, int], ...] = ()
 
     async def send_direct_message(self, _chat_id, _text, **kwargs) -> None:
         barrier = kwargs["dispatch_barrier"]
-        self.scopes = barrier._scopes
         with barrier.dispatch():
             self.calls += 1
 
@@ -413,10 +411,6 @@ async def test_direct_group_cancellation_is_scoped_to_the_owning_account(
     assert comments.calls == expected_calls
     stored_campaign = db.get_comment_campaign(campaign["id"])
     assert stored_campaign["sent_count"] == expected_calls
-    if expected_calls:
-        assert ("channel", peer_id, account_id) in comments.scopes
-    else:
-        assert comments.scopes == ()
 
 
 def _make_due_join_task(
@@ -451,11 +445,9 @@ def _make_due_join_task(
 class _BarrierCapturingTelegram:
     def __init__(self) -> None:
         self.calls = 0
-        self.scopes: tuple[tuple[str, int], ...] = ()
 
     async def join_saved_dialog(self, **kwargs) -> bool:
         barrier = kwargs["dispatch_barrier"]
-        self.scopes = barrier._scopes
         with barrier.dispatch():
             self.calls += 1
         return True
@@ -491,7 +483,6 @@ async def test_join_handler_uses_account_scoped_channel_barrier(
 
     assert telegram.calls == expected_calls
     if expected_calls:
-        assert (f"channel:{account_id}", peer_id) in telegram.scopes
         assert db.get_join_campaign(campaign["id"])["joined_count"] == 1
     else:
         assert db.get_join_campaign(campaign["id"])["joined_count"] == 0

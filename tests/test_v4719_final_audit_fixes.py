@@ -272,7 +272,7 @@ def test_pending_account_transition_blocks_queue_start(tmp_path):
     worker.isRunning.return_value = False
     _app()
     api = ServiceAPI(database, queue_worker=worker, secret_store=_Secrets(tmp_path))
-    api._secret_migration_thread.join(timeout=5)
+    assert api.wait_for_secret_migration(30_000)
     assert api.start_queue() is False
     worker.start.assert_not_called()
     api.prepare_shutdown()
