@@ -1,29 +1,8 @@
 name: Workflow Contract Check
 
 on:
+  workflow_call:
   workflow_dispatch:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/**"
-      - ".github/dependabot.yml"
-      - "tests/test_*workflow*.py"
-      - "tests/test_release_pipeline_contracts.py"
-      - "tests/test_v511_windows_pytest_diagnostics.py"
-      - "tools/check_workflow_contracts.py"
-      - "SHA256SUMS.txt"
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/**"
-      - ".github/dependabot.yml"
-      - "tests/test_*workflow*.py"
-      - "tests/test_release_pipeline_contracts.py"
-      - "tests/test_v511_windows_pytest_diagnostics.py"
-      - "tools/check_workflow_contracts.py"
-      - "SHA256SUMS.txt"
 
 permissions:
   contents: read

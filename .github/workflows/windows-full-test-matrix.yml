@@ -1,4 +1,4 @@
-name: Windows Full Test Matrix
+name: Windows CI
 
 on:
   workflow_dispatch:
@@ -13,11 +13,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-full-test-matrix-${{ github.ref }}
+  group: windows-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  contracts:
+    name: Workflow contracts
+    uses: ./.github/workflows/workflow-contracts.yml
+
   source-proof:
+    needs: contracts
     if: ${{ github.event_name != 'pull_request' || !startsWith(github.head_ref, 'dependabot/github_actions/') }}
     name: Python ${{ matrix.python }} x64 full source proof
     runs-on: windows-2022
@@ -114,3 +119,9 @@ jobs:
           path: dist/windows-ci/**
           if-no-files-found: error
           retention-days: 14
+
+  release-proof:
+    name: Windows release proof
+    needs: contracts
+    if: ${{ github.event_name != 'pull_request' || !startsWith(github.head_ref, 'dependabot/github_actions/') }}
+    uses: ./.github/workflows/windows-release-proof.yml

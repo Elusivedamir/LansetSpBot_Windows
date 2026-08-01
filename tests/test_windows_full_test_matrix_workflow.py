@@ -10,11 +10,26 @@ RUNNER = ROOT / "tools" / "run_windows_source_ci.ps1"
 
 def test_windows_full_matrix_runs_both_supported_pythons() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
-    assert "name: Windows Full Test Matrix" in text
+    assert "name: Windows CI" in text
     assert '          - "3.13"' in text
     assert '          - "3.14"' in text
     assert "runs-on: windows-2022" in text
     assert "fail-fast: false" in text
+
+
+def test_only_windows_ci_runs_automatically_for_main_changes() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "\n  pull_request:\n" in text
+    assert "\n  push:\n" in text
+    assert "uses: ./.github/workflows/workflow-contracts.yml" in text
+    assert "uses: ./.github/workflows/windows-release-proof.yml" in text
+
+    for reusable_name in ("workflow-contracts.yml", "windows-release-proof.yml"):
+        reusable = (WORKFLOW.parent / reusable_name).read_text(encoding="utf-8")
+        assert "\n  workflow_call:\n" in reusable
+        assert "\n  workflow_dispatch:\n" in reusable
+        assert "\n  pull_request:\n" not in reusable
+        assert "\n  push:\n" not in reusable
 
 
 def test_windows_full_matrix_installs_only_hash_locked_requirements() -> None:
