@@ -121,7 +121,8 @@ def main() -> int:
         return 0
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(expected, encoding="utf-8")
+    with output.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(expected)
     print(f"{output}: {len(expected.splitlines())} files")
     return 0
 

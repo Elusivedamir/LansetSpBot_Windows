@@ -21,6 +21,26 @@ if _SELF_TEST:
     _SELF_TEST_ROOT = Path(tempfile.mkdtemp(prefix="marlen-self-test-"))
     os.environ["MARLEN_DATA_DIR"] = str(_SELF_TEST_ROOT)
 
+if "--factory-reset-helper" in sys.argv:
+    from core.factory_reset_runtime import (
+        FACTORY_RESET_HELPER_FLAG,
+        FACTORY_RESET_NO_RELAUNCH_FLAG,
+        run_factory_reset_helper,
+    )
+
+    try:
+        _FACTORY_RESET_INDEX = sys.argv.index(FACTORY_RESET_HELPER_FLAG)
+        _FACTORY_RESET_PARENT_PID = int(sys.argv[_FACTORY_RESET_INDEX + 1])
+    except (ValueError, IndexError) as exc:
+        print(f"Invalid factory-reset helper arguments: {exc}", flush=True)
+        raise SystemExit(2) from exc
+    raise SystemExit(
+        run_factory_reset_helper(
+            _FACTORY_RESET_PARENT_PID,
+            relaunch=FACTORY_RESET_NO_RELAUNCH_FLAG not in sys.argv,
+        )
+    )
+
 if "--migrate-profile" in sys.argv:
     from core.profile_migration_cli import run_profile_migration_command
 
@@ -46,12 +66,9 @@ from core.config import Config  # noqa: E402
 from core.logging_setup import setup_logging  # noqa: E402
 from core.redaction import sanitize_exception, sanitize_text  # noqa: E402
 from core.factory_reset_runtime import (  # noqa: E402
-    FACTORY_RESET_HELPER_FLAG,
-    FACTORY_RESET_NO_RELAUNCH_FLAG,
     consume_factory_reset_result,
     launch_detached_factory_reset,
     recover_incomplete_factory_reset,
-    run_factory_reset_helper,
 )
 from core.single_instance import SingleInstance  # noqa: E402
 from core.version import APP_NAME, __version__  # noqa: E402
@@ -274,16 +291,6 @@ def _terminate_after_factory_reset(exit_code: int) -> None:
 
 
 def main() -> int:
-    if FACTORY_RESET_HELPER_FLAG in sys.argv:
-        try:
-            index = sys.argv.index(FACTORY_RESET_HELPER_FLAG)
-            parent_pid = int(sys.argv[index + 1])
-        except (ValueError, IndexError) as exc:
-            print(f"Invalid factory-reset helper arguments: {exc}", flush=True)
-            return 2
-        relaunch = FACTORY_RESET_NO_RELAUNCH_FLAG not in sys.argv
-        return run_factory_reset_helper(parent_pid, relaunch=relaunch)
-
     _set_windows_app_id()
     app = QApplication(sys.argv)
     _set_application_icon(app)

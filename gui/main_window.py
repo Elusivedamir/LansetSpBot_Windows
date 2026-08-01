@@ -37,7 +37,7 @@ class MainWindow(QMainWindow):
         "comments.svg",
         "instructions.svg",
     )
-    SIDEBAR_MAX_WIDTH = 360
+    SIDEBAR_MAX_WIDTH = 380
     SUPPORT_CONTACT = "@lansetp"
     SUPPORT_URL = "https://t.me/lansetp"
 
@@ -89,9 +89,10 @@ class MainWindow(QMainWindow):
         sidebar_layout.setSpacing(10)
 
         brand_row = QHBoxLayout()
-        brand_mark = QLabel("LSB")
-        brand_mark.setFixedWidth(84)
-        brand_mark.setObjectName("brandMark")
+        self.brand_row = brand_row
+        self.brand_mark = QLabel("LSB")
+        self.brand_mark.setFixedWidth(84)
+        self.brand_mark.setObjectName("brandMark")
         brand_text = QVBoxLayout()
         brand_text.setSpacing(0)
         self.brand = QLabel(APP_NAME.upper())
@@ -100,7 +101,7 @@ class MainWindow(QMainWindow):
         self.brand_subtitle.setObjectName("brandSubtitle")
         brand_text.addWidget(self.brand)
         brand_text.addWidget(self.brand_subtitle)
-        brand_row.addWidget(brand_mark)
+        brand_row.addWidget(self.brand_mark)
         brand_row.addLayout(brand_text, 1)
         sidebar_layout.addLayout(brand_row)
         sidebar_layout.addSpacing(20)
@@ -311,6 +312,21 @@ class MainWindow(QMainWindow):
             + 2 * self.menu.frameWidth()
             + 4
         )
+        brand_spacing = max(0, self.brand_row.spacing())
+        needed_for_brand = (
+            self.brand_mark.width()
+            + brand_spacing
+            + max(
+                self.brand.fontMetrics().horizontalAdvance(self.brand.text()),
+                self.brand_subtitle.fontMetrics().horizontalAdvance(
+                    self.brand_subtitle.text()
+                ),
+            )
+            + margins.left()
+            + margins.right()
+            + 4
+        )
+        needed = max(needed, needed_for_brand)
         if needed <= self.sidebar.width():
             return
         needed = min(needed, self.SIDEBAR_MAX_WIDTH)

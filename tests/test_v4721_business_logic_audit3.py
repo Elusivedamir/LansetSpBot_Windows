@@ -107,6 +107,7 @@ def _make_due_join_task(db: Database, account_id: int):
     assert queued is not None
     task = db.claim_next_pending_task()
     assert task is not None
+    assert int(task["account_id"]) == account_id
     return campaign, slot, task, dialog_id
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import random
 from datetime import timedelta
 from pathlib import Path
@@ -151,6 +152,19 @@ def test_factory_reset_fails_closed_when_managed_directory_is_swapped(
     external.mkdir()
     sentinel = external / "must-survive.txt"
     sentinel.write_text("outside", encoding="utf-8")
+    if os.name == "nt":
+        probe = tmp_path / "symlink-capability-probe"
+        try:
+            probe.symlink_to(external, target_is_directory=True)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 1314:
+                pytest.skip(
+                    "Windows symlink-race proof requires Developer Mode or "
+                    "SeCreateSymbolicLinkPrivilege"
+                )
+            raise
+        else:
+            probe.unlink()
     for directory in (root, paths.sessions, paths.logs, paths.backups):
         directory.mkdir(parents=True, exist_ok=True)
     (paths.sessions / "main.session").write_text("session", encoding="utf-8")

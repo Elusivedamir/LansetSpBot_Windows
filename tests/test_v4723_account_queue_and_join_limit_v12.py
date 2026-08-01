@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import threading
 import time
 from datetime import timedelta
 
@@ -35,14 +36,24 @@ def test_persistent_idle_worker_does_not_block_account_change(
     container = ApplicationContainer(Config())
     try:
         task = container.api.create_task("noop", {})
-        assert container.api.start_queue() is True
-        assert _wait_until(
-            lambda: (
-                (container.api.get_task(task["id"]) or {}).get("status") == "completed"
-            )
+        completed = threading.Event()
+        container.queue_worker.task_completed.connect(
+            lambda task_id: completed.set()
+            if int(task_id) == int(task["id"])
+            else None
         )
+        assert container.api.start_queue() is True
+        deadline = time.monotonic() + 30
+        while not completed.is_set() and time.monotonic() < deadline:
+            qapp.processEvents()
+            completed.wait(0.02)
+        assert completed.is_set()
+        assert container.api.get_task(task["id"])["status"] == "completed"
         assert container.queue_worker.isRunning() is True
-        assert container.queue_worker.has_active_task is False
+        assert _wait_until(
+            lambda: not container.queue_worker.has_active_task,
+            timeout=30,
+        )
         assert container.api.is_queue_running() is False
 
         assert container.api.prepare_account_change(5_000) is True

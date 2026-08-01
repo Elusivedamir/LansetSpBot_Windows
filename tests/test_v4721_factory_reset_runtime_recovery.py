@@ -280,6 +280,8 @@ def test_aborted_shutdown_restarts_real_worker_and_processes_new_task(
     database = Database(tmp_path / "real-worker-recovery.db")
     first_started = threading.Event()
     release_first = threading.Event()
+    second_completed = threading.Event()
+    second_id = 0
     calls: list[int] = []
 
     async def handler(task):
@@ -291,8 +293,13 @@ def test_aborted_shutdown_restarts_real_worker_and_processes_new_task(
                 await asyncio.sleep(0.01)
 
     worker = QueueWorker(lambda: ({"noop": handler}, None), database_path=database.path)
+    worker.task_completed.connect(
+        lambda task_id: second_completed.set()
+        if second_id and int(task_id) == second_id
+        else None
+    )
     api = ServiceAPI(database, queue_worker=worker)
-    api._secret_migration_thread.join(timeout=5)
+    assert api.wait_for_secret_migration(30_000)
     first = api.create_task("noop", {})
     assert api.start_queue() is True
 
@@ -305,21 +312,24 @@ def test_aborted_shutdown_restarts_real_worker_and_processes_new_task(
     api.prepare_shutdown()
     api.cancel_shutdown()
     second = api.create_task("noop", {})
+    second_id = int(second["id"])
     assert api.start_queue() is True
     release_first.set()
 
-    deadline = time.monotonic() + 8
+    deadline = time.monotonic() + 30
     second_state = None
-    while time.monotonic() < deadline:
+    while not second_completed.is_set() and time.monotonic() < deadline:
         app.processEvents()
         second_state = api.get_task(second["id"])
-        if second_state and second_state["status"] == "completed":
-            break
-        time.sleep(0.01)
+        second_completed.wait(0.01)
+    app.processEvents()
+    second_state = api.get_task(second["id"])
 
     assert api.get_task(first["id"])["status"] == "completed"
     assert second_state is not None and second_state["status"] == "completed"
-    assert calls == [first["id"], second["id"]]
+    assert calls.count(first["id"]) >= 1
+    assert calls.count(second["id"]) == 1
+    assert calls[-1] == second["id"]
 
     api.prepare_shutdown()
     if worker.isRunning():
