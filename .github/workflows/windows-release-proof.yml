@@ -114,9 +114,14 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
-          & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
-            -File ".\build\build_windows_x64.ps1" 2>&1 |
-            Tee-Object -FilePath "dist\ci-proof\build.log"
+          python tools/run_ci_subprocess.py `
+            --label windows-release `
+            --log "dist\ci-proof\build.log" `
+            --idle-timeout-seconds 900 `
+            --total-timeout-seconds 6600 `
+            -- `
+            powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+              -File ".\build\build_windows_x64.ps1"
           $buildExit = $LASTEXITCODE
 
           if ($buildExit -ne 0) {
