@@ -15,7 +15,6 @@ _PUBLIC_PROXY_KEYS = (
     "telegram.proxy_password",
     "telegram.proxy_secret",
 )
-_SECRET_CLEANUP_SETTING = "internal.removed_proxy_secret_cleanup_complete"
 
 
 def migrate_legacy_proxy_cleanup_v33(
@@ -99,13 +98,6 @@ def migrate_legacy_proxy_cleanup_v33(
                        WHERE account_id=? AND key='telegram.proxy_secret'""",
                     (account_id,),
                 )
-        conn.execute(
-            """INSERT INTO settings(key, value, updated_at)
-               VALUES(?, '0', CURRENT_TIMESTAMP)
-               ON CONFLICT(key) DO UPDATE SET
-                   value='0', updated_at=CURRENT_TIMESTAMP""",
-            (_SECRET_CLEANUP_SETTING,),
-        )
         conn.execute("INSERT OR IGNORE INTO migrations(version) VALUES(33)")
         conn.execute("PRAGMA user_version = 33")
         conn.execute("COMMIT")

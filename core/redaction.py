@@ -20,6 +20,8 @@ _SENSITIVE_KEYS = frozenset(
         "proxy_login",
         "secret",
         "proxy_secret",
+        "mtproxy_secret",
+        "mtproto_secret",
         "username",
         "api_hash",
         "api_key",
@@ -45,7 +47,7 @@ _SENSITIVE_KEYS = frozenset(
 )
 
 _KEY_TOKEN = (
-    r"proxy[_-]?(?:password|pass|username|login|secret)|secret|username|password|passwd|pwd|"
+    r"proxy[_-]?(?:password|pass|username|login|secret)|mt(?:proxy|proto)[_-]?secret|secret|username|password|passwd|pwd|"
     r"api[_-]?(?:hash|key)|openai[_-]?api[_-]?key|authorization|access[_-]?token|bearer[_-]?token|token|phone(?:[_-]?number|[_-]?code[_-]?hash)?|"
     r"auth(?:orization)?[_-]?code|verification[_-]?code|login[_-]?code|"
     r"two[_-]?fa|2fa|two[_-]?factor[_-]?password|"

@@ -102,6 +102,9 @@ def test_legacy_proxy_profile_is_silently_disabled_and_credentials_removed(
     assert "telegram.proxy_secret" not in partial
     assert db.get_setting("telegram.proxy_type", "") == ""
     assert db.get_telegram_account(1001)["session_name"] == "account_1001"
+    assert db.get_setting(
+        "internal.removed_proxy_secret_cleanup_complete", ""
+    ) == ""
 
     store = MemorySecretStore(
         {
@@ -115,6 +118,9 @@ def test_legacy_proxy_profile_is_silently_disabled_and_credentials_removed(
     second = purge_removed_proxy_credentials(db, store)
     assert first == {"completed": True, "removed": 3}
     assert second == {"completed": True, "removed": 0}
+    assert db.get_setting(
+        "internal.removed_proxy_secret_cleanup_complete", ""
+    ) == "1"
     assert store.values == {
         "account.1001.telegram.api_hash": "keep-api-hash"
     }
