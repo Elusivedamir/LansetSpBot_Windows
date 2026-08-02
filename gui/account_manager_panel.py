@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QStyle,
     QVBoxLayout,
 )
 
@@ -51,7 +52,7 @@ class AccountManagerPanel(QFrame):
         self._selected_account_id = 0
         self._previous_account_id = 0
 
-        title = QLabel("Подключённые аккаунты")
+        title = QLabel("Выберите аккаунт")
         title.setObjectName("cardTitle")
 
         self.counter = QLabel(
@@ -102,8 +103,14 @@ class AccountManagerPanel(QFrame):
         self.reauthorize_button.setObjectName("secondaryButton")
         self.reauthorize_button.clicked.connect(self._reauthorize_clicked)
 
-        self.delete_button = QPushButton("Удалить аккаунт")
-        self.delete_button.setObjectName("dangerButton")
+        self.delete_button = QPushButton()
+        self.delete_button.setObjectName("accountDeleteButton")
+        self.delete_button.setToolTip("Удалить выбранный аккаунт")
+        self.delete_button.setAccessibleName("Удалить выбранный аккаунт")
+        self.delete_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon)
+        )
+        self.delete_button.setFixedWidth(48)
         self.delete_button.clicked.connect(self._delete_clicked)
 
         self.import_comments_button = QPushButton(
@@ -122,12 +129,17 @@ class AccountManagerPanel(QFrame):
             self.import_channels_requested.emit
         )
 
+        self.selector_row = QHBoxLayout()
+        self.selector_row.setSpacing(10)
+        self.selector_row.addWidget(self.selector, 1)
+        self.selector_row.addWidget(self.delete_button, 0)
+
         actions = QGridLayout()
+        self.actions_layout = actions
         actions.addWidget(self.add_button, 0, 0)
         actions.addWidget(self.stop_button, 0, 1)
         actions.addWidget(self.resume_button, 0, 2)
         actions.addWidget(self.reauthorize_button, 1, 0)
-        actions.addWidget(self.delete_button, 1, 1)
         actions.setColumnStretch(3, 1)
 
         imports = QVBoxLayout()
@@ -140,7 +152,7 @@ class AccountManagerPanel(QFrame):
         layout.addWidget(title)
         layout.addWidget(self.counter)
         layout.addWidget(self.search)
-        layout.addWidget(self.selector)
+        layout.addLayout(self.selector_row)
         layout.addLayout(state_row)
         layout.addWidget(self.details)
         layout.addLayout(actions)

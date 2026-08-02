@@ -330,3 +330,52 @@ def test_cached_account_transient_check_does_not_show_false_error(
     window.deleteLater()
     app.processEvents()
     container.shutdown()
+
+
+# AURORA-PRESTIGE-GUI-CONTRACT
+def test_aurora_prestige_account_controls_and_instruction_copy(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "aurora-gui.db"))
+    app = _app()
+    config = Config()
+    container = ApplicationContainer(config)
+    window = MarlenApp(container.adapter, container.queue_worker, config)
+    manager = window.account_view.account_manager
+
+    assert manager.delete_button.objectName() == "accountDeleteButton"
+    assert manager.selector_row.indexOf(manager.selector) >= 0
+    assert manager.selector_row.indexOf(manager.delete_button) >= 0
+    assert manager.actions_layout.indexOf(manager.delete_button) == -1
+
+    proxy = window.account_view
+    proxy.proxy_enabled.setChecked(False)
+    app.processEvents()
+    assert proxy.proxy_box.isHidden()
+    assert proxy.proxy_enabled.text() == "Подключить прокси"
+    proxy.proxy_enabled.setChecked(True)
+    app.processEvents()
+    assert not proxy.proxy_box.isHidden()
+    assert proxy.proxy_enabled.text() == "Прокси подключён"
+
+    assert window.activity_panel.spambot_button.text() == "Проверить @SpamBot"
+    assert window.activity_panel.spambot_button.objectName() == "spamBotButton"
+
+    from gui.theme import AURORA_PRESTIGE_QSS, TELEGRAM_PREMIUM_QSS
+    from gui.views.instructions_view import InstructionsView
+
+    assert "AURORA" not in AURORA_PRESTIGE_QSS  # theme is CSS, not placeholder copy
+    assert "#5546C8" in AURORA_PRESTIGE_QSS
+    assert TELEGRAM_PREMIUM_QSS.endswith(AURORA_PRESTIGE_QSS)
+    instruction_text = " ".join(
+        f"{title} {body}" for title, _image, body in InstructionsView.STEPS
+    )
+    assert "70 изолированных аккаунтов" in instruction_text
+    assert "до пяти Telegram-аккаунтов" not in instruction_text
+
+    window.suspend_runtime_updates()
+    window._tray.hide()
+    window.hide()
+    window.deleteLater()
+    app.processEvents()
+    container.shutdown()
