@@ -277,10 +277,10 @@ def parse_lock(path: Path = LOCK) -> dict[str, dict[str, Any]]:
 def check_lock(path: Path = LOCK) -> None:
     locked = parse_lock(path)
     installed: dict[str, metadata.Distribution] = {}
-    for distribution in metadata.distributions():
-        raw_name = distribution.metadata.get("Name")
+    for installed_distribution in metadata.distributions():
+        raw_name = installed_distribution.metadata.get("Name")
         if raw_name:
-            installed[_canonicalize(raw_name)] = distribution
+            installed[_canonicalize(raw_name)] = installed_distribution
 
     failures: list[str] = []
     for normalized, item in locked.items():
