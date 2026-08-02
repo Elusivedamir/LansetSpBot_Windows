@@ -67,8 +67,8 @@ class ActivityPanel(QFrame):
         self.next_label.setMinimumWidth(290)
         self.next_label.setObjectName("activityNext")
 
-        self.spambot_button = QPushButton("Проверить блокировку @SpamBot")
-        self.spambot_button.setObjectName("tinyButton")
+        self.spambot_button = QPushButton("Проверить @SpamBot")
+        self.spambot_button.setObjectName("spamBotButton")
         self.spambot_button.setToolTip(
             "Кнопка становится доступна после остановки кампании из-за ограничения Telegram"
         )
@@ -147,7 +147,7 @@ class ActivityPanel(QFrame):
             "Развернуть журнал" if self._collapsed else "Свернуть журнал"
         )
         self.spambot_button.setText(
-            "@SpamBot" if compact else "Проверить блокировку @SpamBot"
+            "@SpamBot" if compact else "Проверить @SpamBot"
         )
 
     def _check_spambot(self) -> None:
@@ -247,7 +247,7 @@ class ActivityPanel(QFrame):
             else "Аккаунт не подключён"
         )
         self.spambot_button.setEnabled(False)
-        self.spambot_button.setObjectName("tinyButton")
+        self.spambot_button.setObjectName("spamBotButton")
         self.spambot_button.style().unpolish(self.spambot_button)
         self.spambot_button.style().polish(self.spambot_button)
         self._clear_countdown("Следующая проверка: —")
@@ -697,7 +697,7 @@ class ActivityPanel(QFrame):
             else "Доступно после остановки кампании из-за ограничения Telegram"
         )
         self.spambot_button.setObjectName(
-            "dangerButton" if restricted else "tinyButton"
+            "dangerButton" if restricted else "spamBotButton"
         )
         self.spambot_button.style().unpolish(self.spambot_button)
         self.spambot_button.style().polish(self.spambot_button)

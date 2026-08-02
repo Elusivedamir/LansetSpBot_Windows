@@ -121,11 +121,13 @@ class AccountView(QWidget):
         form_layout.addRow("API Hash", self.api_hash)
         form_layout.addRow("Телефон", self.phone)
 
-        self.proxy_enabled = QCheckBox("Использовать proxy")
+        self.proxy_enabled = QCheckBox("Подключить прокси")
+        self.proxy_enabled.setObjectName("proxyToggle")
         self.proxy_enabled.toggled.connect(self._toggle_proxy)
         form_layout.addRow("", self.proxy_enabled)
 
         self.proxy_box = QFrame()
+        self.proxy_box.setObjectName("proxyCard")
         proxy_grid = QGridLayout(self.proxy_box)
         self.proxy_grid = proxy_grid
         proxy_grid.setContentsMargins(0, 0, 0, 0)
@@ -155,6 +157,7 @@ class AccountView(QWidget):
         proxy_grid.addWidget(self.proxy_password, 2, 3)
         self._sync_proxy_type_fields(self.proxy_type.currentText())
         form_layout.addRow("", self.proxy_box)
+        self.proxy_box.hide()
 
         self.schedule_enabled = QCheckBox(
             "Не отправлять автоматические комментарии в тихие часы"
@@ -708,7 +711,11 @@ class AccountView(QWidget):
         )
 
     def _toggle_proxy(self, enabled: bool):
-        self.proxy_box.setVisible(enabled)
+        active = bool(enabled)
+        self.proxy_enabled.setText(
+            "Прокси подключён" if active else "Подключить прокси"
+        )
+        self.proxy_box.setVisible(active)
         self._sync_proxy_type_fields(self.proxy_type.currentText())
         self._refresh_dynamic_layout()
 

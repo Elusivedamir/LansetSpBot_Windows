@@ -99,7 +99,7 @@ class MainWindow(QMainWindow):
         brand_text.setSpacing(0)
         self.brand = QLabel(APP_NAME.upper())
         self.brand.setObjectName("brandTitle")
-        self.brand_subtitle = QLabel("OpenAI · Telegram")
+        self.brand_subtitle = QLabel("Панель управления")
         self.brand_subtitle.setObjectName("brandSubtitle")
         brand_text.addWidget(self.brand)
         brand_text.addWidget(self.brand_subtitle)
