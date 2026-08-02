@@ -538,14 +538,20 @@ class AccountsAPIMixin(_MixinHost):
         )
         return result
 
+
+    @staticmethod
+    def _clear_account_cancellation(
+        owner: int, worker: Any
+    ) -> None:
+        if worker is not None:
+            worker.clear_scope_cancellation("account", owner)
+
     def resume_telegram_account(self, account_id: int) -> dict[str, Any]:
         owner = int(account_id)
         self.database.resume_account_work(owner)
         worker = self.queue_worker
-        if worker is not None:
-            worker.clear_scope_cancellation("account", owner)
+        self._clear_account_cancellation(owner, worker)
         return self.database.get_telegram_account(owner) or {}
-
 
     def _prepare_account_deletion(
         self, owner: int, account: dict[str, Any]
@@ -659,15 +665,20 @@ class AccountsAPIMixin(_MixinHost):
             owner, result, cleanup_state
         )
 
-    def check_telegram_account_runtime(
-        self, account_id: int, *, timeout_seconds: float = 20.0
-    ) -> dict[str, Any]:
-        owner = int(account_id)
+
+    def _require_account_runtime_worker(self) -> Any:
         worker = self.queue_worker
         if worker is None:
             raise RuntimeError("Фоновый обработчик не создан")
-        self.database.resume_account_work(owner)
-        worker.clear_scope_cancellation("account", owner)
+        return worker
+
+    def _submit_account_runtime_check(
+        self,
+        owner: int,
+        worker: Any,
+        *,
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
         if not worker.isRunning():
             self.start_queue()
         future = worker.submit_utility(
@@ -677,15 +688,33 @@ class AccountsAPIMixin(_MixinHost):
             future.result(timeout=max(1.0, float(timeout_seconds))) or {}
         )
 
-    def import_comments_from_previous_account(
-        self, *, mode: str
+    def check_telegram_account_runtime(
+        self, account_id: int, *, timeout_seconds: float = 20.0
     ) -> dict[str, Any]:
+        owner = int(account_id)
+        worker = self._require_account_runtime_worker()
+        self.database.resume_account_work(owner)
+        self._clear_account_cancellation(owner, worker)
+        return self._submit_account_runtime_check(
+            owner,
+            worker,
+            timeout_seconds=timeout_seconds,
+        )
+
+
+    def _previous_account_transfer_ids(self) -> tuple[int, int]:
         target = self.get_selected_account_id()
         source = self.get_previous_selected_account_id()
         if target <= 0 or source <= 0 or source == target:
             raise ValueError(
                 "Сначала переключитесь с другого подключённого аккаунта."
             )
+        return source, target
+
+    def import_comments_from_previous_account(
+        self, *, mode: str
+    ) -> dict[str, Any]:
+        source, target = self._previous_account_transfer_ids()
         return cast(
             dict[str, Any],
             self.database.import_comment_profile_between_accounts(
@@ -696,12 +725,7 @@ class AccountsAPIMixin(_MixinHost):
         )
 
     def import_channels_from_previous_account(self) -> dict[str, int]:
-        target = self.get_selected_account_id()
-        source = self.get_previous_selected_account_id()
-        if target <= 0 or source <= 0 or source == target:
-            raise ValueError(
-                "Сначала переключитесь с другого подключённого аккаунта."
-            )
+        source, target = self._previous_account_transfer_ids()
         return cast(
             dict[str, int],
             self.database.import_channels_between_accounts(
