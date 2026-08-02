@@ -126,11 +126,15 @@ class TelegramAuthWorker(QThread):
         sensitive_setting_keys = (
             "telegram.api_hash",
             "telegram.proxy_password",
+            # Legacy-only redaction. This key is no longer accepted by runtime
+            # configuration, but stale values must never leak into errors.
+            "telegram.proxy_secret",
             "telegram.proxy_username",
             "telegram.phone",
             # Compatibility with older/lightweight callers.
             "api_hash",
             "proxy_password",
+            "proxy_secret",
             "proxy_username",
             "phone",
         )
