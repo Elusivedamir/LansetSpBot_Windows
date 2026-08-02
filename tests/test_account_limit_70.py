@@ -5,6 +5,8 @@ from pathlib import Path
 import threading
 
 from core.account_limits import (
+    MAX_ACTIVE_TELEGRAM_ACCOUNT_RUNTIMES,
+    MAX_CONCURRENT_TELEGRAM_ACCOUNT_TASKS,
     MAX_PARALLEL_ACCOUNT_RUNTIMES,
     MAX_REGISTERED_TELEGRAM_ACCOUNTS,
 )
@@ -24,8 +26,10 @@ def _register(db: Database, account_id: int):
 
 def test_limits_are_distinct() -> None:
     assert MAX_REGISTERED_TELEGRAM_ACCOUNTS == 70
-    assert MAX_PARALLEL_ACCOUNT_RUNTIMES == 5
-    assert TelegramAccountRuntimeManager.MAX_ACCOUNTS == 5
+    assert MAX_ACTIVE_TELEGRAM_ACCOUNT_RUNTIMES == 70
+    assert MAX_CONCURRENT_TELEGRAM_ACCOUNT_TASKS == 5
+    assert MAX_PARALLEL_ACCOUNT_RUNTIMES == MAX_CONCURRENT_TELEGRAM_ACCOUNT_TASKS
+    assert TelegramAccountRuntimeManager.MAX_ACCOUNTS == 70
 
 
 def test_existing_v31_database_replaces_the_five_account_trigger(

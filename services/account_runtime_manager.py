@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from core.account_limits import MAX_PARALLEL_ACCOUNT_RUNTIMES
+from core.account_limits import MAX_ACTIVE_TELEGRAM_ACCOUNT_RUNTIMES
 from core.exceptions import DeferredTelegramError, NonRetryableTelegramError
 from core.redaction import sanitize_exception
 from services.account_context import AccountContainerView
@@ -27,7 +27,7 @@ class TelegramAccountRuntime:
 class TelegramAccountRuntimeManager:
     """Lazily own one isolated handler/client graph for each Telegram account."""
 
-    MAX_ACCOUNTS = MAX_PARALLEL_ACCOUNT_RUNTIMES
+    MAX_ACCOUNTS = MAX_ACTIVE_TELEGRAM_ACCOUNT_RUNTIMES
 
     def __init__(
         self,
@@ -164,10 +164,21 @@ class TelegramAccountRuntimeManager:
         victim = min(candidates, key=lambda runtime: runtime.last_used)
         self._evicting_accounts.add(victim.account_id)
         try:
+            await self._cleanup_runtime(victim)
+        except Exception as exc:
+            # Keep ownership and the recycling marker when cleanup fails.  An
+            # explicit stop_runtime() can safely retry cleanup; get_runtime()
+            # remains fail-closed and cannot create a second client meanwhile.
+            log.error(
+                "Could not release idle Telegram runtime for account %s: %s",
+                victim.account_id,
+                sanitize_exception(exc),
+                exc_info=True,
+            )
+            raise
+        else:
             if self._runtimes.get(victim.account_id) is victim:
                 self._runtimes.pop(victim.account_id, None)
-            await self._cleanup_runtime(victim)
-        finally:
             self._evicting_accounts.discard(victim.account_id)
         log.info(
             "Released idle Telegram runtime for account %s",
@@ -345,6 +356,7 @@ class TelegramAccountRuntimeManager:
             async with creation_lock:
                 runtime = self._runtimes.get(owner)
                 if runtime is None:
+                    self._evicting_accounts.discard(owner)
                     return {"account_id": owner, "disconnected": False}
                 async with runtime.lock:
                     await self._cleanup_runtime(runtime)
@@ -352,6 +364,9 @@ class TelegramAccountRuntimeManager:
                     # the invariant explicit even if future code mutates the map.
                     if self._runtimes.get(owner) is runtime:
                         self._runtimes.pop(owner, None)
+                # A successful explicit stop also resolves a previous failed
+                # eviction quarantine for this account.
+                self._evicting_accounts.discard(owner)
         finally:
             self._stopping_accounts.discard(owner)
 
@@ -407,9 +422,11 @@ class TelegramAccountRuntimeManager:
                 log.exception(
                     "Could not stop Telegram runtime for account %s", account_id
                 )
-        self._runtimes.clear()
         if errors:
+            # Failed runtimes stay owned so a second close()/stop_runtime() can
+            # retry cleanup instead of losing references to live clients.
             raise RuntimeError("; ".join(errors))
+        self._runtimes.clear()
 
 
 def create_multiaccount_handlers(
