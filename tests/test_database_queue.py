@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import threading
-import time
 
 from PySide6.QtWidgets import QApplication
 
@@ -81,12 +80,14 @@ def test_stop_after_side_effect_does_not_requeue(tmp_path):
     path = tmp_path / "effect.db"
     database = Database(path)
     effects: list[int] = []
+    effect_done = threading.Event()
     worker = None
 
     def factory():
         async def handler(task):
             await asyncio.sleep(0.05)
             effects.append(task["id"])
+            effect_done.set()
             worker.requestInterruption()
 
         return {"effect": handler}, None
@@ -94,10 +95,9 @@ def test_stop_after_side_effect_does_not_requeue(tmp_path):
     worker = QueueWorker(factory, database_path=path)
     task_id = database.insert_task("effect", {})
     worker.start()
-    deadline = time.time() + 5
-    while worker.isRunning() and time.time() < deadline:
-        app.processEvents()
-        time.sleep(0.01)
+    assert effect_done.wait(timeout=30)
+    assert worker.wait(30_000)
+    app.processEvents()
 
     task = database.get_tasks(limit=1)[0]
     assert effects == [task_id]

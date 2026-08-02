@@ -36,13 +36,11 @@ def test_comment_slot_dispatches_direct_group_without_post_route() -> None:
     assert "CommentSlotPhase.SEND_STARTED" in rendered
 
 
-def test_windows_proxy_selector_excludes_mtproxy() -> None:
+def test_windows_proxy_selector_lists_only_supported_types() -> None:
     source = Path("gui/views/account_view.py").read_text(encoding="utf-8")
     instructions = Path("gui/views/instructions_view.py").read_text(
         encoding="utf-8"
     )
 
     assert 'addItems(["SOCKS5", "SOCKS4", "HTTP"])' in source
-    assert 'addItems(["SOCKS5", "SOCKS4", "HTTP", "MTPROXY"])' not in source
     assert "SOCKS5, SOCKS4 и HTTP" in instructions
-    assert "и MTProxy" not in instructions

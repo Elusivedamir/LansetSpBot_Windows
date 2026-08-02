@@ -141,14 +141,6 @@ class AccountView(QWidget):
         self.proxy_password = QLineEdit()
         self.proxy_password.setEchoMode(QLineEdit.EchoMode.Password)
         self.proxy_password.setPlaceholderText("Необязательно")
-        self.proxy_secret = QLineEdit()
-        self.proxy_secret.setEchoMode(QLineEdit.EchoMode.Password)
-        self.proxy_secret.setPlaceholderText("Secret из настроек MTProxy")
-        self.proxy_secret.setToolTip(
-            "Вставьте Secret из Telegram: обычный, DD или Fake TLS EE. "
-            "Поддерживаются hex и Base64URL (например, ключ, начинающийся с 7). "
-            "Secret хранится локально и скрывается в логах."
-        )
         proxy_grid.addWidget(QLabel("Тип"), 0, 0)
         proxy_grid.addWidget(self.proxy_type, 0, 1)
         proxy_grid.addWidget(QLabel("Адрес"), 1, 0)
@@ -157,13 +149,10 @@ class AccountView(QWidget):
         proxy_grid.addWidget(self.proxy_port, 1, 3)
         self.proxy_login_label = QLabel("Логин")
         self.proxy_password_label = QLabel("Пароль")
-        self.proxy_secret_label = QLabel("Secret")
         proxy_grid.addWidget(self.proxy_login_label, 2, 0)
         proxy_grid.addWidget(self.proxy_login, 2, 1)
         proxy_grid.addWidget(self.proxy_password_label, 2, 2)
         proxy_grid.addWidget(self.proxy_password, 2, 3)
-        proxy_grid.addWidget(self.proxy_secret_label, 2, 0)
-        proxy_grid.addWidget(self.proxy_secret, 2, 1, 1, 3)
         self._sync_proxy_type_fields(self.proxy_type.currentText())
         form_layout.addRow("", self.proxy_box)
 
@@ -489,7 +478,6 @@ class AccountView(QWidget):
         self.proxy_port.clear()
         self.proxy_login.clear()
         self.proxy_password.clear()
-        self.proxy_secret.clear()
         self._set_code_card_visible(False)
         self.status_label.setText("Добавление Telegram-аккаунта")
         self.account_label.setText(
@@ -740,10 +728,6 @@ class AccountView(QWidget):
             self.proxy_password,
         ):
             widget.setVisible(True)
-        # Legacy MTProxy widgets remain internal only so old encrypted settings
-        # can be cleared safely; MTProxy is not offered by the Windows UI.
-        self.proxy_secret_label.setVisible(False)
-        self.proxy_secret.setVisible(False)
         self.proxy_port.setPlaceholderText("1080")
         if self.proxy_enabled.isChecked():
             self._refresh_dynamic_layout()
@@ -759,7 +743,6 @@ class AccountView(QWidget):
             self.proxy_port,
             self.proxy_login,
             self.proxy_password,
-            self.proxy_secret,
         ):
             widget.setEnabled(bool(enabled))
 
@@ -910,11 +893,8 @@ class AccountView(QWidget):
         }
         proxy_type = str(values.get("telegram.proxy_type") or "SOCKS5").upper()
         if proxy_type not in {"SOCKS5", "SOCKS4", "HTTP"}:
-            # MTProxy was removed from the product UI. Fail closed for a legacy
-            # profile until the operator chooses a supported proxy explicitly.
             enabled = False
             proxy_type = "SOCKS5"
-            self.proxy_secret.clear()
         self.proxy_enabled.setChecked(enabled)
         self._toggle_proxy(enabled)
         index = self.proxy_type.findText(proxy_type)
@@ -923,7 +903,6 @@ class AccountView(QWidget):
         self.proxy_port.setText(str(values.get("telegram.proxy_port") or ""))
         self.proxy_login.setText(str(values.get("telegram.proxy_username") or ""))
         self.proxy_password.setText(str(values.get("telegram.proxy_password") or ""))
-        self.proxy_secret.clear()
         self._sync_proxy_type_fields(self.proxy_type.currentText())
         self._applying_settings = True
         try:
@@ -1015,7 +994,6 @@ class AccountView(QWidget):
                 self.proxy_port.text(),
                 self.proxy_login.text(),
                 self.proxy_password.text(),
-                self.proxy_secret.text(),
             )
         values = {
             "telegram.api_id": api_id,
@@ -1037,7 +1015,6 @@ class AccountView(QWidget):
             "telegram.proxy_password": proxy.password
             if proxy
             else self.proxy_password.text(),
-            "telegram.proxy_secret": "",
         }
         values.update(self._schedule_settings())
         return values

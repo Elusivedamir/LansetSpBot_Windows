@@ -5,6 +5,10 @@ import secrets
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import TYPE_CHECKING, Any, cast
 
+from core.account_limits import (
+    MAX_REGISTERED_TELEGRAM_ACCOUNTS,
+    account_limit_message,
+)
 from services.account_context import (
     SECRET_SETTING_KEYS,
     account_secret_key,
@@ -32,7 +36,7 @@ PENDING_SESSION_RE = re.compile(r"^pending_[a-f0-9]{16,64}$")
 
 
 class AccountsAPIMixin(_MixinHost):
-    MAX_TELEGRAM_ACCOUNTS = 5
+    MAX_TELEGRAM_ACCOUNTS = MAX_REGISTERED_TELEGRAM_ACCOUNTS
 
     def list_telegram_accounts(self) -> list[dict[str, Any]]:
         return cast(list[dict[str, Any]], self.database.list_telegram_accounts())
@@ -52,7 +56,7 @@ class AccountsAPIMixin(_MixinHost):
             "message": (
                 ""
                 if count < self.MAX_TELEGRAM_ACCOUNTS
-                else "Достигнут лимит: можно подключить не более 5 Telegram-аккаунтов."
+                else account_limit_message(self.MAX_TELEGRAM_ACCOUNTS)
             ),
         }
 

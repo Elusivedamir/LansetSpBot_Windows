@@ -45,6 +45,83 @@ function Write-BuildStage {
     Write-Host "[LansetSpBot build][stage] $Name" -ForegroundColor Cyan
 }
 
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)][string]$LiteralPath)
+
+    $ResolvedPath = [System.IO.Path]::GetFullPath($LiteralPath)
+    $Stream = [System.IO.File]::Open(
+        $ResolvedPath,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::Read
+    )
+    try {
+        $Sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return ([System.BitConverter]::ToString(
+                $Sha256.ComputeHash($Stream)
+            ) -replace "-", "").ToLowerInvariant()
+        }
+        finally {
+            $Sha256.Dispose()
+        }
+    }
+    finally {
+        $Stream.Dispose()
+    }
+}
+
+function Copy-DirectoryTree {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+
+    if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
+        throw "Directory copy source does not exist: $Source"
+    }
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    $Robocopy = Get-Command "robocopy.exe" -ErrorAction SilentlyContinue
+    if ($null -eq $Robocopy) {
+        throw "robocopy.exe was not found on the Windows build host."
+    }
+
+    # /E preserves empty Qt/Shiboken runtime directories when the one-dir
+    # bundle is relocated and again when the final release tree is staged.
+    & $Robocopy.Source $Source $Destination `
+        /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 /NFL /NDL /NJH /NJS /NP
+    $RobocopyExit = $LASTEXITCODE
+    if ($RobocopyExit -ge 8) {
+        throw "robocopy failed with exit code ${RobocopyExit}: $Source -> $Destination"
+    }
+}
+
+function Invoke-PackagedProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$Executable,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$Label,
+        [int]$TimeoutMilliseconds = 120000
+    )
+
+    $Process = Start-Process -FilePath $Executable `
+        -ArgumentList $Arguments `
+        -PassThru
+    try {
+        if (-not $Process.WaitForExit($TimeoutMilliseconds)) {
+            Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+            throw "$Label did not exit within $TimeoutMilliseconds milliseconds."
+        }
+        $Process.Refresh()
+        if ($Process.ExitCode -ne 0) {
+            throw "$Label failed with exit code $($Process.ExitCode)."
+        }
+    }
+    finally {
+        $Process.Dispose()
+    }
+}
+
 function Assert-CleanCheckout {
     param([Parameter(Mandatory = $true)][string]$Stage)
     $SafeStage = ($Stage -replace "[^A-Za-z0-9._-]", "-")
@@ -403,18 +480,21 @@ $RelocationRoot = $null
 try {
     $env:QT_QPA_PLATFORM = "offscreen"
     Write-BuildStage "Running packaged self-test"
-    & $BuiltExe --self-test
-    if ($LASTEXITCODE -ne 0) { throw "Packaged self-test failed." }
+    Invoke-PackagedProcess `
+        -Executable $BuiltExe `
+        -Arguments @("--self-test") `
+        -Label "Packaged self-test"
 
     $RelocationRoot = Join-Path $env:TEMP ("LansetSpBot Проверка " + [guid]::NewGuid().ToString("N"))
     $RelocatedDir = Join-Path $RelocationRoot $AppName
-    New-Item -ItemType Directory -Path $RelocatedDir -Force | Out-Null
-    Copy-Item -Path (Join-Path $BuiltDir "*") -Destination $RelocatedDir -Recurse -Force
+    Copy-DirectoryTree -Source $BuiltDir -Destination $RelocatedDir
     $RelocatedExe = Join-Path $RelocatedDir ($AppName + ".exe")
 
     Write-BuildStage "Running relocated packaged self-test"
-    & $RelocatedExe --self-test
-    if ($LASTEXITCODE -ne 0) { throw "Relocated packaged self-test failed." }
+    Invoke-PackagedProcess `
+        -Executable $RelocatedExe `
+        -Arguments @("--self-test") `
+        -Label "Relocated packaged self-test"
 
     Write-BuildStage "Running packaged profile migration smoke test"
     $MigrationAppData = Join-Path $RelocationRoot "MigrationAppData"
@@ -432,28 +512,18 @@ try {
         [byte[]](0x53, 0x45, 0x53, 0x53, 0x49, 0x4f, 0x4e)
     )
 
-    $ExpectedDatabaseHash = (
-        Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $LegacyProfile "marlen.db")
-    ).Hash
-    $ExpectedSessionHash = (
-        Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $LegacySessions "build.session")
-    ).Hash
+    $ExpectedDatabaseHash = Get-Sha256Hex -LiteralPath (Join-Path $LegacyProfile "marlen.db")
+    $ExpectedSessionHash = Get-Sha256Hex -LiteralPath (Join-Path $LegacySessions "build.session")
 
     $env:APPDATA = $MigrationAppData
     Remove-Item Env:LANSETSPBOT_DATA_DIR -ErrorAction SilentlyContinue
     Remove-Item Env:MARLEN_DATA_DIR -ErrorAction SilentlyContinue
 
-    $MigrationProcess = Start-Process -FilePath $RelocatedExe `
-        -ArgumentList "--migrate-profile" `
-        -PassThru
-
-    if (-not $MigrationProcess.WaitForExit(30000)) {
-        Stop-Process -Id $MigrationProcess.Id -Force -ErrorAction SilentlyContinue
-        throw "Packaged profile migration command did not exit within 30 seconds."
-    }
-    if ($MigrationProcess.ExitCode -ne 0) {
-        throw "Packaged profile migration command failed with exit code $($MigrationProcess.ExitCode)."
-    }
+    Invoke-PackagedProcess `
+        -Executable $RelocatedExe `
+        -Arguments @("--migrate-profile") `
+        -Label "Packaged profile migration command" `
+        -TimeoutMilliseconds 30000
     if (Test-Path -LiteralPath $LegacyProfile) {
         throw "Packaged profile migration left the legacy profile behind."
     }
@@ -461,14 +531,10 @@ try {
         throw "Packaged profile migration did not create the canonical profile."
     }
 
-    $ActualDatabaseHash = (
-        Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $CanonicalProfile "marlen.db")
-    ).Hash
-    $ActualSessionHash = (
-        Get-FileHash -Algorithm SHA256 -LiteralPath (
-            Join-Path $CanonicalProfile "sessions\build.session"
-        )
-    ).Hash
+    $ActualDatabaseHash = Get-Sha256Hex -LiteralPath (Join-Path $CanonicalProfile "marlen.db")
+    $ActualSessionHash = Get-Sha256Hex -LiteralPath (
+        Join-Path $CanonicalProfile "sessions\build.session"
+    )
 
     if ($ActualDatabaseHash -ne $ExpectedDatabaseHash) {
         throw "Packaged profile migration changed the database bytes."
@@ -493,8 +559,7 @@ $ZipPath = Join-Path $ProjectRoot ("dist\" + $AppName + "-Windows-x64.zip")
 $ChecksumsPath = Join-Path $ProjectRoot ("dist\" + $AppName + "-Windows-x64-SHA256SUMS.txt")
 $SbomPath = Join-Path $ProjectRoot ("dist\" + $AppName + "-Windows-x64-SBOM.cdx.json")
 Remove-Item -LiteralPath $ReleaseParent, $ZipPath, $ChecksumsPath, $SbomPath -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Path $ReleaseRoot -Force | Out-Null
-Copy-Item -Path (Join-Path $BuiltDir "*") -Destination $ReleaseRoot -Recurse -Force
+Copy-DirectoryTree -Source $BuiltDir -Destination $ReleaseRoot
 Copy-Item -LiteralPath $ReleaseReadme -Destination (Join-Path $ReleaseRoot "WINDOWS_X64_README.txt")
 Set-Content -LiteralPath (Join-Path $ReleaseRoot "1_START_LANSETSPBOT.bat") -Encoding Ascii -Value "@echo off`r`ncd /d `"%~dp0`"`r`nstart `"`" `"%~dp0$AppName.exe`"`r`n"
 
@@ -533,7 +598,7 @@ Copy-Item -LiteralPath $SbomPath -Destination $ReleaseRoot
 Write-BuildStage "Creating release archive"
 Compress-Archive -LiteralPath $ReleaseRoot -DestinationPath $ZipPath -CompressionLevel Optimal
 if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) { throw "Release ZIP was not created." }
-$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ZipPath).Hash.ToLowerInvariant()
+$hash = (Get-Sha256Hex -LiteralPath $ZipPath)
 Set-Content -LiteralPath $ChecksumsPath -Encoding Ascii -Value "$hash  $([System.IO.Path]::GetFileName($ZipPath))"
 
 Assert-CleanCheckout "after-packaging"
@@ -544,7 +609,7 @@ $InstructionMetadataPath = Join-Path $InstructionAssets "capture_metadata.json"
 $InstructionMetadata = Get-Content -LiteralPath $InstructionMetadataPath -Raw | ConvertFrom-Json
 $AssetHashes = [ordered]@{}
 Get-ChildItem -LiteralPath $InstructionAssets -File | Sort-Object Name | ForEach-Object {
-    $AssetHashes[$_.Name] = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
+    $AssetHashes[$_.Name] = (Get-Sha256Hex -LiteralPath $_.FullName)
 }
 $Proof = [ordered]@{
     format = 1
@@ -560,7 +625,7 @@ $Proof = [ordered]@{
     }
     source_manifest = [ordered]@{
         path = $SourceManifest
-        sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $SourceManifest).Hash.ToLowerInvariant()
+        sha256 = (Get-Sha256Hex -LiteralPath $SourceManifest)
     }
     instruction_assets = [ordered]@{
         directory = $InstructionAssets
@@ -568,11 +633,11 @@ $Proof = [ordered]@{
         hashes = $AssetHashes
     }
     artifacts = [ordered]@{
-        exe_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $BuiltExe).Hash.ToLowerInvariant()
+        exe_sha256 = (Get-Sha256Hex -LiteralPath $BuiltExe)
         zip = [System.IO.Path]::GetFileName($ZipPath)
         zip_sha256 = $hash
         sbom = [System.IO.Path]::GetFileName($SbomPath)
-        sbom_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $SbomPath).Hash.ToLowerInvariant()
+        sbom_sha256 = (Get-Sha256Hex -LiteralPath $SbomPath)
         checksums = [System.IO.Path]::GetFileName($ChecksumsPath)
     }
     gates = [ordered]@{

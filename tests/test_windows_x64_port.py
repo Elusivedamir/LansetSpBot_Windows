@@ -75,12 +75,16 @@ def test_windows_build_pipeline_has_native_self_tests_and_release_zip() -> None:
     assert "tools\\run_ci_subprocess.py" in build
     assert "-m ruff check" in build
     assert "-m mypy" in build
-    assert "$BuiltExe --self-test" in build
+    assert "function Invoke-PackagedProcess" in build
+    assert '-Arguments @("--self-test")' in build
+    assert build.count("Invoke-PackagedProcess `") == 3
+    assert "$Process.WaitForExit($TimeoutMilliseconds)" in build
     assert "LansetSpBot Проверка" in build
     assert 'Write-BuildStage "Running packaged profile migration smoke test"' in build
-    assert '-ArgumentList "--migrate-profile"' in build
-    assert "$MigrationProcess.WaitForExit(30000)" in build
-    assert "Get-FileHash -Algorithm SHA256" in build
+    assert '-Arguments @("--migrate-profile")' in build
+    assert "-TimeoutMilliseconds 30000" in build
+    assert "function Get-Sha256Hex" in build
+    assert "Get-FileHash" not in build
     assert "Packaged profile migration changed the database bytes." in build
     assert "Packaged profile migration changed the session bytes." in build
     assert '"2_MIGRATE_OLD_PROFILE.bat"' in build
@@ -97,6 +101,14 @@ def test_windows_build_pipeline_has_native_self_tests_and_release_zip() -> None:
         'Copy-Item -LiteralPath $ReleaseReadme -Destination '
         '(Join-Path $ReleaseRoot "WINDOWS_X64_README.txt")'
     ) in build
+
+
+def test_removed_proxy_transport_is_absent_from_windows_source() -> None:
+    assert not (ROOT / "services" / "mtproxy_faketls.py").exists()
+    service = (ROOT / "services" / "telegram_service.py").read_text(encoding="utf-8")
+    auth = (ROOT / "gui" / "auth_worker.py").read_text(encoding="utf-8")
+    assert "ConnectionTcpMTProxy" not in service
+    assert "ConnectionTcpMTProxy" not in auth
 
 
 def test_windows_version_generator_is_valid_python() -> None:

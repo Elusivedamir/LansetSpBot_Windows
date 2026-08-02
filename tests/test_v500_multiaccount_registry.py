@@ -13,9 +13,11 @@ def _database(tmp_path: Path) -> Database:
     return Database(tmp_path / "multiaccount.db")
 
 
-def test_registers_five_accounts_and_rejects_sixth(tmp_path: Path) -> None:
+def test_registers_seventy_accounts_and_rejects_seventy_first(
+    tmp_path: Path,
+) -> None:
     db = _database(tmp_path)
-    for account_id in range(1001, 1006):
+    for account_id in range(1001, 1071):
         row, created = db.register_telegram_account(
             telegram_account_id=account_id,
             session_name=f"account_{account_id}",
@@ -23,13 +25,13 @@ def test_registers_five_accounts_and_rejects_sixth(tmp_path: Path) -> None:
         )
         assert created is True
         assert row["telegram_account_id"] == account_id
-    with pytest.raises(DatabaseError, match="не более 5"):
+    with pytest.raises(DatabaseError, match="не более 70"):
         db.register_telegram_account(
-            telegram_account_id=1006,
-            session_name="account_1006",
-            display_name="Sixth",
+            telegram_account_id=1071,
+            session_name="account_1071",
+            display_name="Seventy first",
         )
-    assert db.count_telegram_accounts() == 5
+    assert db.count_telegram_accounts() == 70
 
 
 def test_selection_tracks_only_real_switches(tmp_path: Path) -> None:

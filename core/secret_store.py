@@ -28,10 +28,10 @@ class SecretStore:
     plaintext JSON is migrated atomically after a successful strict read.
     """
 
-    MAX_STORE_BYTES = 256 * 1024
+    MAX_STORE_BYTES = 1024 * 1024
     MAX_ENCRYPTED_STORE_BYTES = MAX_STORE_BYTES + 4096
     ENCRYPTION_PURPOSE = "secret-store.v1"
-    MAX_ENTRIES = 64
+    MAX_ENTRIES = 1024
     MAX_KEY_CHARS = 256
     MAX_VALUE_CHARS = 64 * 1024
 

@@ -27,7 +27,14 @@ def _kill_process_tree(process: subprocess.Popen[str]) -> None:
         )
     else:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            kill_process_group = getattr(os, "killpg", None)
+            if kill_process_group is None:
+                process.kill()
+            else:
+                kill_process_group(
+                    process.pid,
+                    getattr(signal, "SIGKILL", signal.SIGTERM),
+                )
         except ProcessLookupError:
             pass
     try:
@@ -70,11 +77,8 @@ def main() -> int:
     child_env["PYTHONUNBUFFERED"] = "1"
 
     creationflags = 0
-    popen_kwargs: dict[str, object] = {}
     if os.name == "nt":
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
-    else:
-        popen_kwargs["start_new_session"] = True
 
     started = time.monotonic()
     last_output = [started]
@@ -90,7 +94,7 @@ def main() -> int:
             bufsize=1,
             env=child_env,
             creationflags=creationflags,
-            **popen_kwargs,
+            start_new_session=os.name != "nt",
         )
 
         def relay() -> None:

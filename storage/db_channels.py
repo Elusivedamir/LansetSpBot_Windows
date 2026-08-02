@@ -1138,8 +1138,8 @@ class ChannelRepositoryMixin:
                     cursor = conn.execute(
                         """UPDATE channels
                            SET comment_mode=CASE
-                                   WHEN comment_mode='linked_discussion'
-                                       THEN 'linked_discussion'
+                                   WHEN comment_mode IN ('linked_discussion', 'direct_group')
+                                       THEN comment_mode
                                    ELSE 'pending'
                                END,
                                linked_chat_id=channel_id,

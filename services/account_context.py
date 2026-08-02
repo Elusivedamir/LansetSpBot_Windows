@@ -16,7 +16,6 @@ SECRET_SETTING_KEYS = frozenset(
         "telegram.phone",
         "telegram.proxy_username",
         "telegram.proxy_password",
-        "telegram.proxy_secret",
         "openai.api_key",
     }
 )
@@ -209,10 +208,6 @@ class AccountContainerView:
             or None,
             proxy_password=str(
                 self._strict_secret_value("telegram.proxy_password") or ""
-            )
-            or None,
-            proxy_secret=str(
-                self._strict_secret_value("telegram.proxy_secret") or ""
             )
             or None,
             expected_account_id=self.account_id,

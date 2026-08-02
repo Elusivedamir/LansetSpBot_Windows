@@ -788,13 +788,13 @@ class TaskRepositoryMixin:
             with self.get_connection() as conn:
                 if status:
                     cursor = conn.execute(
-                        """SELECT id, type, payload, status, progress, status_text, error, retry_count, defer_count, not_before,
+                        """SELECT id, account_id, type, payload, status, progress, status_text, error, retry_count, defer_count, not_before,
                            created_at, updated_at FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?""",
                         (status, limit),
                     )
                 else:
                     cursor = conn.execute(
-                        """SELECT id, type, payload, status, progress, status_text, error, retry_count, defer_count, not_before,
+                        """SELECT id, account_id, type, payload, status, progress, status_text, error, retry_count, defer_count, not_before,
                            created_at, updated_at FROM tasks ORDER BY created_at DESC LIMIT ?""",
                         (limit,),
                     )
@@ -1213,7 +1213,7 @@ class TaskRepositoryMixin:
         try:
             with self.get_connection() as conn:
                 row = conn.execute(
-                    """SELECT id, type, payload, status, progress, status_text, error, retry_count,
+                    """SELECT id, account_id, type, payload, status, progress, status_text, error, retry_count,
                               max_retries, defer_count, first_deferred_at, last_deferred_at,
                               not_before, created_at, updated_at
                        FROM tasks WHERE id=?""",
