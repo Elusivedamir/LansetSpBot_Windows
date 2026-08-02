@@ -123,17 +123,10 @@ class AccountsAPIMixin(_MixinHost):
                     values[key] = value
         return values
 
-    def save_account_settings(
-        self,
-        values: dict[str, Any],
-        *,
-        account_id: int | None = None,
-    ) -> None:
-        owner = int(account_id or self.get_selected_account_id() or 0)
-        if owner <= 0:
-            raise ValueError("Сначала выберите Telegram-аккаунт")
-        if not self.database.get_telegram_account(owner):
-            raise ValueError("Telegram-аккаунт не найден")
+
+    def _split_saved_account_settings(
+        self, values: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         public = dict(values)
         secret_updates = {
             key: public.pop(key)
@@ -149,6 +142,14 @@ class AccountsAPIMixin(_MixinHost):
             "telegram.runtime_state",
         ):
             public.pop(key, None)
+        return public, secret_updates
+
+    def _persist_saved_account_settings(
+        self,
+        owner: int,
+        public: dict[str, Any],
+        secret_updates: dict[str, Any],
+    ) -> None:
         with self._secret_lock:
             snapshots = {
                 key: self._strict_account_secret(owner, key)
@@ -169,6 +170,20 @@ class AccountsAPIMixin(_MixinHost):
                 for key in reversed(touched):
                     self._set_account_secret(owner, key, snapshots[key])
                 raise
+
+    def save_account_settings(
+        self,
+        values: dict[str, Any],
+        *,
+        account_id: int | None = None,
+    ) -> None:
+        owner = int(account_id or self.get_selected_account_id() or 0)
+        if owner <= 0:
+            raise ValueError("Сначала выберите Telegram-аккаунт")
+        if not self.database.get_telegram_account(owner):
+            raise ValueError("Telegram-аккаунт не найден")
+        public, secret_updates = self._split_saved_account_settings(values)
+        self._persist_saved_account_settings(owner, public, secret_updates)
 
     def _split_authorized_account_settings(
         self, settings: dict[str, Any]
