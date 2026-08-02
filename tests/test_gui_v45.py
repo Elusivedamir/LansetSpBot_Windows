@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from core.composition import ApplicationContainer
@@ -349,6 +351,16 @@ def test_aurora_prestige_account_controls_and_instruction_copy(
     assert manager.actions_layout.indexOf(manager.delete_button) == -1
 
     proxy = window.account_view
+    # Account settings are loaded through BackgroundCall. Wait for the initial
+    # settings/catalog callbacks before simulating a user toggle, otherwise a
+    # stale callback can overwrite the state and make this timing-dependent.
+    deadline = time.monotonic() + 5.0
+    while proxy._background_jobs and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    app.processEvents()
+    assert not proxy._background_jobs
+
     proxy.proxy_enabled.setChecked(False)
     app.processEvents()
     assert proxy.proxy_box.isHidden()
