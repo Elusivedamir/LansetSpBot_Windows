@@ -531,18 +531,10 @@ class AccountsAPIMixin(_MixinHost):
             worker.clear_scope_cancellation("account", owner)
         return self.database.get_telegram_account(owner) or {}
 
-    def delete_telegram_account(
-        self, account_id: int, *, timeout_seconds: float = 20.0
-    ) -> dict[str, Any]:
-        owner = int(account_id)
-        account = self.database.get_telegram_account(owner)
-        if not account:
-            raise ValueError("Telegram-аккаунт не найден")
-        self.stop_telegram_account(
-            owner, timeout_seconds=timeout_seconds
-        )
-        account = self.database.get_telegram_account(owner) or account
 
+    def _prepare_account_deletion(
+        self, owner: int, account: dict[str, Any]
+    ) -> tuple[str, dict[str, str | None], str, dict[str, Any]]:
         session_name = validate_session_name(
             account.get("session_name") or f"account_{owner}"
         )
@@ -565,6 +557,17 @@ class AccountsAPIMixin(_MixinHost):
             selected_before=self.get_selected_account_id(),
             secret_keys=sorted(SECRET_SETTING_KEYS),
         )
+        return session_name, secret_snapshots, tombstone_name, journal
+
+    def _execute_account_deletion(
+        self,
+        *,
+        owner: int,
+        session_name: str,
+        tombstone_name: str,
+        secret_snapshots: dict[str, str | None],
+        journal: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, object]]:
         try:
             with stage_account_session_removal(
                 self.config.telegram.session_dir,
@@ -590,7 +593,14 @@ class AccountsAPIMixin(_MixinHost):
                     self._set_account_secret(owner, key, value)
             clear_account_lifecycle_journal(self.secret_store, owner)
             raise
+        return result, cleanup_state
 
+    def _finalize_account_deletion(
+        self,
+        owner: int,
+        result: dict[str, Any],
+        cleanup_state: dict[str, object],
+    ) -> dict[str, Any]:
         clear_account_lifecycle_journal(self.secret_store, owner)
         worker = self.queue_worker
         if worker is not None:
@@ -607,6 +617,32 @@ class AccountsAPIMixin(_MixinHost):
             )
         )
         return result
+
+    def delete_telegram_account(
+        self, account_id: int, *, timeout_seconds: float = 20.0
+    ) -> dict[str, Any]:
+        owner = int(account_id)
+        account = self.database.get_telegram_account(owner)
+        if not account:
+            raise ValueError("Telegram-аккаунт не найден")
+        self.stop_telegram_account(
+            owner, timeout_seconds=timeout_seconds
+        )
+        account = self.database.get_telegram_account(owner) or account
+
+        session_name, secret_snapshots, tombstone_name, journal = (
+            self._prepare_account_deletion(owner, account)
+        )
+        result, cleanup_state = self._execute_account_deletion(
+            owner=owner,
+            session_name=session_name,
+            tombstone_name=tombstone_name,
+            secret_snapshots=secret_snapshots,
+            journal=journal,
+        )
+        return self._finalize_account_deletion(
+            owner, result, cleanup_state
+        )
 
     def check_telegram_account_runtime(
         self, account_id: int, *, timeout_seconds: float = 20.0
