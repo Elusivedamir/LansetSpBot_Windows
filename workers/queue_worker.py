@@ -15,7 +15,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 
 from PySide6.QtCore import QThread, Signal
 
-from core.account_limits import MAX_PARALLEL_ACCOUNT_RUNTIMES
+from core.account_limits import MAX_CONCURRENT_TELEGRAM_ACCOUNT_TASKS
 from core.boot_clock import current_boot_identity, steady_time
 from core.campaign_schedule import from_db_time, utc_now
 from core.account_restriction import (
@@ -196,7 +196,8 @@ class QueueWorker(QThread):
         self._startup_started_at: float | None = None
         self._active_task_lock = threading.RLock()
         self._active_tasks: dict[int, tuple[str, int]] = {}
-        self.max_parallel_accounts = MAX_PARALLEL_ACCOUNT_RUNTIMES
+        # All 70 account runtimes may stay active; only task execution is bounded.
+        self.max_parallel_accounts = MAX_CONCURRENT_TELEGRAM_ACCOUNT_TASKS
         self._account_cooldown_lock = threading.RLock()
         # account_id -> (monotonic deadline, persisted UTC deadline key).
         # The monotonic deadline prevents a forward wall-clock correction from
