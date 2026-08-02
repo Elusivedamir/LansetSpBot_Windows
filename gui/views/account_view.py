@@ -157,6 +157,7 @@ class AccountView(QWidget):
         proxy_grid.addWidget(self.proxy_password, 2, 3)
         self._sync_proxy_type_fields(self.proxy_type.currentText())
         form_layout.addRow("", self.proxy_box)
+        self.proxy_box.hide()
 
         self.schedule_enabled = QCheckBox(
             "Не отправлять автоматические комментарии в тихие часы"

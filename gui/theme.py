@@ -547,11 +547,15 @@ QLabel#brandMark {
 }
 QLabel#brandTitle {
     color: #FFFFFF;
-    font-size: 20px;
+    font-size: 18px;
     font-weight: 800;
-    letter-spacing: 0.8px;
+    letter-spacing: 0.2px;
 }
-QLabel#brandSubtitle, QLabel#pageSubtitle, QLabel#mutedText {
+QLabel#brandSubtitle {
+    color: #A7AEC8;
+    font-size: 12px;
+}
+QLabel#pageSubtitle, QLabel#mutedText {
     color: #A7AEC8;
 }
 QLabel#pageTitle {
@@ -633,18 +637,23 @@ QAbstractSpinBox:focus, QTimeEdit:focus {
     border: 1px solid #56C9FF;
 }
 QComboBox QAbstractItemView {
-    background: #12162E;
-    color: #F7F8FF;
-    border: 1px solid #5757A4;
+    background: #E6EBF1;
+    color: #17202A;
+    border: 1px solid #AAB5C2;
     border-radius: 10px;
-    selection-background-color: #5247BD;
-    selection-color: #FFFFFF;
+    selection-background-color: #C3CFDC;
+    selection-color: #101820;
     outline: none;
 }
 QComboBox QAbstractItemView::item {
     min-height: 30px;
     padding: 5px 10px;
-    color: #F7F8FF;
+    color: #17202A;
+}
+QComboBox QAbstractItemView::item:selected,
+QComboBox QAbstractItemView::item:hover {
+    background: #C3CFDC;
+    color: #101820;
 }
 QPushButton {
     min-height: 42px;
