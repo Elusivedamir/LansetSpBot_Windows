@@ -96,7 +96,6 @@ class TelegramSettings:
     proxy_port: int | None = None
     proxy_username: str | None = None
     proxy_password: str | None = None
-    proxy_secret: str | None = None
     expected_account_id: int | None = None
 
     @property

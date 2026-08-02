@@ -95,6 +95,8 @@ def test_runtime_clients_receive_encrypted_session_instance():
     auth_source = Path("gui/auth_worker.py").read_text(encoding="utf-8")
 
     assert "EncryptedSQLiteSession(telegram_session_base)" in telegram_source
-    assert "PacedTelegramClient(\n                encrypted_session," in telegram_source
+    normalized_telegram_source = " ".join(telegram_source.split())
+    assert "PacedTelegramClient( encrypted_session," in normalized_telegram_source
     assert "EncryptedSQLiteSession(self._session_base())" in auth_source
-    assert "TelegramClient(\n                encrypted_session," in auth_source
+    normalized_auth_source = " ".join(auth_source.split())
+    assert "TelegramClient( encrypted_session," in normalized_auth_source

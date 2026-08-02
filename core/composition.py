@@ -14,6 +14,7 @@ from services.api import ServiceAPI
 from services.comment_service import CommentService
 from services.import_service import ImportService
 from services.linked_chat_service import LinkedChatService
+from services.legacy_proxy_cleanup import purge_removed_proxy_credentials
 from services.telegram_service import TelegramService
 from services.account_sessions import (
     migrate_legacy_account_secrets,
@@ -41,6 +42,19 @@ class ApplicationContainer:
         self.database = Database(config.database_path, busy_timeout_ms=1_000)
         reconcile_pending_account_state(self.database)
         self.secret_store = SecretStore()
+        try:
+            self.removed_proxy_cleanup = purge_removed_proxy_credentials(
+                self.database, self.secret_store
+            )
+        except Exception:
+            log.exception(
+                "Could not complete obsolete proxy credential cleanup; "
+                "network proxy remains disabled and cleanup will retry"
+            )
+            self.removed_proxy_cleanup = {
+                "completed": False,
+                "removed": 0,
+            }
         self.session_recovery = recover_interrupted_session_moves(
             config.telegram.session_dir
         )
@@ -127,8 +141,6 @@ class ApplicationContainer:
             proxy_password=str(
                 self._strict_secret_value("telegram.proxy_password") or ""
             )
-            or None,
-            proxy_secret=str(self._strict_secret_value("telegram.proxy_secret") or "")
             or None,
             expected_account_id=self._as_int(saved.get("telegram.account_id"), 0)
             or None,

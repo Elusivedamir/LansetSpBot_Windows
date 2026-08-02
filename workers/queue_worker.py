@@ -15,6 +15,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 
 from PySide6.QtCore import QThread, Signal
 
+from core.account_limits import MAX_PARALLEL_ACCOUNT_RUNTIMES
 from core.boot_clock import current_boot_identity, steady_time
 from core.campaign_schedule import from_db_time, utc_now
 from core.account_restriction import (
@@ -195,7 +196,7 @@ class QueueWorker(QThread):
         self._startup_started_at: float | None = None
         self._active_task_lock = threading.RLock()
         self._active_tasks: dict[int, tuple[str, int]] = {}
-        self.max_parallel_accounts = 5
+        self.max_parallel_accounts = MAX_PARALLEL_ACCOUNT_RUNTIMES
         self._account_cooldown_lock = threading.RLock()
         # account_id -> (monotonic deadline, persisted UTC deadline key).
         # The monotonic deadline prevents a forward wall-clock correction from
@@ -948,8 +949,15 @@ class QueueWorker(QThread):
         if not self._task_preflight_allows_execution(context):
             return
 
+        handler_task = dict(task)
+        handler_payload = dict(context.payload)
+        if context.account_id is not None:
+            handler_payload["account_id"] = int(context.account_id)
+            handler_task["account_id"] = int(context.account_id)
+        handler_task["payload"] = handler_payload
+
         try:
-            await context.handler(task)
+            await context.handler(handler_task)
         except asyncio.CancelledError:
             self._persist_cancelled_task(context)
             raise

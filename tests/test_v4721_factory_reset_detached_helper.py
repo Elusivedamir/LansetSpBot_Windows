@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from gui.app import MarlenApp
 from tests.conftest import open_project_database
 
 
@@ -29,6 +28,7 @@ def test_detached_helper_resets_only_after_parent_is_gone_and_rebuilds_schema(tm
 
     project_root = Path(__file__).resolve().parents[1]
     environment = os.environ.copy()
+    environment.pop("LANSETSPBOT_DATA_DIR", None)
     environment["MARLEN_DATA_DIR"] = str(root)
     environment["QT_QPA_PLATFORM"] = "offscreen"
     result = subprocess.run(
@@ -73,6 +73,8 @@ def test_detached_helper_resets_only_after_parent_is_gone_and_rebuilds_schema(tm
 
 
 def test_scheduled_reset_success_closes_without_second_modal(monkeypatch):
+    from gui.app import MarlenApp
+
     events: list[object] = []
     fake = SimpleNamespace(
         _factory_reset_helper_pid=None,

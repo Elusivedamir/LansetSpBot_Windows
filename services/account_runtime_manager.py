@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from core.exceptions import NonRetryableTelegramError
+from core.account_limits import MAX_PARALLEL_ACCOUNT_RUNTIMES
+from core.exceptions import DeferredTelegramError, NonRetryableTelegramError
 from core.redaction import sanitize_exception
 from services.account_context import AccountContainerView
 
@@ -18,12 +20,14 @@ class TelegramAccountRuntime:
     handlers: dict[str, Callable[[dict[str, Any]], Awaitable[Any]]]
     cleanup: Callable[[], Any] | None
     lock: asyncio.Lock
+    last_used: float = 0.0
+    reservations: int = 0
 
 
 class TelegramAccountRuntimeManager:
     """Lazily own one isolated handler/client graph for each Telegram account."""
 
-    MAX_ACCOUNTS = 5
+    MAX_ACCOUNTS = MAX_PARALLEL_ACCOUNT_RUNTIMES
 
     def __init__(
         self,
@@ -50,6 +54,8 @@ class TelegramAccountRuntimeManager:
         # Accounts being disconnected must not be recreated while their old
         # runtime is still executing or cleaning up.
         self._stopping_accounts: set[int] = set()
+        self._evicting_accounts: set[int] = set()
+        self._capacity_lock = asyncio.Lock()
         self._closed = False
 
     @staticmethod
@@ -117,10 +123,56 @@ class TelegramAccountRuntimeManager:
             handlers=handlers,
             cleanup=cleanup,
             lock=asyncio.Lock(),
+            last_used=time.monotonic(),
+            reservations=0,
         )
         self.worker_database.set_account_runtime_state(account_id, "connected")
         log.info("Created isolated Telegram runtime for account %s", account_id)
         return runtime
+
+    @staticmethod
+    def _reserve_runtime(runtime: TelegramAccountRuntime) -> TelegramAccountRuntime:
+        runtime.reservations += 1
+        return runtime
+
+    @staticmethod
+    def _release_runtime(runtime: TelegramAccountRuntime) -> None:
+        runtime.reservations = max(0, int(runtime.reservations) - 1)
+
+    async def _cleanup_runtime(self, runtime: TelegramAccountRuntime) -> None:
+        if runtime.cleanup is None:
+            return
+        result = runtime.cleanup()
+        if asyncio.iscoroutine(result):
+            await asyncio.wait_for(result, timeout=15.0)
+
+    async def _evict_oldest_idle_runtime(self) -> None:
+        candidates = [
+            runtime
+            for account_id, runtime in self._runtimes.items()
+            if account_id not in self._stopping_accounts
+            and account_id not in self._evicting_accounts
+            and runtime.reservations == 0
+            and not runtime.lock.locked()
+        ]
+        if not candidates:
+            raise DeferredTelegramError(
+                "All Telegram runtime slots are currently busy",
+                code="account_runtime_capacity",
+                retry_after=1,
+            )
+        victim = min(candidates, key=lambda runtime: runtime.last_used)
+        self._evicting_accounts.add(victim.account_id)
+        try:
+            if self._runtimes.get(victim.account_id) is victim:
+                self._runtimes.pop(victim.account_id, None)
+            await self._cleanup_runtime(victim)
+        finally:
+            self._evicting_accounts.discard(victim.account_id)
+        log.info(
+            "Released idle Telegram runtime for account %s",
+            victim.account_id,
+        )
 
     async def get_runtime(self, account_id: int) -> TelegramAccountRuntime:
         owner = int(account_id)
@@ -140,9 +192,15 @@ class TelegramAccountRuntimeManager:
                 code="account_stopped",
                 details={"account_id": owner},
             )
+        if owner in self._evicting_accounts:
+            raise DeferredTelegramError(
+                "Telegram account runtime is being recycled",
+                code="account_runtime_recycling",
+                retry_after=1,
+            )
         existing = self._runtimes.get(owner)
         if existing is not None:
-            return existing
+            return self._reserve_runtime(existing)
         lock = self._creation_locks.setdefault(owner, asyncio.Lock())
         async with lock:
             if owner in self._stopping_accounts:
@@ -151,17 +209,24 @@ class TelegramAccountRuntimeManager:
                     code="account_stopped",
                     details={"account_id": owner},
                 )
+            if owner in self._evicting_accounts:
+                raise DeferredTelegramError(
+                    "Telegram account runtime is being recycled",
+                    code="account_runtime_recycling",
+                    retry_after=1,
+                )
             existing = self._runtimes.get(owner)
             if existing is not None:
-                return existing
-            if len(self._runtimes) >= self.MAX_ACCOUNTS:
-                raise NonRetryableTelegramError(
-                    "Telegram runtime limit reached",
-                    code="account_limit_reached",
-                )
-            runtime = await self._create_runtime(owner)
-            self._runtimes[owner] = runtime
-            return runtime
+                return self._reserve_runtime(existing)
+            async with self._capacity_lock:
+                existing = self._runtimes.get(owner)
+                if existing is not None:
+                    return self._reserve_runtime(existing)
+                if len(self._runtimes) >= self.MAX_ACCOUNTS:
+                    await self._evict_oldest_idle_runtime()
+                runtime = await self._create_runtime(owner)
+                self._runtimes[owner] = runtime
+                return self._reserve_runtime(runtime)
 
     async def dispatch(self, name: str, task: dict[str, Any]) -> Any:
         account_id = self.task_account_id(task)
@@ -233,24 +298,38 @@ class TelegramAccountRuntimeManager:
                     code="account_restricted",
                 )
         runtime = await self.get_runtime(account_id)
-        handler = runtime.handlers.get(name)
-        if handler is None:
-            raise NonRetryableTelegramError(
-                f"Handler is unavailable for account: {name}",
-                code="handler_missing",
-            )
-        async with runtime.lock:
-            self.worker_database.set_account_runtime_state(account_id, "running")
-            try:
-                return await handler(task)
-            finally:
-                latest = self.worker_database.get_telegram_account(account_id) or {}
-                if not bool(latest.get("stopped")) and str(
-                    latest.get("runtime_state") or ""
-                ) not in {"stopping", "restricted", "error"}:
-                    self.worker_database.set_account_runtime_state(
-                        account_id, "connected"
+        try:
+            handler = runtime.handlers.get(name)
+            if handler is None:
+                raise NonRetryableTelegramError(
+                    f"Handler is unavailable for account: {name}",
+                    code="handler_missing",
+                )
+            async with runtime.lock:
+                if (
+                    self._runtimes.get(account_id) is not runtime
+                    or account_id in self._stopping_accounts
+                    or account_id in self._evicting_accounts
+                ):
+                    raise NonRetryableTelegramError(
+                        "Telegram account runtime is no longer available",
+                        code="account_stopped",
+                        details={"account_id": account_id},
                     )
+                self.worker_database.set_account_runtime_state(account_id, "running")
+                try:
+                    return await handler(task)
+                finally:
+                    runtime.last_used = time.monotonic()
+                    latest = self.worker_database.get_telegram_account(account_id) or {}
+                    if not bool(latest.get("stopped")) and str(
+                        latest.get("runtime_state") or ""
+                    ) not in {"stopping", "restricted", "error"}:
+                        self.worker_database.set_account_runtime_state(
+                            account_id, "connected"
+                        )
+        finally:
+            self._release_runtime(runtime)
 
     async def stop_runtime(self, account_id: int) -> dict[str, Any]:
         owner = int(account_id)
@@ -268,10 +347,7 @@ class TelegramAccountRuntimeManager:
                 if runtime is None:
                     return {"account_id": owner, "disconnected": False}
                 async with runtime.lock:
-                    if runtime.cleanup is not None:
-                        result = runtime.cleanup()
-                        if asyncio.iscoroutine(result):
-                            await asyncio.wait_for(result, timeout=15.0)
+                    await self._cleanup_runtime(runtime)
                     # Remove only the exact runtime that was stopped. This keeps
                     # the invariant explicit even if future code mutates the map.
                     if self._runtimes.get(owner) is runtime:
@@ -291,16 +367,32 @@ class TelegramAccountRuntimeManager:
                 "Telegram health handler is unavailable",
                 code="handler_missing",
             )
-        async with runtime.lock:
-            result = await handler(
-                {
-                    "id": 0,
-                    "account_id": owner,
-                    "type": "telegram_health",
-                    "payload": {"account_id": owner},
-                }
-            )
-        return dict(result or {})
+        try:
+            async with runtime.lock:
+                if (
+                    self._runtimes.get(owner) is not runtime
+                    or owner in self._stopping_accounts
+                    or owner in self._evicting_accounts
+                ):
+                    raise NonRetryableTelegramError(
+                        "Telegram account runtime is no longer available",
+                        code="account_stopped",
+                        details={"account_id": owner},
+                    )
+                try:
+                    result = await handler(
+                        {
+                            "id": 0,
+                            "account_id": owner,
+                            "type": "telegram_health",
+                            "payload": {"account_id": owner},
+                        }
+                    )
+                finally:
+                    runtime.last_used = time.monotonic()
+            return dict(result or {})
+        finally:
+            self._release_runtime(runtime)
 
     async def close(self) -> None:
         self._closed = True

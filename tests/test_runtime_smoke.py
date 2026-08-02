@@ -47,27 +47,45 @@ def test_gui_container_and_noop_queue_smoke(monkeypatch, tmp_path):
     window = MarlenApp(container.adapter, container.queue_worker, config)
     assert container.database.path == container.queue_worker.database_path
 
-    for index in range(4):
-        container.api.create_task("noop", {"index": index})
-    assert container.api.start_queue()
-    deadline = time.time() + 5
-    while time.time() < deadline:
-        app.processEvents()
+    completed_ids: set[int] = set()
+    all_completed = threading.Event()
+    created_ids: set[int] = set()
+
+    def record_completion(task_id: int) -> None:
+        completed_ids.add(int(task_id))
+        if created_ids and created_ids <= completed_ids:
+            all_completed.set()
+
+    container.queue_worker.task_completed.connect(record_completion)
+    try:
+        for index in range(4):
+            task = container.api.create_task("noop", {"index": index})
+            created_ids.add(int(task["id"]))
+        assert container.api.start_queue()
+        completion_deadline = time.monotonic() + 30
+        while not all_completed.is_set() and time.monotonic() < completion_deadline:
+            app.processEvents()
+            all_completed.wait(0.01)
+        assert created_ids <= completed_ids
         tasks = container.api.get_tasks(limit=10)
-        if tasks and all(task["status"] == "completed" for task in tasks):
-            break
-        time.sleep(0.01)
-    assert all(task["status"] == "completed" for task in tasks)
-    container.api.stop_queue()
-    while container.queue_worker.isRunning() and time.time() < deadline + 3:
-        app.processEvents()
-        time.sleep(0.01)
+        assert all(task["status"] == "completed" for task in tasks)
+    finally:
+        container.api.stop_queue()
+        stop_deadline = time.monotonic() + 15
+        while container.queue_worker.isRunning() and time.monotonic() < stop_deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        window._tray.hide()
+        container.shutdown(timeout_ms=15_000)
     assert not container.queue_worker.isRunning()
-    window._tray.hide()
-    container.shutdown()
 
 
-@pytest.mark.skip(reason="packaging build environment IPC smoke test is flaky")
+@pytest.mark.skip(
+    reason=(
+        "requires process-isolated packaging IPC proof; in-process Qt socket "
+        "teardown can abort the shared pytest interpreter on Windows"
+    )
+)
 def test_second_instance_activates_first():
     app = QApplication.instance() or QApplication([])
     name = "marlen.test." + uuid.uuid4().hex
@@ -112,29 +130,33 @@ def test_queue_restarts_when_task_arrives_during_cleanup(tmp_path):
         worker,
         secret_migration_verified=True,
     )
-    first = api.create_task("noop", {})
-    assert api.start_queue() is True
+    second_completed = threading.Event()
+    second_id = 0
 
-    deadline = time.time() + 6
-    while not cleanup_started.is_set() and time.time() < deadline:
-        app.processEvents()
-        time.sleep(0.01)
-    assert cleanup_started.is_set(), "worker never entered cleanup"
-    assert api.get_task(first["id"])["status"] == "completed"
+    def record_completion(task_id: int) -> None:
+        if second_id and int(task_id) == second_id:
+            second_completed.set()
 
-    second = api.create_task("noop", {})
-    # This call happens while QThread.isRunning() is still true. It must arrange
-    # an automatic restart instead of leaving the task pending forever.
-    assert api.start_queue() is True
-    release_cleanup.set()
+    worker.task_completed.connect(record_completion)
+    try:
+        first = api.create_task("noop", {})
+        assert api.start_queue() is True
+        assert cleanup_started.wait(timeout=30), "worker never entered cleanup"
+        assert api.get_task(first["id"])["status"] == "completed"
 
-    while time.time() < deadline:
-        app.processEvents()
-        task = api.get_task(second["id"])
-        if task and task["status"] == "completed":
-            break
-        time.sleep(0.01)
-    assert api.get_task(second["id"])["status"] == "completed"
-
-    api.prepare_shutdown()
-    worker.wait(5000)
+        second = api.create_task("noop", {})
+        second_id = int(second["id"])
+        # This call happens while QThread.isRunning() is still true. It must arrange
+        # an automatic restart instead of leaving the task pending forever.
+        assert api.start_queue() is True
+        release_cleanup.set()
+        completion_deadline = time.monotonic() + 30
+        while not second_completed.is_set() and time.monotonic() < completion_deadline:
+            app.processEvents()
+            second_completed.wait(0.01)
+        assert second_completed.is_set()
+        assert api.get_task(second["id"])["status"] == "completed"
+    finally:
+        release_cleanup.set()
+        api.prepare_shutdown()
+        worker.wait(15_000)

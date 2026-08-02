@@ -32,6 +32,10 @@ from storage.migrations.activity_log_account_scope_v29 import (
 )
 from storage.migrations.openai_comments_v30 import migrate_openai_comments_v30
 from storage.migrations.multiaccount_v31 import migrate_multiaccount_v31
+from storage.migrations.account_limit_v32 import migrate_account_limit_v32
+from storage.migrations.legacy_proxy_cleanup_v33 import (
+    migrate_legacy_proxy_cleanup_v33,
+)
 
 log = logging.getLogger(__name__)
 
@@ -240,6 +244,20 @@ class SchemaCoreMixin(_MixinHost):
             current_version = self.get_version()
         if current_version < 31:
             migrate_multiaccount_v31(
+                self.path,
+                sqlite_timeout_seconds=self.sqlite_timeout_seconds,
+                busy_timeout_ms=self.busy_timeout_ms,
+            )
+            current_version = self.get_version()
+        if current_version < 32:
+            migrate_account_limit_v32(
+                self.path,
+                sqlite_timeout_seconds=self.sqlite_timeout_seconds,
+                busy_timeout_ms=self.busy_timeout_ms,
+            )
+            current_version = self.get_version()
+        if current_version < 33:
+            migrate_legacy_proxy_cleanup_v33(
                 self.path,
                 sqlite_timeout_seconds=self.sqlite_timeout_seconds,
                 busy_timeout_ms=self.busy_timeout_ms,

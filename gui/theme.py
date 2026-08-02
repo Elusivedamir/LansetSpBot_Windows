@@ -14,8 +14,8 @@ QFrame#sidebar {
     border-right: 1px solid #292C33;
 }
 QLabel#brandMark {
-    min-width: 52px;
-    max-width: 52px;
+    min-width: 72px;
+    max-width: 72px;
     min-height: 44px;
     max-height: 44px;
     border-radius: 14px;

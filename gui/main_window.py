@@ -92,6 +92,9 @@ class MainWindow(QMainWindow):
         brand_mark = QLabel("LSB")
         brand_mark.setFixedWidth(84)
         brand_mark.setObjectName("brandMark")
+        # Keep the compact product badge readable on Windows/Qt.
+        brand_mark.setMaximumWidth(max(brand_mark.maximumWidth(), 72))
+        brand_mark.setMinimumWidth(72)
         brand_text = QVBoxLayout()
         brand_text.setSpacing(0)
         self.brand = QLabel(APP_NAME.upper())

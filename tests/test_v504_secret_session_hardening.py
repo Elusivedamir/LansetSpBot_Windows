@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from core.secret_store import SecretStore
+
 import pytest
 
 from services.account_sessions import (
@@ -96,6 +98,18 @@ def test_select_account_never_projects_legacy_secret_copy(tmp_path: Path) -> Non
     db.select_telegram_account(9003)
     assert db.get_setting("openai.api_key", "") == ""
     assert "openai.api_key" not in db.get_account_settings(9003)
+
+
+def test_secret_store_accepts_account_scoped_credentials_for_seventy_accounts(
+    tmp_path: Path,
+) -> None:
+    store = SecretStore(tmp_path / ".secrets.json")
+    payload = {
+        f"account.{account_id}.telegram.api_hash": f"hash-{account_id}"
+        for account_id in range(1, 71)
+    }
+    store.replace_snapshot(payload)
+    assert store.export_snapshot() == payload
 
 
 def test_session_move_journal_completes_split_family(

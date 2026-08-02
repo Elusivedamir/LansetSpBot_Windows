@@ -7,10 +7,8 @@ from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, TypeVar
-import warnings
 
 from PySide6.QtCore import QThread, Signal
-from telethon import connection
 from telethon.errors import (
     FloodWaitError,
     PasswordHashInvalidError,
@@ -28,7 +26,6 @@ from services.encrypted_telethon_session import EncryptedSQLiteSession
 from services.paced_telegram_client import PacedTelegramClient as TelegramClient
 from services.telegram_service import TelegramService
 from services.account_sessions import session_base, validate_session_name
-from services.mtproxy_faketls import ConnectionTcpMTProxyFakeTLS
 
 log = logging.getLogger(__name__)
 
@@ -129,14 +126,16 @@ class TelegramAuthWorker(QThread):
         sensitive_setting_keys = (
             "telegram.api_hash",
             "telegram.proxy_password",
-            "telegram.proxy_username",
+            # Legacy-only redaction. This key is no longer accepted by runtime
+            # configuration, but stale values must never leak into errors.
             "telegram.proxy_secret",
+            "telegram.proxy_username",
             "telegram.phone",
             # Compatibility with older/lightweight callers.
             "api_hash",
             "proxy_password",
-            "proxy_username",
             "proxy_secret",
+            "proxy_username",
             "phone",
         )
         secrets = [self.settings.get(key) for key in sensitive_setting_keys]
@@ -247,7 +246,6 @@ class TelegramAuthWorker(QThread):
             proxy_port=self.settings.get("telegram.proxy_port"),
             proxy_username=self.settings.get("telegram.proxy_username"),
             proxy_password=self.settings.get("telegram.proxy_password"),
-            proxy_secret=self.settings.get("telegram.proxy_secret"),
         )
 
     async def _run(self) -> None:
@@ -270,37 +268,26 @@ class TelegramAuthWorker(QThread):
         TelegramService._prepare_session_file(session_file)
         proxy_settings = self._proxy_settings()
         proxy, connection_type = TelegramService.build_transport(proxy_settings)
-        with warnings.catch_warnings():
-            if connection_type in {
-                connection.ConnectionTcpMTProxyRandomizedIntermediate,
-                ConnectionTcpMTProxyFakeTLS,
-            }:
-                warnings.filterwarnings(
-                    "ignore",
-                    message="proxy argument will be ignored because python-socks is not installed",
-                    category=UserWarning,
-                    module=r"telethon\.client\.telegrambaseclient",
-                )
-            encrypted_session = EncryptedSQLiteSession(self._session_base())
-            client = TelegramClient(
-                encrypted_session,
-                api_id,
-                api_hash,
-                proxy=proxy,
-                connection=connection_type,
-                device_model=f"{APP_NAME} Desktop",
-                app_version=__version__,
-                lang_code="ru",
-                system_lang_code="ru-RU",
-                flood_sleep_threshold=0,
-                # One retry is required for Telethon's PhoneMigrate flow: the first
-                # request learns the account DC, then Telethon reconnects and repeats it.
-                request_retries=1,
-                connection_retries=3,
-                retry_delay=1,
-                request_limiter=RateLimiter(1.0),
-                request_timeout=60.0,
-            )
+        encrypted_session = EncryptedSQLiteSession(self._session_base())
+        client = TelegramClient(
+            encrypted_session,
+            api_id,
+            api_hash,
+            proxy=proxy,
+            connection=connection_type,
+            device_model=f"{APP_NAME} Desktop",
+            app_version=__version__,
+            lang_code="ru",
+            system_lang_code="ru-RU",
+            flood_sleep_threshold=0,
+            # One retry is required for Telethon's PhoneMigrate flow: the first
+            # request learns the account DC, then Telethon reconnects and repeats it.
+            request_retries=1,
+            connection_retries=3,
+            retry_delay=1,
+            request_limiter=RateLimiter(1.0),
+            request_timeout=60.0,
+        )
         TelegramService._secure_session_file(session_file)
         try:
             await self._with_transient_retries(client.connect)

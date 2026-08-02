@@ -21,7 +21,6 @@ LEGACY_ACCOUNT_SECRET_KEYS = (
     "telegram.phone",
     "telegram.proxy_username",
     "telegram.proxy_password",
-    "telegram.proxy_secret",
     "openai.api_key",
 )
 

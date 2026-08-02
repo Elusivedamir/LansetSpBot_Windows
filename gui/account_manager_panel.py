@@ -4,10 +4,17 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QVBoxLayout,
+)
+
+from core.account_limits import (
+    MAX_REGISTERED_TELEGRAM_ACCOUNTS,
+    account_limit_message,
 )
 
 
@@ -42,12 +49,21 @@ class AccountManagerPanel(QFrame):
         self.setObjectName("accountManagerCard")
         self._accounts: dict[int, dict] = {}
         self._selected_account_id = 0
+        self._previous_account_id = 0
 
         title = QLabel("Подключённые аккаунты")
         title.setObjectName("cardTitle")
 
-        self.counter = QLabel("Подключено 0 из 5 аккаунтов")
+        self.counter = QLabel(
+            f"Подключено 0 из {MAX_REGISTERED_TELEGRAM_ACCOUNTS} аккаунтов"
+        )
         self.counter.setObjectName("mutedText")
+
+        self.search = QLineEdit()
+        self.search.setObjectName("accountSearch")
+        self.search.setPlaceholderText("Поиск по имени, @username, телефону или Telegram ID")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._rebuild_selector)
 
         self.selector = QComboBox()
         self.selector.setObjectName("accountSelector")
@@ -106,13 +122,13 @@ class AccountManagerPanel(QFrame):
             self.import_channels_requested.emit
         )
 
-        actions = QHBoxLayout()
-        actions.addWidget(self.add_button)
-        actions.addWidget(self.stop_button)
-        actions.addWidget(self.resume_button)
-        actions.addWidget(self.reauthorize_button)
-        actions.addWidget(self.delete_button)
-        actions.addStretch(1)
+        actions = QGridLayout()
+        actions.addWidget(self.add_button, 0, 0)
+        actions.addWidget(self.stop_button, 0, 1)
+        actions.addWidget(self.resume_button, 0, 2)
+        actions.addWidget(self.reauthorize_button, 1, 0)
+        actions.addWidget(self.delete_button, 1, 1)
+        actions.setColumnStretch(3, 1)
 
         imports = QVBoxLayout()
         imports.addWidget(self.import_comments_button)
@@ -123,6 +139,7 @@ class AccountManagerPanel(QFrame):
         layout.setSpacing(10)
         layout.addWidget(title)
         layout.addWidget(self.counter)
+        layout.addWidget(self.search)
         layout.addWidget(self.selector)
         layout.addLayout(state_row)
         layout.addWidget(self.details)
@@ -143,6 +160,17 @@ class AccountManagerPanel(QFrame):
             parts.append(phone)
         return " · ".join(parts)
 
+    @staticmethod
+    def _search_text(account_id: int, account: dict) -> str:
+        return " ".join(
+            (
+                str(account_id),
+                str(account.get("display_name") or ""),
+                str(account.get("username") or ""),
+                str(account.get("phone_masked") or ""),
+            )
+        ).casefold()
+
     def reload(
         self,
         accounts: list[dict],
@@ -155,10 +183,31 @@ class AccountManagerPanel(QFrame):
             for item in accounts
             if int(item.get("telegram_account_id") or 0) > 0
         }
-        self._selected_account_id = int(selected_account_id or 0)
+        requested = int(selected_account_id or 0)
+        self._selected_account_id = (
+            requested
+            if requested in self._accounts
+            else next(iter(self._accounts), 0)
+        )
+        self._previous_account_id = int(previous_account_id or 0)
+
+        count = len(self._accounts)
+        limit = MAX_REGISTERED_TELEGRAM_ACCOUNTS
+        self.counter.setText(f"Подключено {count} из {limit} аккаунтов")
+        allowed = count < limit
+        self.add_button.setEnabled(allowed)
+        self.add_button.setToolTip("" if allowed else account_limit_message(limit))
+        self._rebuild_selector()
+        self._sync_import_buttons()
+        self._render_selected()
+
+    def _rebuild_selector(self, _text: str | None = None) -> None:
+        query = self.search.text().strip().casefold()
         self.selector.blockSignals(True)
         self.selector.clear()
         for account_id, account in self._accounts.items():
+            if query and query not in self._search_text(account_id, account):
+                continue
             state = STATE_LABELS.get(
                 str(account.get("runtime_state") or ""), "Неизвестно"
             )
@@ -168,23 +217,13 @@ class AccountManagerPanel(QFrame):
                 account_id,
             )
         index = self.selector.findData(self._selected_account_id)
-        self.selector.setCurrentIndex(index if index >= 0 else (0 if self._accounts else -1))
+        self.selector.setCurrentIndex(index if index >= 0 else -1)
         self.selector.blockSignals(False)
-        if self.selector.currentIndex() >= 0:
-            self._selected_account_id = int(self.selector.currentData() or 0)
 
-        count = len(self._accounts)
-        self.counter.setText(f"Подключено {count} из 5 аккаунтов")
-        allowed = count < 5
-        self.add_button.setEnabled(allowed)
-        self.add_button.setToolTip(
-            ""
-            if allowed
-            else "Достигнут лимит: можно подключить не более 5 Telegram-аккаунтов."
-        )
+    def _sync_import_buttons(self) -> None:
         previous_available = (
-            int(previous_account_id or 0) in self._accounts
-            and int(previous_account_id or 0) != self._selected_account_id
+            self._previous_account_id in self._accounts
+            and self._previous_account_id != self._selected_account_id
         )
         tooltip = (
             ""
@@ -197,26 +236,16 @@ class AccountManagerPanel(QFrame):
         ):
             button.setEnabled(previous_available)
             button.setToolTip(tooltip)
-        self._render_selected()
 
     def _selection_changed(self, _index: int) -> None:
         account_id = int(self.selector.currentData() or 0)
-        if account_id <= 0:
-            self._render_selected()
-            return
-        # Signals are blocked for every programmatic reload/set. Therefore an
-        # actual index change here is always a user intent, including switching
-        # back to the currently committed account while another selection is
-        # still queued.
-        self.account_selected.emit(account_id)
+        if account_id > 0:
+            self.account_selected.emit(account_id)
 
     def set_selected_account_id(self, account_id: int) -> None:
         self._selected_account_id = int(account_id or 0)
-        index = self.selector.findData(self._selected_account_id)
-        if index >= 0:
-            self.selector.blockSignals(True)
-            self.selector.setCurrentIndex(index)
-            self.selector.blockSignals(False)
+        self._rebuild_selector()
+        self._sync_import_buttons()
         self._render_selected()
 
     def _render_selected(self) -> None:

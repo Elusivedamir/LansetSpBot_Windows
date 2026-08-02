@@ -113,6 +113,9 @@ def test_the_collector_still_runs_when_a_profile_directory_is_unreadable(
         "MARLEN_DATA_DIR": str(profile),
         "QT_QPA_PLATFORM": "offscreen",
     }
+    # Keep the canonical and legacy profile variables aligned.
+    environment["LANSETSPBOT_DATA_DIR"] = str(profile)
+
     completed = subprocess.run(
         [
             sys.executable,

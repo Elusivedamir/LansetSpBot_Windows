@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import random  # noqa: F401 - public monkeypatch compatibility
-import warnings
 from typing import Any, Callable
 
 from telethon import connection
@@ -18,7 +17,6 @@ from services.telegram import (
     TelegramTransportMixin,
 )
 from services.encrypted_telethon_session import EncryptedSQLiteSession
-from services.mtproxy_faketls import ConnectionTcpMTProxyFakeTLS
 from services.proxy_validation import normalize_proxy_config
 from services.telegram_session import TelegramSessionMixin
 
@@ -57,45 +55,27 @@ class TelegramService(
             session_base = settings.session_dir / session_name
         telegram_session_base = session_base
         session_file = telegram_session_base.with_suffix(".session")
-        # Session copies are never kept; remove any left by an older version.
         self.purge_session_backups(session_file)
         self._prepare_session_file(session_file)
         proxy, connection_type = self.build_transport(settings)
-        with warnings.catch_warnings():
-            if connection_type in {
-                connection.ConnectionTcpMTProxyRandomizedIntermediate,
-                ConnectionTcpMTProxyFakeTLS,
-            }:
-                # Telethon 1.44 emits a generic python-socks warning for every
-                # non-empty proxy argument. MTProxy uses its own direct transport
-                # and does not depend on python-socks, so the warning is misleading.
-                warnings.filterwarnings(
-                    "ignore",
-                    message="proxy argument will be ignored because python-socks is not installed",
-                    category=UserWarning,
-                    module=r"telethon\.client\.telegrambaseclient",
-                )
-            encrypted_session = EncryptedSQLiteSession(telegram_session_base)
-            self.client = PacedTelegramClient(
-                encrypted_session,
-                settings.api_id,
-                settings.api_hash,
-                proxy=proxy,
-                connection=connection_type,
-                device_model=f"{APP_NAME} Desktop",
-                app_version=__version__,
-                lang_code="ru",
-                system_lang_code="ru-RU",
-                flood_sleep_threshold=0,
-                request_retries=0,
-                connection_retries=1,
-                # Marlen is request-driven and registers no Telethon event handlers.
-                # Disabling the background update-difference loop avoids Telethon
-                # 1.44.0's end_get_diff state race during repeated reconnects.
-                receive_updates=False,
-                request_limiter=limiter,
-                request_timeout=30.0,
-            )
+        encrypted_session = EncryptedSQLiteSession(telegram_session_base)
+        self.client = PacedTelegramClient(
+            encrypted_session,
+            settings.api_id,
+            settings.api_hash,
+            proxy=proxy,
+            connection=connection_type,
+            device_model=f"{APP_NAME} Desktop",
+            app_version=__version__,
+            lang_code="ru",
+            system_lang_code="ru-RU",
+            flood_sleep_threshold=0,
+            request_retries=0,
+            connection_retries=1,
+            receive_updates=False,
+            request_limiter=limiter,
+            request_timeout=30.0,
+        )
         self._secure_session_file(telegram_session_base.with_suffix(".session"))
         self._connected = False
         self._last_authorization_check = 0.0
@@ -115,27 +95,18 @@ class TelegramService(
             getattr(settings, "proxy_port", 0),
             getattr(settings, "proxy_username", ""),
             getattr(settings, "proxy_password", ""),
-            getattr(settings, "proxy_secret", ""),
         )
-        if config.proxy_type == "MTPROXY":
-            connection_type = (
-                ConnectionTcpMTProxyFakeTLS
-                if config.secret.startswith("ee") and len(config.secret) > 34
-                else connection.ConnectionTcpMTProxyRandomizedIntermediate
-            )
-            return (
-                config.host,
-                config.port,
-                config.secret,
-            ), connection_type
-
         try:
             import socks
         except ImportError as exc:  # pragma: no cover - dependency error
             raise RuntimeError(
                 "PySocks is required for SOCKS/HTTP proxy support"
             ) from exc
-        mapping = {"SOCKS5": socks.SOCKS5, "SOCKS4": socks.SOCKS4, "HTTP": socks.HTTP}
+        mapping = {
+            "SOCKS5": socks.SOCKS5,
+            "SOCKS4": socks.SOCKS4,
+            "HTTP": socks.HTTP,
+        }
         return (
             mapping[config.proxy_type],
             config.host,

@@ -5,6 +5,10 @@ import json
 import re
 from typing import TYPE_CHECKING, Any, cast
 
+from core.account_limits import (
+    MAX_REGISTERED_TELEGRAM_ACCOUNTS,
+    account_limit_message,
+)
 from core.config import MAX_COMMENT_VARIANTS
 from storage.db_common import DatabaseError
 from storage.sqlcipher_driver import dbapi as sqlite3
@@ -16,7 +20,7 @@ else:
         pass
 
 
-MAX_TELEGRAM_ACCOUNTS = 5
+MAX_TELEGRAM_ACCOUNTS = MAX_REGISTERED_TELEGRAM_ACCOUNTS
 ACCOUNT_STATES = frozenset(
     {
         "disconnected",
@@ -47,7 +51,6 @@ SECRET_ACCOUNT_SETTING_KEYS = frozenset(
         "telegram.phone",
         "telegram.proxy_username",
         "telegram.proxy_password",
-        "telegram.proxy_secret",
         "openai.api_key",
     }
 )
@@ -249,7 +252,7 @@ class AccountRepositoryMixin(_MixinHost):
                 )
                 if count >= self.MAX_TELEGRAM_ACCOUNTS:
                     raise DatabaseError(
-                        "Достигнут лимит: можно подключить не более 5 Telegram-аккаунтов."
+                        account_limit_message(self.MAX_TELEGRAM_ACCOUNTS)
                     )
                 conn.execute(
                     """INSERT INTO telegram_accounts(
@@ -277,7 +280,7 @@ class AccountRepositoryMixin(_MixinHost):
             message = str(exc)
             if "telegram account limit reached" in message:
                 raise DatabaseError(
-                    "Достигнут лимит: можно подключить не более 5 Telegram-аккаунтов."
+                    account_limit_message(self.MAX_TELEGRAM_ACCOUNTS)
                 ) from exc
             raise DatabaseError(f"Telegram account registration failed: {exc}") from exc
         except Exception as exc:
