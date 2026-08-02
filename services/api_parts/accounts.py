@@ -170,20 +170,9 @@ class AccountsAPIMixin(_MixinHost):
                     self._set_account_secret(owner, key, snapshots[key])
                 raise
 
-    def register_authorized_account(
-        self,
-        account: dict[str, Any],
-        settings: dict[str, Any],
-        *,
-        pending_session_name: str,
-    ) -> dict[str, Any]:
-        telegram_id = int(account.get("id") or 0)
-        if telegram_id <= 0:
-            raise ValueError("Telegram не вернул корректный account ID")
-        pending = validate_session_name(pending_session_name)
-        if not PENDING_SESSION_RE.fullmatch(pending):
-            raise ValueError("Новый аккаунт должен использовать временную сессию")
-
+    def _split_authorized_account_settings(
+        self, settings: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         public = dict(settings)
         secret_updates = {
             key: public.pop(key)
@@ -199,118 +188,138 @@ class AccountsAPIMixin(_MixinHost):
             "telegram.runtime_state",
         ):
             public.pop(identity_key, None)
+        return public, secret_updates
 
-        existing = self.database.get_telegram_account(telegram_id)
-        if existing:
-            safe_states = {
-                "stopped",
-                "authorization_required",
-                "error",
-                "disconnected",
-            }
-            if (
-                not bool(existing.get("stopped"))
-                and str(existing.get("runtime_state") or "") not in safe_states
-            ):
-                discard_pending_session(self.config.telegram.session_dir, pending)
-                raise RuntimeError(
-                    "Сначала остановите работу аккаунта перед переподключением"
-                )
-            old_public = self.database.get_account_settings(telegram_id)
-            with self._secret_lock:
-                old_secrets = {
-                    key: self._strict_account_secret(telegram_id, key)
-                    for key in SECRET_SETTING_KEYS
-                }
-            swap_name = f".swap_account_{telegram_id}_{secrets.token_hex(12)}"
-            journal = write_account_lifecycle_journal(
-                self.secret_store,
-                account_id=telegram_id,
-                operation="reauthorize",
-                pending_session_name=pending,
-                final_session_name=f"account_{telegram_id}",
-                swap_name=swap_name,
-                old_account=dict(existing),
-                old_public=dict(old_public),
-                old_secrets=dict(old_secrets),
-                selected_before=self.get_selected_account_id(),
-                secret_keys=sorted(SECRET_SETTING_KEYS),
+    def _reauthorize_account(
+        self,
+        *,
+        telegram_id: int,
+        account: dict[str, Any],
+        existing: dict[str, Any],
+        pending: str,
+        public: dict[str, Any],
+        secret_updates: dict[str, Any],
+    ) -> dict[str, Any]:
+        safe_states = {
+            "stopped",
+            "authorization_required",
+            "error",
+            "disconnected",
+        }
+        if (
+            not bool(existing.get("stopped"))
+            and str(existing.get("runtime_state") or "") not in safe_states
+        ):
+            discard_pending_session(self.config.telegram.session_dir, pending)
+            raise RuntimeError(
+                "Сначала остановите работу аккаунта перед переподключением"
             )
-            try:
-                with replace_pending_session(
-                    self.config.telegram.session_dir,
-                    pending_session_name=pending,
-                    telegram_account_id=telegram_id,
-                    swap_name=swap_name,
-                ) as final_name:
-                    journal = update_account_lifecycle_journal(
-                        self.secret_store, journal, phase="session_swapped"
-                    )
-                    with self.database.get_connection():
-                        self.database.register_telegram_account(
-                            telegram_account_id=telegram_id,
-                            session_name=final_name,
-                            display_name=str(
-                                account.get("name")
-                                or existing.get("display_name")
-                                or "Telegram Account"
-                            ),
-                            username=(
-                                str(account.get("username") or "").strip() or None
-                            ),
-                            phone=str(account.get("phone") or ""),
-                            authorized=True,
-                        )
-                        self.database.update_account_session_name(
-                            telegram_id, final_name
-                        )
-                        self.database.replace_account_settings(
-                            telegram_id, public
-                        )
-                        with self._secret_lock:
-                            for key, value in secret_updates.items():
-                                self._set_account_secret(telegram_id, key, value)
-                        self.database.resume_account_work(telegram_id)
-                        selected = cast(
-                            dict[str, Any],
-                            self.database.select_telegram_account(telegram_id),
-                        )
-                    journal = update_account_lifecycle_journal(
-                        self.secret_store, journal, phase="committed"
-                    )
-            except BaseException:
-                rollback_error = None
-                try:
-                    self.database.replace_account_settings(
-                        telegram_id, old_public
-                    )
-                except Exception as exc:
-                    rollback_error = exc
-                try:
-                    with self._secret_lock:
-                        for key, value in old_secrets.items():
-                            self._set_account_secret(telegram_id, key, value)
-                    discard_pending_session(
-                        self.config.telegram.session_dir, pending
-                    )
-                except Exception as exc:
-                    if rollback_error is None:
-                        rollback_error = exc
-                if rollback_error is None:
-                    clear_account_lifecycle_journal(
-                        self.secret_store, telegram_id
-                    )
-                    raise
-                raise RuntimeError(
-                    "Telegram account rollback is incomplete; "
-                    "startup recovery journal was retained"
-                ) from rollback_error
-            clear_account_lifecycle_journal(self.secret_store, telegram_id)
-            selected["created"] = False
-            selected["duplicate"] = True
-            selected["reauthorized"] = True
-            return selected
 
+        old_public = self.database.get_account_settings(telegram_id)
+        with self._secret_lock:
+            old_secrets = {
+                key: self._strict_account_secret(telegram_id, key)
+                for key in SECRET_SETTING_KEYS
+            }
+        swap_name = f".swap_account_{telegram_id}_{secrets.token_hex(12)}"
+        journal = write_account_lifecycle_journal(
+            self.secret_store,
+            account_id=telegram_id,
+            operation="reauthorize",
+            pending_session_name=pending,
+            final_session_name=f"account_{telegram_id}",
+            swap_name=swap_name,
+            old_account=dict(existing),
+            old_public=dict(old_public),
+            old_secrets=dict(old_secrets),
+            selected_before=self.get_selected_account_id(),
+            secret_keys=sorted(SECRET_SETTING_KEYS),
+        )
+        try:
+            with replace_pending_session(
+                self.config.telegram.session_dir,
+                pending_session_name=pending,
+                telegram_account_id=telegram_id,
+                swap_name=swap_name,
+            ) as final_name:
+                journal = update_account_lifecycle_journal(
+                    self.secret_store, journal, phase="session_swapped"
+                )
+                with self.database.get_connection():
+                    self.database.register_telegram_account(
+                        telegram_account_id=telegram_id,
+                        session_name=final_name,
+                        display_name=str(
+                            account.get("name")
+                            or existing.get("display_name")
+                            or "Telegram Account"
+                        ),
+                        username=(
+                            str(account.get("username") or "").strip() or None
+                        ),
+                        phone=str(account.get("phone") or ""),
+                        authorized=True,
+                    )
+                    self.database.update_account_session_name(
+                        telegram_id, final_name
+                    )
+                    self.database.replace_account_settings(
+                        telegram_id, public
+                    )
+                    with self._secret_lock:
+                        for key, value in secret_updates.items():
+                            self._set_account_secret(telegram_id, key, value)
+                    self.database.resume_account_work(telegram_id)
+                    selected = cast(
+                        dict[str, Any],
+                        self.database.select_telegram_account(telegram_id),
+                    )
+                journal = update_account_lifecycle_journal(
+                    self.secret_store, journal, phase="committed"
+                )
+        except BaseException:
+            rollback_error = None
+            try:
+                self.database.replace_account_settings(
+                    telegram_id, old_public
+                )
+            except Exception as exc:
+                rollback_error = exc
+            try:
+                with self._secret_lock:
+                    for key, value in old_secrets.items():
+                        self._set_account_secret(telegram_id, key, value)
+                discard_pending_session(
+                    self.config.telegram.session_dir, pending
+                )
+            except Exception as exc:
+                if rollback_error is None:
+                    rollback_error = exc
+            if rollback_error is None:
+                clear_account_lifecycle_journal(
+                    self.secret_store, telegram_id
+                )
+                raise
+            raise RuntimeError(
+                "Telegram account rollback is incomplete; "
+                "startup recovery journal was retained"
+            ) from rollback_error
+
+        clear_account_lifecycle_journal(self.secret_store, telegram_id)
+        selected["created"] = False
+        selected["duplicate"] = True
+        selected["reauthorized"] = True
+        return selected
+
+    def _register_new_authorized_account(
+        self,
+        *,
+        telegram_id: int,
+        account: dict[str, Any],
+        pending: str,
+        public: dict[str, Any],
+        secret_updates: dict[str, Any],
+    ) -> dict[str, Any]:
         check = self.can_add_telegram_account()
         if not bool(check["allowed"]):
             discard_pending_session(self.config.telegram.session_dir, pending)
@@ -384,6 +393,39 @@ class AccountsAPIMixin(_MixinHost):
             )
             clear_account_lifecycle_journal(self.secret_store, telegram_id)
             raise
+
+    def register_authorized_account(
+        self,
+        account: dict[str, Any],
+        settings: dict[str, Any],
+        *,
+        pending_session_name: str,
+    ) -> dict[str, Any]:
+        telegram_id = int(account.get("id") or 0)
+        if telegram_id <= 0:
+            raise ValueError("Telegram не вернул корректный account ID")
+        pending = validate_session_name(pending_session_name)
+        if not PENDING_SESSION_RE.fullmatch(pending):
+            raise ValueError("Новый аккаунт должен использовать временную сессию")
+
+        public, secret_updates = self._split_authorized_account_settings(settings)
+        existing = self.database.get_telegram_account(telegram_id)
+        if existing:
+            return self._reauthorize_account(
+                telegram_id=telegram_id,
+                account=account,
+                existing=existing,
+                pending=pending,
+                public=public,
+                secret_updates=secret_updates,
+            )
+        return self._register_new_authorized_account(
+            telegram_id=telegram_id,
+            account=account,
+            pending=pending,
+            public=public,
+            secret_updates=secret_updates,
+        )
 
     def update_authorized_account_metadata(
         self, account: dict[str, Any]
