@@ -79,7 +79,7 @@ LINE_GROUP_THRESHOLDS = {
             "storage/db_accounts.py",
             "storage/migrations/multiaccount_v31.py",
         ),
-        10.0,
+        55.0,
     ),
     "account_gui_lifecycle": (
         (
@@ -87,7 +87,7 @@ LINE_GROUP_THRESHOLDS = {
             "gui/gui_service_adapter.py",
             "gui/views/account_view.py",
         ),
-        5.0,
+        65.0,
     ),
 }
 
@@ -125,6 +125,27 @@ BRANCH_GROUP_THRESHOLDS = {
             "storage/join_campaigns/guards.py",
         ),
         25.0,
+    ),
+    "multiaccount_runtime": (
+        (
+            "services/account_context.py",
+            "services/account_runtime_manager.py",
+            "services/account_sessions.py",
+            "services/multiaccount_scheduler.py",
+            "services/api_parts/accounts.py",
+            "storage/account_database_view.py",
+            "storage/db_accounts.py",
+            "storage/migrations/multiaccount_v31.py",
+        ),
+        40.0,
+    ),
+    "account_gui_lifecycle": (
+        (
+            "gui/account_manager_panel.py",
+            "gui/gui_service_adapter.py",
+            "gui/views/account_view.py",
+        ),
+        35.0,
     ),
 }
 

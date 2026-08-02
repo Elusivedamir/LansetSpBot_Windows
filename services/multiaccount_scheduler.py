@@ -68,10 +68,30 @@ class AccountCampaignDatabaseView(AccountDatabaseView):
         del account_id
         return self._base.reconcile_join_schedule(account_id=self.account_id)
 
-    def queue_due_comment_slot(self, *, now=None):
-        """Atomically queue one due comment slot owned by this account."""
-        now = now or utc_now()
-        now_text = to_db_time(now)
+    def _queue_due_campaign_slot(
+        self,
+        *,
+        schedule_table: str,
+        campaign_table: str,
+        task_type: str,
+        due_sql: str,
+        due_params: tuple[object, ...],
+        scope_error: str,
+        database_error: str,
+    ):
+        """Atomically queue one due slot for this account.
+
+        Only the two internal campaign specifications are accepted. SQL values
+        remain bound parameters; the validated table names are fixed repository
+        identifiers and never originate from user input.
+        """
+        allowed_specs = {
+            ("comment_schedule", "comment_campaigns", "auto_comment_slot"),
+            ("join_schedule", "join_campaigns", "join_saved_slot"),
+        }
+        if (schedule_table, campaign_table, task_type) not in allowed_specs:
+            raise ValueError("Unsupported account campaign slot specification")
+
         connection = None
         try:
             connection = sqlite3.connect(
@@ -86,40 +106,28 @@ class AccountCampaignDatabaseView(AccountDatabaseView):
             connection.execute("BEGIN IMMEDIATE")
 
             active_task = connection.execute(
-                """SELECT 1
-                   FROM comment_schedule s
-                   JOIN comment_campaigns c ON c.id=s.campaign_id
-                   JOIN tasks t ON t.id=s.task_id
-                   WHERE c.account_id=?
-                     AND s.status IN ('queued','running')
-                     AND t.status IN ('pending','running','processing')
-                   LIMIT 1""",
+                f"""SELECT 1
+                    FROM {schedule_table} s
+                    JOIN {campaign_table} c ON c.id=s.campaign_id
+                    JOIN tasks t ON t.id=s.task_id
+                    WHERE c.account_id=?
+                      AND s.status IN ('queued','running')
+                      AND t.status IN ('pending','running','processing')
+                    LIMIT 1""",
                 (self.account_id,),
             ).fetchone()
             if active_task is not None:
                 connection.commit()
                 return None
 
-            row = connection.execute(
-                """SELECT s.id AS slot_id, s.campaign_id, c.account_id
-                   FROM comment_schedule s
-                   JOIN comment_campaigns c ON c.id=s.campaign_id
-                   WHERE c.account_id=?
-                     AND c.status='running'
-                     AND s.status='pending'
-                     AND s.scheduled_at<=?
-                     AND c.ends_at>?
-                   ORDER BY s.scheduled_at ASC, s.id ASC
-                   LIMIT 1""",
-                (self.account_id, now_text, now_text),
-            ).fetchone()
+            row = connection.execute(due_sql, due_params).fetchone()
             if row is None:
                 connection.commit()
                 return None
 
             owner = int(row["account_id"] or 0)
             if owner != self.account_id:
-                raise DatabaseError("Comment slot escaped its account scheduler scope")
+                raise DatabaseError(scope_error)
 
             payload = json_dumps_safe(
                 {
@@ -132,128 +140,18 @@ class AccountCampaignDatabaseView(AccountDatabaseView):
                 """INSERT INTO tasks(
                        account_id, type, payload, status, progress, max_retries,
                        created_at, updated_at)
-                   VALUES(?, 'auto_comment_slot', ?, 'pending', 0, 0,
+                   VALUES(?, ?, ?, 'pending', 0, 0,
                           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-                (owner, payload),
+                (owner, task_type, payload),
             )
             if cursor.lastrowid is None:
                 raise DatabaseError("SQLite did not return a task id")
             task_id = int(cursor.lastrowid)
 
             updated = connection.execute(
-                """UPDATE comment_schedule
-                   SET status='queued', task_id=?
-                   WHERE id=? AND campaign_id=? AND status='pending'""",
-                (task_id, int(row["slot_id"]), int(row["campaign_id"])),
-            )
-            if updated.rowcount != 1:
-                connection.execute("DELETE FROM tasks WHERE id=?", (task_id,))
-                connection.rollback()
-                return None
-            connection.commit()
-            return {
-                "task_id": task_id,
-                "campaign_id": int(row["campaign_id"]),
-                "slot_id": int(row["slot_id"]),
-                "account_id": owner,
-            }
-        except sqlite3.Error as exc:
-            if connection is not None:
-                try:
-                    connection.rollback()
-                except Exception:
-                    pass
-            raise DatabaseError(
-                f"Failed to queue account-scoped campaign slot: {exc}"
-            ) from exc
-        finally:
-            if connection is not None:
-                try:
-                    connection.close()
-                except Exception:
-                    pass
-
-    def queue_due_join_slot(self, *, now=None):
-        """Atomically queue one due join slot owned by this account."""
-        now = now or utc_now()
-        now_text = to_db_time(now)
-        connection = None
-        try:
-            connection = sqlite3.connect(
-                str(self.path),
-                timeout=self.sqlite_timeout_seconds,
-                isolation_level=None,
-            )
-            connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
-            connection.execute("PRAGMA synchronous=NORMAL")
-            connection.execute("BEGIN IMMEDIATE")
-
-            active_task = connection.execute(
-                """SELECT 1
-                   FROM join_schedule s
-                   JOIN join_campaigns c ON c.id=s.campaign_id
-                   JOIN tasks t ON t.id=s.task_id
-                   WHERE c.account_id=?
-                     AND s.status IN ('queued','running')
-                     AND t.status IN ('pending','running','processing')
-                   LIMIT 1""",
-                (self.account_id,),
-            ).fetchone()
-            if active_task is not None:
-                connection.commit()
-                return None
-
-            row = connection.execute(
-                """SELECT s.id AS slot_id, s.campaign_id, c.account_id
-                   FROM join_schedule s
-                   JOIN join_campaigns c ON c.id=s.campaign_id
-                   JOIN saved_dialogs d ON d.id=s.saved_dialog_id
-                   WHERE c.account_id=?
-                     AND c.status='running'
-                     AND s.status='pending'
-                     AND s.scheduled_at<=?
-                     AND NOT EXISTS(
-                         SELECT 1 FROM local_ban_targets b
-                         WHERE b.account_id=c.account_id
-                           AND b.peer_id=d.peer_id
-                     )
-                   ORDER BY s.scheduled_at ASC, s.id ASC
-                   LIMIT 1""",
-                (self.account_id, now_text),
-            ).fetchone()
-            if row is None:
-                connection.commit()
-                return None
-
-            owner = int(row["account_id"] or 0)
-            if owner != self.account_id:
-                raise DatabaseError("Join slot escaped its account scheduler scope")
-
-            payload = json_dumps_safe(
-                {
-                    "campaign_id": int(row["campaign_id"]),
-                    "slot_id": int(row["slot_id"]),
-                    "account_id": owner,
-                }
-            )
-            cursor = connection.execute(
-                """INSERT INTO tasks(
-                       account_id, type, payload, status, progress, max_retries,
-                       created_at, updated_at)
-                   VALUES(?, 'join_saved_slot', ?, 'pending', 0, 0,
-                          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-                (owner, payload),
-            )
-            if cursor.lastrowid is None:
-                raise DatabaseError("SQLite did not return a task id")
-            task_id = int(cursor.lastrowid)
-
-            updated = connection.execute(
-                """UPDATE join_schedule
-                   SET status='queued', task_id=?
-                   WHERE id=? AND campaign_id=? AND status='pending'""",
+                f"""UPDATE {schedule_table}
+                    SET status='queued', task_id=?
+                    WHERE id=? AND campaign_id=? AND status='pending'""",
                 (task_id, int(row["slot_id"]), int(row["campaign_id"])),
             )
             if updated.rowcount != 1:
@@ -273,15 +171,64 @@ class AccountCampaignDatabaseView(AccountDatabaseView):
                     connection.rollback()
                 except sqlite3.Error:
                     pass
-            raise DatabaseError(
-                f"Failed to queue account-scoped join slot: {exc}"
-            ) from exc
+            raise DatabaseError(f"{database_error}: {exc}") from exc
         finally:
             if connection is not None:
                 try:
                     connection.close()
-                except Exception:
+                except sqlite3.Error:
                     pass
+
+    def queue_due_comment_slot(self, *, now=None):
+        """Atomically queue one due comment slot owned by this account."""
+        now = now or utc_now()
+        now_text = to_db_time(now)
+        return self._queue_due_campaign_slot(
+            schedule_table="comment_schedule",
+            campaign_table="comment_campaigns",
+            task_type="auto_comment_slot",
+            due_sql="""SELECT s.id AS slot_id, s.campaign_id, c.account_id
+                       FROM comment_schedule s
+                       JOIN comment_campaigns c ON c.id=s.campaign_id
+                       WHERE c.account_id=?
+                         AND c.status='running'
+                         AND s.status='pending'
+                         AND s.scheduled_at<=?
+                         AND c.ends_at>?
+                       ORDER BY s.scheduled_at ASC, s.id ASC
+                       LIMIT 1""",
+            due_params=(self.account_id, now_text, now_text),
+            scope_error="Comment slot escaped its account scheduler scope",
+            database_error="Failed to queue account-scoped campaign slot",
+        )
+
+    def queue_due_join_slot(self, *, now=None):
+        """Atomically queue one due join slot owned by this account."""
+        now = now or utc_now()
+        now_text = to_db_time(now)
+        return self._queue_due_campaign_slot(
+            schedule_table="join_schedule",
+            campaign_table="join_campaigns",
+            task_type="join_saved_slot",
+            due_sql="""SELECT s.id AS slot_id, s.campaign_id, c.account_id
+                       FROM join_schedule s
+                       JOIN join_campaigns c ON c.id=s.campaign_id
+                       JOIN saved_dialogs d ON d.id=s.saved_dialog_id
+                       WHERE c.account_id=?
+                         AND c.status='running'
+                         AND s.status='pending'
+                         AND s.scheduled_at<=?
+                         AND NOT EXISTS(
+                             SELECT 1 FROM local_ban_targets b
+                             WHERE b.account_id=c.account_id
+                               AND b.peer_id=d.peer_id
+                         )
+                       ORDER BY s.scheduled_at ASC, s.id ASC
+                       LIMIT 1""",
+            due_params=(self.account_id, now_text),
+            scope_error="Join slot escaped its account scheduler scope",
+            database_error="Failed to queue account-scoped join slot",
+        )
 
 
 class AccountCampaignContext(
