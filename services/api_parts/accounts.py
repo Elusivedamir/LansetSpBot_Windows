@@ -444,34 +444,39 @@ class AccountsAPIMixin(_MixinHost):
         )
         return cast(dict[str, Any], raw_row)
 
-    def stop_telegram_account(
-        self, account_id: int, *, timeout_seconds: float = 20.0
-    ) -> dict[str, Any]:
-        owner = int(account_id)
-        if owner <= 0:
-            raise ValueError("Некорректный Telegram-аккаунт")
-        worker = self.queue_worker
+
+    def _begin_account_stop(self, owner: int, worker: Any) -> dict[str, Any]:
         scopes = [("account", owner)]
 
         def mutation():
             return self.database.begin_account_stop(owner)
 
         if worker is not None and worker.isRunning():
-            stopped = worker.cancel_scopes_and_run(scopes, mutation)
-        else:
-            stopped = mutation()
-        for campaign_id in stopped.get("comment_campaign_ids", []):
-            if worker is not None:
-                worker.request_scope_cancellation(
-                    "comment_campaign", int(campaign_id)
-                )
-        for campaign_id in stopped.get("join_campaign_ids", []):
-            if worker is not None:
-                worker.request_scope_cancellation("join_campaign", int(campaign_id))
-        for task_id in stopped.get("running_task_ids", []):
-            if worker is not None:
-                worker.request_scope_cancellation("task", int(task_id))
+            return dict(worker.cancel_scopes_and_run(scopes, mutation))
+        return dict(mutation())
 
+    @staticmethod
+    def _request_account_stop_cancellations(
+        worker: Any, stopped: dict[str, Any]
+    ) -> None:
+        if worker is None:
+            return
+        for campaign_id in stopped.get("comment_campaign_ids", []):
+            worker.request_scope_cancellation(
+                "comment_campaign", int(campaign_id)
+            )
+        for campaign_id in stopped.get("join_campaign_ids", []):
+            worker.request_scope_cancellation("join_campaign", int(campaign_id))
+        for task_id in stopped.get("running_task_ids", []):
+            worker.request_scope_cancellation("task", int(task_id))
+
+    @staticmethod
+    def _disconnect_account_runtime(
+        owner: int,
+        worker: Any,
+        *,
+        timeout_seconds: float,
+    ) -> tuple[dict[str, Any], str | None]:
         disconnect_result: dict[str, Any] = {
             "account_id": owner,
             "disconnected": False,
@@ -492,6 +497,22 @@ class AccountsAPIMixin(_MixinHost):
             )
         except Exception as exc:
             error = str(exc)
+        return disconnect_result, error
+
+    def stop_telegram_account(
+        self, account_id: int, *, timeout_seconds: float = 20.0
+    ) -> dict[str, Any]:
+        owner = int(account_id)
+        if owner <= 0:
+            raise ValueError("Некорректный Telegram-аккаунт")
+        worker = self.queue_worker
+        stopped = self._begin_account_stop(owner, worker)
+        self._request_account_stop_cancellations(worker, stopped)
+        disconnect_result, error = self._disconnect_account_runtime(
+            owner,
+            worker,
+            timeout_seconds=timeout_seconds,
+        )
         self.database.finish_account_stop(owner, error=error)
         if error:
             raise RuntimeError(error)
