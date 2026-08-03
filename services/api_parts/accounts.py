@@ -161,14 +161,31 @@ class AccountsAPIMixin(_MixinHost):
                     touched.append(key)
                     self._set_account_secret(owner, key, value)
                 if public:
-                    self.database.set_account_settings(owner, public)
-                if owner == self.get_selected_account_id():
-                    # Preserve compatibility for current GUI methods while all
-                    # worker handlers use AccountDatabaseView.
-                    self.database.set_settings(public)
-            except BaseException:
+                    writer = getattr(
+                        self.database,
+                        "set_account_settings_with_selected_projection",
+                        None,
+                    )
+                    if not callable(writer):
+                        raise RuntimeError(
+                            "Database does not support atomic account settings "
+                            "projection"
+                        )
+                    writer(owner, public)
+            except BaseException as exc:
+                rollback_errors: list[str] = []
                 for key in reversed(touched):
-                    self._set_account_secret(owner, key, snapshots[key])
+                    try:
+                        self._set_account_secret(owner, key, snapshots[key])
+                    except BaseException as rollback_exc:
+                        rollback_errors.append(
+                            f"{key}: {type(rollback_exc).__name__}: {rollback_exc}"
+                        )
+                if rollback_errors:
+                    raise RuntimeError(
+                        "Account settings failed and secret rollback was incomplete: "
+                        + "; ".join(rollback_errors)
+                    ) from exc
                 raise
 
     def save_account_settings(
@@ -693,8 +710,6 @@ class AccountsAPIMixin(_MixinHost):
     ) -> dict[str, Any]:
         owner = int(account_id)
         worker = self._require_account_runtime_worker()
-        self.database.resume_account_work(owner)
-        self._clear_account_cancellation(owner, worker)
         return self._submit_account_runtime_check(
             owner,
             worker,

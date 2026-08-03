@@ -7,12 +7,55 @@ on:
 
 permissions:
   contents: read
-  id-token: write
-  attestations: write
 
 jobs:
+  dependency-audit:
+    name: Audit exact tagged dependency locks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Audit every shipped lock with OSV
+        uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
+        with:
+          inputs: >-
+            requirements-runtime.lock
+            requirements-openai.lock
+            requirements-build-windows-x64.lock
+            requirements-dev-windows-x64.lock
+          require-hashes: true
+          no-deps: true
+          disable-pip: true
+          vulnerability-service: osv
+          summary: false
+          internal-be-careful-allow-failure: true
+          internal-be-careful-extra-flags: >-
+            --format=json
+            --output=dependency-audit.json
+
+      - name: Enforce fail-closed vulnerability policy
+        run: python tools/enforce_dependency_audit_policy.py dependency-audit.json
+
+      - name: Upload exact-SHA dependency evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-dependency-audit-${{ github.sha }}
+          path: dependency-audit.json
+          if-no-files-found: error
+          retention-days: 30
+
   sign-prove-attest:
+    needs: dependency-audit
     runs-on: windows-2022
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     timeout-minutes: 120
     environment: release-signing
     env:
@@ -85,6 +128,30 @@ jobs:
           if (-not $proof.gates.authenticode_signed) {
             throw "Release proof does not confirm Authenticode signing."
           }
+
+      - name: Download exact-SHA dependency audit evidence
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: release-dependency-audit-${{ github.sha }}
+          path: dist/ci-proof/dependency-audit
+
+      - name: Verify dependency audit evidence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $auditPath = "dist\ci-proof\dependency-audit\dependency-audit.json"
+          if (-not (Test-Path -LiteralPath $auditPath -PathType Leaf)) {
+            throw "Exact-SHA dependency audit report is missing."
+          }
+          Get-Content -LiteralPath $auditPath -Raw |
+            ConvertFrom-Json | Out-Null
+          @(
+            "commit=${{ github.sha }}"
+            "report=$auditPath"
+            "sha256=$((Get-FileHash -Algorithm SHA256 -LiteralPath $auditPath).Hash.ToLowerInvariant())"
+          ) | Set-Content `
+            -LiteralPath "dist\ci-proof\dependency-audit-proof.txt" `
+            -Encoding UTF8
 
       - name: Attest signed ZIP and SBOM
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1

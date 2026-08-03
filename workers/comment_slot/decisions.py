@@ -64,6 +64,9 @@ _FRIENDLY = {
     "comment_already_reserved": "Пропущено: этот пост уже отправлялся или требует ручной проверки",
     "network_unavailable": "Нет соединения с Telegram. Кампания временно ожидает сеть",
     "account_state_mismatch": "Кампания приостановлена: Telegram-сессия не совпадает с локальным аккаунтом",
+    "openai_output_invalid": (
+        "Кампания приостановлена: OpenAI-комментарий нарушил локальные правила"
+    ),
 }
 
 _UNCERTAIN_CODES = frozenset(
@@ -93,6 +96,7 @@ _PAUSE_CODES = frozenset(
         "direct_message_duplicate_guard",
         "security_time_sync",
         "account_state_mismatch",
+        "openai_output_invalid",
     }
 )
 
@@ -125,7 +129,11 @@ def nonretryable_comment_decision(code: str, fallback: str) -> NonRetryableComme
     # deferrals retain the rotation target. Account restriction codes are
     # overridden to non-consuming by the runner when restriction state is built.
     consume_channel = True
-    if normalized in {"discussion_relink_deferred", "account_state_mismatch"}:
+    if normalized in {
+        "discussion_relink_deferred",
+        "account_state_mismatch",
+        "openai_output_invalid",
+    }:
         consume_channel = False
     return NonRetryableCommentDecision(
         friendly=_FRIENDLY.get(normalized, fallback),

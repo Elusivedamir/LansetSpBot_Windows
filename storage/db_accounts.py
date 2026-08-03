@@ -537,6 +537,72 @@ class AccountRepositoryMixin(_MixinHost):
         except Exception as exc:
             raise DatabaseError(f"Failed to save account settings: {exc}") from exc
 
+    def set_account_settings_with_selected_projection(
+        self, account_id: object, values: dict[str, Any]
+    ) -> None:
+        """Atomically update account settings and the selected projection."""
+
+        owner = _positive_account_id(account_id)
+        if not isinstance(values, dict):
+            raise DatabaseError("Account settings must be an object")
+        secret_keys = sorted(
+            str(key)
+            for key in values
+            if str(key) in SECRET_ACCOUNT_SETTING_KEYS
+        )
+        if secret_keys:
+            raise DatabaseError(
+                "Secret account settings must be stored in SecretStore: "
+                + ", ".join(secret_keys)
+            )
+        normalized = {
+            str(key): None if value is None else str(value)
+            for key, value in values.items()
+        }
+        try:
+            with self.get_connection() as conn:
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
+                if self._account_row(conn, owner) is None:
+                    raise DatabaseError("Telegram account does not exist")
+                for key, value in normalized.items():
+                    conn.execute(
+                        """INSERT INTO account_settings(
+                               account_id, key, value, updated_at)
+                           VALUES(?, ?, ?, CURRENT_TIMESTAMP)
+                           ON CONFLICT(account_id, key) DO UPDATE SET
+                               value=excluded.value,
+                               updated_at=CURRENT_TIMESTAMP""",
+                        (owner, key, value),
+                    )
+
+                selected_row = conn.execute(
+                    "SELECT value FROM settings "
+                    "WHERE key='ui.selected_account_id'"
+                ).fetchone()
+                try:
+                    selected_account_id = (
+                        int(selected_row[0] or 0) if selected_row else 0
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    selected_account_id = 0
+                if selected_account_id == owner:
+                    for key, value in normalized.items():
+                        conn.execute(
+                            """INSERT INTO settings(key, value, updated_at)
+                               VALUES(?, ?, CURRENT_TIMESTAMP)
+                               ON CONFLICT(key) DO UPDATE SET
+                                   value=excluded.value,
+                                   updated_at=CURRENT_TIMESTAMP""",
+                            (key, value),
+                        )
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError(
+                f"Failed to save account settings atomically: {exc}"
+            ) from exc
+
     def replace_account_settings(
         self, account_id: object, values: dict[str, Any]
     ) -> None:

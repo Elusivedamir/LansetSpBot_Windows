@@ -25,7 +25,12 @@ from core.openai_settings import (
     CommentGenerationSettings,
     normalize_comment_source,
 )
-from services.openai_comment_service import OpenAICommentError, extract_post_text
+from services.openai_comment_service import (
+    OUTPUT_VALIDATION_ERROR_CODES,
+    OpenAICommentError,
+    extract_post_text,
+    validate_generated_comment,
+)
 from workers.comment_slot.decisions import (
     DeferredCommentDisposition,
     deferred_comment_disposition,
@@ -1031,14 +1036,19 @@ class CommentSlotRunner:
         state = self.s
         code = str(getattr(exc, "code", "openai_error") or "openai_error")
         settings = cast(CommentGenerationSettings, state.generation_settings)
+        draft_status = (
+            "validation_failed"
+            if code in OUTPUT_VALIDATION_ERROR_CODES
+            else "generation_failed"
+        )
         self._save_generated_draft(
             generated_text=None,
-            status="generation_failed",
+            status=draft_status,
             model=settings.model,
             error_code=code,
             error_message=str(exc),
         )
-        state.generated_draft_status = "generation_failed"
+        state.generated_draft_status = draft_status
         self._safe_log(
             "WARNING",
             "OpenAI generation_failed: "
@@ -1083,12 +1093,49 @@ class CommentSlotRunner:
         return False
 
     def _validate_selected_text(self) -> bool:
-        selected = self.s.selected
+        state = self.s
+        selected = state.selected
         if not selected or len(selected) > 4096:
             raise NonRetryableTelegramError(
                 "Comment text is empty or exceeds Telegram's 4096-character limit",
                 code="message_too_long",
             )
+        if (
+            state.comment_source == SOURCE_OPENAI
+            and state.generated_draft_id is not None
+        ):
+            settings = cast(CommentGenerationSettings, state.generation_settings)
+            try:
+                state.selected = validate_generated_comment(
+                    selected,
+                    max_words=settings.max_words,
+                )
+            except OpenAICommentError as exc:
+                updater = getattr(
+                    self.worker_db,
+                    "mark_generated_comment_draft_status",
+                    None,
+                )
+                if callable(updater):
+                    updater(
+                        state.generated_draft_id,
+                        account_id=state.campaign_account_id,
+                        status="validation_failed",
+                        error_code=str(
+                            getattr(exc, "code", "openai_output_invalid")
+                        ),
+                        error_message=str(exc),
+                    )
+                state.generated_draft_status = "validation_failed"
+                raise NonRetryableTelegramError(
+                    "OpenAI output failed local validation",
+                    code="openai_output_invalid",
+                    details={
+                        "validation_code": str(
+                            getattr(exc, "code", "openai_output_invalid")
+                        )
+                    },
+                ) from exc
         return True
 
     async def _send_selected_comment(self) -> None:
@@ -1106,6 +1153,8 @@ class CommentSlotRunner:
             self.suspend_cancelled_slot(state.final_message)
             state.slot_deferred = True
             return
+        # Final local boundary before the mutating Telegram RPC.
+        self._validate_selected_text()
         self._mark_generated_draft_sending()
         state.phase = CommentSlotPhase.SEND_STARTED
         await self._dispatch_comment()

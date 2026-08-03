@@ -173,7 +173,7 @@ def test_check_runtime_without_worker_preserves_stopped_state(
     assert account["runtime_state"] == "stopped"
 
 
-def test_check_runtime_starts_worker_and_forwards_payload_and_timeout(
+def test_check_runtime_starts_worker_without_resuming_account(
     tmp_path: Path,
 ) -> None:
     worker = _RuntimeWorker(
@@ -190,18 +190,18 @@ def test_check_runtime_starts_worker_and_forwards_payload_and_timeout(
     assert result == {"account_id": 204, "authorized": True}
     assert api.start_queue_calls == 1
     assert worker.running is True
-    assert worker.cleared_scopes == [("account", 204)]
+    assert worker.cleared_scopes == []
     assert worker.utilities == [
         ("check_account_runtime", {"account_id": 204})
     ]
     assert worker.future.timeouts == [1.0]
     account = api.database.get_telegram_account(204)
     assert account is not None
-    assert account["stopped"] is False
-    assert account["runtime_state"] == "connected"
+    assert account["stopped"] is True
+    assert account["runtime_state"] == "stopped"
 
 
-def test_check_runtime_propagates_future_error_after_resume(
+def test_check_runtime_failure_preserves_stopped_account(
     tmp_path: Path,
 ) -> None:
     worker = _RuntimeWorker(
@@ -215,15 +215,15 @@ def test_check_runtime_propagates_future_error_after_resume(
             205, timeout_seconds=2.5
         )
 
-    assert worker.cleared_scopes == [("account", 205)]
+    assert worker.cleared_scopes == []
     assert worker.utilities == [
         ("check_account_runtime", {"account_id": 205})
     ]
     assert worker.future.timeouts == [2.5]
     account = api.database.get_telegram_account(205)
     assert account is not None
-    assert account["stopped"] is False
-    assert account["runtime_state"] == "connected"
+    assert account["stopped"] is True
+    assert account["runtime_state"] == "stopped"
 
 
 def test_previous_account_imports_forward_source_target_and_mode(

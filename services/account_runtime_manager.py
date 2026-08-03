@@ -82,7 +82,12 @@ class TelegramAccountRuntimeManager:
             )
         return column_account or payload_account
 
-    async def _create_runtime(self, account_id: int) -> TelegramAccountRuntime:
+    async def _create_runtime(
+        self,
+        account_id: int,
+        *,
+        publish_runtime_state: bool = True,
+    ) -> TelegramAccountRuntime:
         account = self.worker_database.get_telegram_account(account_id)
         if not account:
             raise NonRetryableTelegramError(
@@ -126,7 +131,8 @@ class TelegramAccountRuntimeManager:
             last_used=time.monotonic(),
             reservations=0,
         )
-        self.worker_database.set_account_runtime_state(account_id, "connected")
+        if publish_runtime_state:
+            self.worker_database.set_account_runtime_state(account_id, "connected")
         log.info("Created isolated Telegram runtime for account %s", account_id)
         return runtime
 
@@ -185,7 +191,12 @@ class TelegramAccountRuntimeManager:
             victim.account_id,
         )
 
-    async def get_runtime(self, account_id: int) -> TelegramAccountRuntime:
+    async def get_runtime(
+        self,
+        account_id: int,
+        *,
+        publish_runtime_state: bool = True,
+    ) -> TelegramAccountRuntime:
         owner = int(account_id)
         if owner <= 0:
             raise NonRetryableTelegramError(
@@ -235,7 +246,10 @@ class TelegramAccountRuntimeManager:
                     return self._reserve_runtime(existing)
                 if len(self._runtimes) >= self.MAX_ACCOUNTS:
                     await self._evict_oldest_idle_runtime()
-                runtime = await self._create_runtime(owner)
+                runtime = await self._create_runtime(
+                    owner,
+                    publish_runtime_state=publish_runtime_state,
+                )
                 self._runtimes[owner] = runtime
                 return self._reserve_runtime(runtime)
 
@@ -375,7 +389,12 @@ class TelegramAccountRuntimeManager:
 
     async def check_runtime(self, account_id: int) -> dict[str, Any]:
         owner = int(account_id)
-        runtime = await self.get_runtime(owner)
+        # Diagnostics may connect a client, but they must not publish a durable
+        # state transition that authorizes new work for a stopped account.
+        runtime = await self.get_runtime(
+            owner,
+            publish_runtime_state=False,
+        )
         handler = runtime.handlers.get("telegram_health")
         if handler is None:
             raise NonRetryableTelegramError(

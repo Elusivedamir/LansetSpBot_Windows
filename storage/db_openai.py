@@ -20,6 +20,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 _ALLOWED_DRAFT_STATUSES = {
     "generated",
     "generation_failed",
+    "validation_failed",
     "sending",
     "sent",
     "failed",

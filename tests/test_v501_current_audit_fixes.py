@@ -5,11 +5,13 @@ import json
 import random
 from datetime import timedelta
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
 from core.campaign_schedule import to_db_time, utc_now
 from core.exceptions import NonRetryableTelegramError
+from services.account_runtime_manager import TelegramAccountRuntimeManager
 from services.multiaccount_scheduler import AccountCampaignDatabaseView
 from storage.database import Database
 from workers.handler_registry import create_worker_handlers
@@ -128,3 +130,41 @@ def test_unconfigured_handler_registry_exposes_health_handler() -> None:
     with pytest.raises(NonRetryableTelegramError) as error:
         asyncio.run(handlers["telegram_health"]({"id": 0, "payload": {}}))
     assert error.value.code == "telegram_not_configured"
+
+
+@pytest.mark.asyncio
+async def test_runtime_health_check_does_not_publish_connected_state() -> None:
+    worker_database = MagicMock()
+    worker_database.get_telegram_account.return_value = {
+        "telegram_account_id": 5201,
+        "authorized": True,
+        "stopped": True,
+        "runtime_state": "stopped",
+    }
+
+    async def telegram_health(task):
+        assert task["account_id"] == 5201
+        return {
+            "account_id": 5201,
+            "authorized": True,
+            "connected": True,
+        }
+
+    manager = TelegramAccountRuntimeManager(
+        SimpleNamespace(queue_worker=SimpleNamespace()),
+        worker_database=worker_database,
+        create_worker_handlers=lambda _context, **_factories: (
+            {"telegram_health": telegram_health},
+            None,
+        ),
+        TelegramService=object,
+        ImportService=object,
+        LinkedChatService=object,
+        CommentService=object,
+    )
+
+    result = await manager.check_runtime(5201)
+
+    assert result["connected"] is True
+    worker_database.set_account_runtime_state.assert_not_called()
+    await manager.close()

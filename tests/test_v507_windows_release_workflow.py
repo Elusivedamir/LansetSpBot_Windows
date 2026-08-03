@@ -3,6 +3,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "windows-release-proof.yml"
+SIGNED_WORKFLOW = (
+    ROOT / ".github" / "workflows" / "windows-release-sign-attest.yml"
+)
 
 
 def test_windows_release_proof_workflow_is_present_and_manual() -> None:
@@ -62,3 +65,17 @@ def test_manifest_failure_keeps_expected_and_actual_evidence() -> None:
     assert "manifest-regeneration.txt" in workflow
     assert "git checkout -- SHA256SUMS.txt" not in workflow
     assert 'tools/generate_manifest.py `\n              --output "dist\\ci-proof\\SHA256SUMS.actual.txt"' in workflow
+
+
+def test_signed_release_is_gated_by_exact_sha_dependency_audit() -> None:
+    workflow = SIGNED_WORKFLOW.read_text(encoding="utf-8")
+    assert "dependency-audit:" in workflow
+    assert "needs: dependency-audit" in workflow
+    assert "requirements-runtime.lock" in workflow
+    assert "requirements-openai.lock" in workflow
+    assert "requirements-build-windows-x64.lock" in workflow
+    assert "requirements-dev-windows-x64.lock" in workflow
+    assert "enforce_dependency_audit_policy.py dependency-audit.json" in workflow
+    assert "release-dependency-audit-${{ github.sha }}" in workflow
+    assert "Download exact-SHA dependency audit evidence" in workflow
+    assert "dist/ci-proof/dependency-audit" in workflow

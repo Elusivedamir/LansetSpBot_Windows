@@ -3,19 +3,53 @@ from __future__ import annotations
 import asyncio
 import html
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 from core.openai_settings import CommentGenerationSettings
 
-_URL_RE = re.compile(r"(?i)(?:https?://|www\.|t\.me/|telegram\.me/)\S+")
+_EXPLICIT_LINK_RE = re.compile(
+    r"(?iu)(?:https?://|www\.|t\.me/|telegram\.me/|tg://)\S+"
+)
+_EMAIL_RE = re.compile(
+    r"(?iu)(?<![\w.+-])[\w.!#$%&'*+/=?^`{|}~-]+@"
+    r"(?:[\w-]+\.)+(?:xn--[a-z0-9-]{2,59}|[^\W\d_]{2,63})\b"
+)
+_BARE_DOMAIN_RE = re.compile(
+    r"(?iu)(?<![\w@.-])"
+    r"(?:[^\W_](?:[\w-]{0,61}[^\W_])?\.)+"
+    r"(?:xn--[a-z0-9-]{2,59}|[^\W\d_]{2,63})"
+    r"(?::\d{2,5})?(?:/[^\s]*)?"
+)
+_TELEGRAM_USERNAME_RE = re.compile(r"(?<![\w@])@[A-Za-z0-9_]{5,32}\b")
+_HASHTAG_RE = re.compile(r"(?u)(?<!\w)#[^\W_][\w]{0,63}\b")
+_INVISIBLE_FORMAT_CHARS = frozenset(
+    "\u00ad\u200b\u2060\ufeff"
+    "\u202a\u202b\u202c\u202d\u202e"
+    "\u2066\u2067\u2068\u2069"
+)
+_DOT_TRANSLATION = str.maketrans({"。": ".", "．": ".", "｡": "."})
 _PREFIX_RE = re.compile(r"(?i)^\s*(?:готовый\s+)?комментарий\s*[:\-–—]\s*")
 _FORBIDDEN_META = (
     "как искусственный интеллект",
     "важно отметить",
     "в заключение",
     "стоит подчеркнуть",
+)
+
+OUTPUT_VALIDATION_ERROR_CODES = frozenset(
+    {
+        "empty_response",
+        "forbidden_link",
+        "forbidden_mention",
+        "forbidden_hashtag",
+        "forbidden_obfuscation",
+        "service_explanation",
+        "too_many_words",
+        "message_too_long",
+    }
 )
 
 # Headroom reserved for hidden reasoning tokens on reasoning-capable models.
@@ -101,14 +135,34 @@ def prepare_post_message(post_text: str, reference_comment: str = "") -> str:
 
 
 def validate_generated_comment(text: str, *, max_words: int) -> str:
-    clean = str(text or "").replace("\x00", "").strip()
+    raw = str(text or "").replace("\x00", "")
+    if any(character in _INVISIBLE_FORMAT_CHARS for character in raw):
+        raise OpenAICommentError(
+            "Сгенерированный комментарий содержит скрытые символы",
+            code="forbidden_obfuscation",
+        )
+    clean = unicodedata.normalize("NFKC", raw).translate(_DOT_TRANSLATION).strip()
     clean = _PREFIX_RE.sub("", clean).strip().strip('"“”«»').strip()
     if not clean:
         raise OpenAICommentError("OpenAI вернул пустой ответ", code="empty_response")
-    if _URL_RE.search(clean):
+    if (
+        _EXPLICIT_LINK_RE.search(clean)
+        or _EMAIL_RE.search(clean)
+        or _BARE_DOMAIN_RE.search(clean)
+    ):
         raise OpenAICommentError(
-            "Сгенерированный комментарий содержит ссылку",
+            "Сгенерированный комментарий содержит ссылку, домен или e-mail",
             code="forbidden_link",
+        )
+    if _TELEGRAM_USERNAME_RE.search(clean):
+        raise OpenAICommentError(
+            "Сгенерированный комментарий содержит Telegram username",
+            code="forbidden_mention",
+        )
+    if _HASHTAG_RE.search(clean):
+        raise OpenAICommentError(
+            "Сгенерированный комментарий содержит хэштег",
+            code="forbidden_hashtag",
         )
     lowered = clean.casefold()
     if any(phrase in lowered for phrase in _FORBIDDEN_META):

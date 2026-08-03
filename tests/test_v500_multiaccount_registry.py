@@ -70,6 +70,45 @@ def test_account_settings_are_isolated(tmp_path: Path) -> None:
     assert db.for_account(3001).get_setting("telegram.account_id") == "3001"
 
 
+def test_selected_projection_failure_rolls_back_account_settings(
+    tmp_path: Path,
+) -> None:
+    db = _database(tmp_path)
+    db.register_telegram_account(
+        telegram_account_id=3003,
+        session_name="account_3003",
+        display_name="3003",
+    )
+    db.select_telegram_account(3003)
+    db.set_account_settings(3003, {"telegram.proxy_enabled": "0"})
+    db.set_settings({"telegram.proxy_enabled": "0"})
+    with db.get_connection() as conn:
+        conn.execute(
+            """
+            CREATE TRIGGER reject_selected_proxy_projection
+            BEFORE UPDATE ON settings
+            WHEN NEW.key='telegram.proxy_enabled' AND NEW.value='1'
+            BEGIN
+                SELECT RAISE(ABORT, 'injected selected projection failure');
+            END
+            """
+        )
+
+    with pytest.raises(
+        DatabaseError,
+        match="injected selected projection failure",
+    ):
+        db.set_account_settings_with_selected_projection(
+            3003,
+            {"telegram.proxy_enabled": "1"},
+        )
+
+    assert db.get_account_setting(
+        3003, "telegram.proxy_enabled"
+    ) == "0"
+    assert db.get_setting("telegram.proxy_enabled") == "0"
+
+
 def test_tasks_store_authoritative_account_column(tmp_path: Path) -> None:
     db = _database(tmp_path)
     db.register_telegram_account(
