@@ -259,7 +259,11 @@ def test_save_account_settings_restores_secrets_when_public_write_fails(
     def fail_public_write(_account_id: int, _values: dict[str, object]) -> None:
         raise RuntimeError("database write failed")
 
-    monkeypatch.setattr(api.database, "set_account_settings", fail_public_write)
+    monkeypatch.setattr(
+        api.database,
+        "set_account_settings_with_selected_projection",
+        fail_public_write,
+    )
 
     with pytest.raises(RuntimeError, match="database write failed"):
         api.save_account_settings(

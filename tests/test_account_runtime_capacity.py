@@ -38,7 +38,11 @@ def _manager_with_fake_runtimes(monkeypatch, *, capacity: int = 2):
     manager.MAX_ACCOUNTS = capacity
     cleaned: list[int] = []
 
-    async def create(account_id: int) -> TelegramAccountRuntime:
+    async def create(
+        account_id: int,
+        *,
+        publish_runtime_state: bool = True,
+    ) -> TelegramAccountRuntime:
         async def cleanup() -> None:
             cleaned.append(account_id)
 
