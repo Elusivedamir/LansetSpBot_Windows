@@ -27,6 +27,7 @@ from .views.channels_view import ChannelsView
 from .views.commenting_view import CommentingView
 from .views.links_view import LinksView
 from .views.instructions_view import InstructionsView
+from .views.target_audience_view import TargetAudienceView
 
 
 class MainWindow(QMainWindow):
@@ -35,6 +36,7 @@ class MainWindow(QMainWindow):
         "channels.svg",
         "links.svg",
         "comments.svg",
+        "target.svg",
         "instructions.svg",
     )
     SIDEBAR_MAX_WIDTH = 360
@@ -116,6 +118,7 @@ class MainWindow(QMainWindow):
             "Каналы",
             "Связки",
             "Комментирование",
+            "Режим поиска ЦА",
             "Инструкция",
         ]
         self._menu_compact = [
@@ -123,6 +126,7 @@ class MainWindow(QMainWindow):
             "Каналы",
             "Связки",
             "Комменты",
+            "Поиск ЦА",
             "Инструкция",
         ]
         for label, icon_name in zip(self._menu_full, self.MENU_ICONS):
@@ -153,6 +157,7 @@ class MainWindow(QMainWindow):
         self.channels_view = ChannelsView(adapter, queue_worker)
         self.links_view = LinksView(adapter)
         self.commenting_view = CommentingView(adapter)
+        self.target_audience_view = TargetAudienceView()
         self.instructions_view = InstructionsView(adapter)
         self.account_view.account_changed.connect(
             self.commenting_view.handle_account_changed
@@ -162,6 +167,7 @@ class MainWindow(QMainWindow):
             self.channels_view,
             self.links_view,
             self.commenting_view,
+            self.target_audience_view,
             self.instructions_view,
         ):
             scroll = QScrollArea()
@@ -348,6 +354,7 @@ class MainWindow(QMainWindow):
             self.channels_view,
             self.links_view,
             self.commenting_view,
+            self.target_audience_view,
             self.instructions_view,
         ):
             setter = getattr(view, "set_compact_mode", None)
@@ -369,6 +376,7 @@ class MainWindow(QMainWindow):
             self.channels_view,
             self.links_view,
             self.commenting_view,
+            self.target_audience_view,
             self.instructions_view,
         )
         for page_index, view in enumerate(page_views):
