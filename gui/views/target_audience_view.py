@@ -22,6 +22,7 @@ class TargetAudienceView(QWidget):
         self._compact_mode = False
 
         layout = QVBoxLayout(self)
+        self._root_layout = layout
         layout.setContentsMargins(32, 28, 32, 32)
         layout.setSpacing(18)
 
@@ -97,4 +98,4 @@ class TargetAudienceView(QWidget):
     def set_compact_mode(self, compact: bool) -> None:
         self._compact_mode = bool(compact)
         margins = 18 if self._compact_mode else 32
-        self.layout().setContentsMargins(margins, 22, margins, 24)
+        self._root_layout.setContentsMargins(margins, 22, margins, 24)
