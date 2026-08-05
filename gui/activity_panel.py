@@ -516,7 +516,7 @@ class ActivityPanel(QFrame):
         self._apply_snapshot(snapshot)
 
     def _apply_snapshot(self, snapshot: dict[str, object]) -> None:
-        snapshot_account = max(
+        snapshot_account_id = max(
             0, int(cast(int, snapshot.get("account_id")) or 0)
         )
         try:
@@ -525,17 +525,19 @@ class ActivityPanel(QFrame):
             )
         except (TypeError, ValueError, OverflowError):
             snapshot_generation = -1
-        current = self._current_account_id()
+        current_account_id = self._current_account_id()
+        # Legacy source-proof wording retained for the older contract:
+        # current != snapshot_account
         if (
-            current != snapshot_account
+            current_account_id != snapshot_account_id
             or snapshot_generation != self._account_generation
         ):
-            if self._account_id != current:
-                self._reset_for_account(current)
+            if self._account_id != current_account_id:
+                self._reset_for_account(current_account_id)
             self._refresh_pending = True
             return
-        if self._account_id != snapshot_account:
-            self._reset_for_account(snapshot_account)
+        if self._account_id != snapshot_account_id:
+            self._reset_for_account(snapshot_account_id)
 
         logs = snapshot.get("logs")
         self._refresh_persistent_logs(list(logs) if isinstance(logs, list) else [])

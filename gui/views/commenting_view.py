@@ -92,8 +92,15 @@ class CommentingView(QWidget):
         self.comment_source_combo.addItem("OpenAI", SOURCE_OPENAI)
         self.comment_source_combo.view().setStyleSheet(
             "QAbstractItemView {"
-            "background: #E6EBF1; color: #17202A;"
+            "background: #E6EBF1; color: #17202A; outline: 0;"
             "selection-background-color: #596779; selection-color: #FFFFFF;"
+            "}"
+            "QAbstractItemView::item {"
+            "background: #E6EBF1; color: #17202A;"
+            "min-height: 28px; padding: 4px 8px;"
+            "}"
+            "QAbstractItemView::item:selected {"
+            "background: #596779; color: #FFFFFF;"
             "}"
         )
         self.comment_source_combo.currentIndexChanged.connect(

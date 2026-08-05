@@ -80,7 +80,12 @@ async def test_links_preparation_joins_missing_discussions_with_15_25_second_gap
     linked.access = {20: False, 30: False}
     telegram = _Telegram()
     handlers, _cleanup, _comments, worker = _handlers(
-        monkeypatch, db, telegram, linked=linked
+        monkeypatch,
+        db,
+        telegram,
+        linked=linked,
+        link_check_delay_min=12,
+        link_check_delay_max=20,
     )
 
     await handlers["link_channels"]({"id": 303, "payload": {}})

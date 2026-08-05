@@ -37,7 +37,7 @@ async def test_link_handler_mirrors_major_steps_to_persistent_activity(monkeypat
 
     messages = [str(call.args[1]) for call in database.insert_log.call_args_list]
     assert any(
-        "Проверка новых, изменившихся и устаревших связок запущена" in message
+        "Проверка новых связок запущена" in message
         for message in messages
     )
     assert any("Пауза между каналами:" in message for message in messages)
