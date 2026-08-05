@@ -90,18 +90,29 @@ class CommentingView(QWidget):
         self.comment_source_combo.setObjectName("commentSourceCombo")
         self.comment_source_combo.addItem("Готовые тексты", SOURCE_PREWRITTEN)
         self.comment_source_combo.addItem("OpenAI", SOURCE_OPENAI)
-        self.comment_source_combo.view().setStyleSheet(
+        source_popup = self.comment_source_combo.view()
+        source_popup.setStyleSheet(
             "QAbstractItemView {"
-            "background: #E6EBF1; color: #17202A; outline: 0;"
-            "selection-background-color: #596779; selection-color: #FFFFFF;"
+            "background: qlineargradient("
+            "x1: 0, y1: 0, x2: 0, y2: 1, "
+            "stop: 0 #FFFFFF, stop: 1 #7D8B9B"
+            ");"
+            "color: #17202A; outline: 0;"
+            "selection-background-color: #34465A; selection-color: #FFFFFF;"
             "}"
             "QAbstractItemView::item {"
-            "background: #E6EBF1; color: #17202A;"
+            "background: transparent; color: #17202A;"
             "min-height: 28px; padding: 4px 8px;"
             "}"
             "QAbstractItemView::item:selected {"
-            "background: #596779; color: #FFFFFF;"
+            "background: #34465A; color: #FFFFFF;"
             "}"
+        )
+        source_popup.viewport().setStyleSheet(
+            "background: qlineargradient("
+            "x1: 0, y1: 0, x2: 0, y2: 1, "
+            "stop: 0 #FFFFFF, stop: 1 #7D8B9B"
+            ");"
         )
         self.comment_source_combo.currentIndexChanged.connect(
             self._on_comment_source_changed
