@@ -19,6 +19,7 @@ from core.openai_settings import (
 from services.import_service import ImportValidationError
 from services.openai_comment_service import OpenAICommentService
 from workers.handlers import (
+    create_audience_parser_handler,
     create_comment_slot_handler,
     create_join_slot_handler,
     create_manual_comment_handler,
@@ -97,6 +98,7 @@ def create_worker_handlers(
             "join_saved_slot": secret_store_unavailable,
             "openai_test": secret_store_unavailable,
             "telegram_health": secret_store_unavailable,
+            "parse_audience": secret_store_unavailable,
         }, None
 
     def openai_api_key_provider() -> str | None:
@@ -151,6 +153,7 @@ def create_worker_handlers(
             "join_saved_slot": telegram_not_configured,
             "openai_test": openai_test,
             "telegram_health": telegram_not_configured,
+            "parse_audience": telegram_not_configured,
         }, None
 
     limiter = RateLimiter(self.config.rate_limit)
@@ -445,6 +448,14 @@ def create_worker_handlers(
         """Backward-compatible alias for the unified one-pass synchronization."""
         await sync_channels(task)
 
+    parse_audience = create_audience_parser_handler(
+        queue_worker=self.queue_worker,
+        worker_db=worker_db,
+        telegram=telegram,
+        set_runtime=set_runtime,
+        publish_activity=publish_activity,
+    )
+
     join_saved_slot = create_join_slot_handler(
         as_int=self._as_int,
         queue_worker=self.queue_worker,
@@ -529,5 +540,6 @@ def create_worker_handlers(
         "join_saved_slot": join_saved_slot,
         "openai_test": openai_test,
         "telegram_health": telegram_health,
+        "parse_audience": parse_audience,
     }
     return handlers, telegram.disconnect

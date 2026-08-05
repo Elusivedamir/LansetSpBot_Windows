@@ -1,3 +1,4 @@
+from services.telegram.audience import TelegramAudienceMixin
 from services.telegram.dialogs import TelegramDialogsMixin
 from services.telegram.membership import TelegramMembershipMixin
 from services.telegram.messaging import TelegramMessagingMixin
@@ -7,6 +8,7 @@ from services.telegram.transport import TelegramTransportMixin
 
 __all__ = [
     "LatestPostResult",
+    "TelegramAudienceMixin",
     "TelegramDialogsMixin",
     "TelegramMembershipMixin",
     "TelegramMessagingMixin",

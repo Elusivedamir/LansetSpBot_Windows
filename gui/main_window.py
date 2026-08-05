@@ -26,6 +26,7 @@ from .views.account_view import AccountView
 from .views.channels_view import ChannelsView
 from .views.commenting_view import CommentingView
 from .views.links_view import LinksView
+from .views.audience_parser_view import AudienceParserView
 from .views.instructions_view import InstructionsView
 from .views.target_audience_view import TargetAudienceView
 
@@ -36,6 +37,7 @@ class MainWindow(QMainWindow):
         "channels.svg",
         "links.svg",
         "comments.svg",
+        "audience.svg",
         "target.svg",
         "instructions.svg",
     )
@@ -118,6 +120,7 @@ class MainWindow(QMainWindow):
             "Каналы",
             "Связки",
             "Комментирование",
+            "Парсинг аудитории",
             "Режим поиска ЦА",
             "Инструкция",
         ]
@@ -126,6 +129,7 @@ class MainWindow(QMainWindow):
             "Каналы",
             "Связки",
             "Комменты",
+            "Парсинг",
             "Поиск ЦА",
             "Инструкция",
         ]
@@ -157,6 +161,7 @@ class MainWindow(QMainWindow):
         self.channels_view = ChannelsView(adapter, queue_worker)
         self.links_view = LinksView(adapter)
         self.commenting_view = CommentingView(adapter)
+        self.audience_parser_view = AudienceParserView(adapter)
         self.target_audience_view = TargetAudienceView()
         self.instructions_view = InstructionsView(adapter)
         self.account_view.account_changed.connect(
@@ -167,6 +172,7 @@ class MainWindow(QMainWindow):
             self.channels_view,
             self.links_view,
             self.commenting_view,
+            self.audience_parser_view,
             self.target_audience_view,
             self.instructions_view,
         ):
@@ -185,6 +191,9 @@ class MainWindow(QMainWindow):
         )
         self.account_view.account_changed.connect(
             self.links_view.handle_account_changed
+        )
+        self.account_view.account_changed.connect(
+            self.audience_parser_view.handle_account_changed
         )
         self.account_view.account_changed.connect(
             self.activity_panel.handle_account_changed
@@ -267,6 +276,7 @@ class MainWindow(QMainWindow):
             self.commenting_view.refresh_timer,
             self.commenting_view.countdown_timer,
             self.commenting_view.limit_save_timer,
+            self.audience_parser_view.watcher.timer,
         )
 
     def suspend_runtime_updates(self) -> None:
@@ -354,6 +364,7 @@ class MainWindow(QMainWindow):
             self.channels_view,
             self.links_view,
             self.commenting_view,
+            self.audience_parser_view,
             self.target_audience_view,
             self.instructions_view,
         ):
@@ -376,6 +387,7 @@ class MainWindow(QMainWindow):
             self.channels_view,
             self.links_view,
             self.commenting_view,
+            self.audience_parser_view,
             self.target_audience_view,
             self.instructions_view,
         )

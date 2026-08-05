@@ -62,6 +62,7 @@ class ServiceAPI(
             "import",
             "sync_saved_dialogs",
             "join_saved_slot",
+            "parse_audience",
         }
     )
     ACCOUNT_BOUND_TASK_TYPES = frozenset(
@@ -73,6 +74,7 @@ class ServiceAPI(
             "comment",
             "sync_saved_dialogs",
             "join_saved_slot",
+            "parse_audience",
         }
     )
     NON_IDEMPOTENT_TASK_TYPES = frozenset(

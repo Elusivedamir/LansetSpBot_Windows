@@ -10,6 +10,7 @@ from services.paced_telegram_client import PacedTelegramClient
 from services.account_sessions import validate_session_name
 from services.telegram import (
     LatestPostResult,
+    TelegramAudienceMixin,
     TelegramDialogsMixin,
     TelegramMembershipMixin,
     TelegramMessagingMixin,
@@ -24,6 +25,7 @@ from services.telegram_session import TelegramSessionMixin
 class TelegramService(
     TelegramSessionMixin,
     TelegramTransportMixin,
+    TelegramAudienceMixin,
     TelegramDialogsMixin,
     TelegramMembershipMixin,
     TelegramMessagingMixin,

@@ -13,7 +13,7 @@ def _app():
     return QApplication.instance() or QApplication([])
 
 
-def test_main_gui_has_six_user_pages(monkeypatch, tmp_path):
+def test_main_gui_has_seven_user_pages(monkeypatch, tmp_path):
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "gui.db"))
     app = _app()
     config = Config()
@@ -24,10 +24,11 @@ def test_main_gui_has_six_user_pages(monkeypatch, tmp_path):
         "Каналы",
         "Связки",
         "Комментирование",
+        "Парсинг аудитории",
         "Режим поиска ЦА",
         "Инструкция",
     ]
-    assert window.stack.count() == 6
+    assert window.stack.count() == 7
     window._tray.hide()
     window.deleteLater()
     app.processEvents()

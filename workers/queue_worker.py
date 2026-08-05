@@ -92,7 +92,14 @@ class QueueWorker(QThread):
     """Qt-native queue worker with thread-owned DB and async services."""
 
     IDEMPOTENT_TASK_TYPES = frozenset(
-        {"noop", "sync_channels", "sync_saved_dialogs", "link_channels", "import"}
+        {
+            "noop",
+            "sync_channels",
+            "sync_saved_dialogs",
+            "link_channels",
+            "import",
+            "parse_audience",
+        }
     )
     DIRECT_ACCOUNT_BOUND_TASK_TYPES = frozenset(
         {
@@ -102,6 +109,7 @@ class QueueWorker(QThread):
             "auto_comment",
             "direct_message",
             "comment",
+            "parse_audience",
         }
     )
     ACCOUNT_RPC_TASK_TYPES = frozenset(
@@ -114,6 +122,7 @@ class QueueWorker(QThread):
             "direct_message",
             "comment",
             "join_saved_slot",
+            "parse_audience",
         }
     )
 

@@ -11,6 +11,7 @@ from typing import Any, cast
 from PySide6.QtCore import QTimer, Slot
 
 from core.account_state import has_pending_account_state
+from services.audience_parser import validate_audience_task_payload
 
 log = logging.getLogger(__name__)
 
@@ -153,6 +154,8 @@ class TaskQueueAPIMixin(_MixinHost):
             single = payload.get("kind") is not None and payload.get("path") is not None
             if not (isinstance(files, dict) and files) and not single:
                 raise ValueError("import requires non-empty files object or kind/path")
+        elif task_type == "parse_audience":
+            payload = validate_audience_task_payload(payload)
         if task_type in self.ACCOUNT_BOUND_TASK_TYPES:
             try:
                 requested = int(payload.get("account_id") or 0)
@@ -207,6 +210,14 @@ class TaskQueueAPIMixin(_MixinHost):
                 task_id,
             )
             return False
+        if task and str(task.get("type") or "") == "parse_audience":
+            # Останавливаем только этот парсинг; другие аккаунты продолжают работу.
+            return bool(
+                self._cancel_scopes_and_mutate(
+                    (("task", int(task_id)),),
+                    lambda: self.database.cancel_task(task_id),
+                )
+            )
         return bool(self.database.cancel_task(task_id))
 
     def get_active_link_task(
