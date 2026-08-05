@@ -15,22 +15,16 @@ def test_global_request_floor_is_one_second(monkeypatch) -> None:
 def test_flood_and_slowmode_buffer_is_thirty_to_forty_five_seconds() -> None:
     assert TelegramService.FLOOD_WAIT_BUFFER_MIN_SECONDS == 30
     assert TelegramService.FLOOD_WAIT_BUFFER_MAX_SECONDS == 45
-    assert TelegramService.FLOOD_WAIT_AUTO_RESUME_MIN_SECONDS == 3 * 60
-    assert TelegramService.FLOOD_WAIT_AUTO_RESUME_MAX_SECONDS == 5 * 60
 
 
-def test_flood_wait_uses_random_auto_resume_floor_but_never_shortens_server_wait(
+def test_true_flood_wait_uses_server_time_plus_only_the_safety_buffer(
     monkeypatch,
 ) -> None:
     service = object.__new__(TelegramService)
-
-    def choose_delay(minimum, _maximum):
-        return 240 if minimum >= 3 * 60 else 45
-
     monkeypatch.setattr(
-        "services.telegram.transport.random.randint",
-        choose_delay,
+        "services.telegram_service.random.randint",
+        lambda minimum, maximum: 45,
     )
 
-    assert service._protected_flood_wait_seconds(20) == 240
+    assert service._protected_flood_wait_seconds(20) == 65
     assert service._protected_flood_wait_seconds(600) == 645

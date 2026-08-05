@@ -8,7 +8,7 @@ import pytest
 
 from core.account_restriction import (
     activate_account_restriction,
-    clear_account_restriction_after_spambot_confirmation,
+    clear_account_restriction_after_authoritative_check,
     get_account_restriction_state,
 )
 from core.campaign_schedule import generate_random_slots
@@ -69,7 +69,7 @@ def test_restrictions_are_independent_across_sequential_and_multi_accounts(
     assert get_account_restriction_state(db, account_id=101)["active"] is True
     assert get_account_restriction_state(db, account_id=202)["active"] is True
 
-    clear_account_restriction_after_spambot_confirmation(db, account_id=202)
+    clear_account_restriction_after_authoritative_check(db, account_id=202)
     assert get_account_restriction_state(db, account_id=202)["active"] is False
     assert get_account_restriction_state(db, account_id=101)["active"] is True
 

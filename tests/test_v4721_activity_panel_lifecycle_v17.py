@@ -112,7 +112,7 @@ def test_activity_refresh_still_applies_result_while_panel_is_alive():
     _drain_events(app)
 
     assert panel._refresh_job is None
-    assert panel.spambot_button.isEnabled()
+    assert not hasattr(panel, "spambot_button")
     assert "RESTRICTED" in panel.state_label.text()
 
     panel.deleteLater()

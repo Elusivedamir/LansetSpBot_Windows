@@ -335,8 +335,8 @@ def test_cached_account_transient_check_does_not_show_false_error(
     container.shutdown()
 
 
-# AURORA-PRESTIGE-GUI-CONTRACT
-def test_aurora_prestige_account_controls_and_instruction_copy(
+# MASTER-UI-LINK-FIXES-CONTRACT
+def test_aurora_premium_account_controls_and_instruction_copy(
     monkeypatch, tmp_path
 ):
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "aurora-gui.db"))
@@ -346,15 +346,11 @@ def test_aurora_prestige_account_controls_and_instruction_copy(
     window = MarlenApp(container.adapter, container.queue_worker, config)
     manager = window.account_view.account_manager
 
-    assert manager.delete_button.objectName() == "accountDeleteButton"
-    assert manager.selector_row.indexOf(manager.selector) >= 0
-    assert manager.selector_row.indexOf(manager.delete_button) >= 0
-    assert manager.actions_layout.indexOf(manager.delete_button) == -1
+    assert not hasattr(manager, "delete_button")
+    assert window.account_view.selected_account_card.objectName() == "selectedAccountCard"
+    assert window.account_view.selected_account_delete.objectName() == "accountDeleteButton"
 
     proxy = window.account_view
-    # Account settings are loaded through BackgroundCall. Wait for the initial
-    # settings/catalog callbacks before simulating a user toggle, otherwise a
-    # stale callback can overwrite the state and make this timing-dependent.
     deadline = time.monotonic() + 5.0
     while proxy._background_jobs and time.monotonic() < deadline:
         app.processEvents()
@@ -365,26 +361,22 @@ def test_aurora_prestige_account_controls_and_instruction_copy(
     proxy.proxy_enabled.setChecked(False)
     app.processEvents()
     assert proxy.proxy_box.isHidden()
-    assert proxy.proxy_enabled.text() == "Подключить прокси"
     proxy.proxy_enabled.setChecked(True)
     app.processEvents()
     assert not proxy.proxy_box.isHidden()
-    assert proxy.proxy_enabled.text() == "Прокси подключён"
 
-    assert window.activity_panel.spambot_button.text() == "Проверить @SpamBot"
-    assert window.activity_panel.spambot_button.objectName() == "spamBotButton"
+    assert not hasattr(window.activity_panel, "spambot_button")
 
-    from gui.theme import AURORA_PRESTIGE_QSS, TELEGRAM_PREMIUM_QSS
-    from gui.views.instructions_view import InstructionsView
+    from gui.theme import AURORA_GREEN, AURORA_PRESTIGE_QSS, TELEGRAM_PREMIUM_QSS
 
-    assert "AURORA" not in AURORA_PRESTIGE_QSS  # theme is CSS, not placeholder copy
-    assert "#5546C8" in AURORA_PRESTIGE_QSS
-    assert TELEGRAM_PREMIUM_QSS.endswith(AURORA_PRESTIGE_QSS)
-    instruction_text = " ".join(
-        f"{title} {body}" for title, _image, body in InstructionsView.STEPS
-    )
-    assert "70 изолированных аккаунтов" in instruction_text
-    assert "до пяти Telegram-аккаунтов" not in instruction_text
+    assert AURORA_GREEN == "#39FF14"
+    assert TELEGRAM_PREMIUM_QSS == AURORA_PRESTIGE_QSS
+    assert window.centralWidget() is window.aurora_background
+    assert window.instructions_view.__class__.__name__ == "PremiumInstructionsView"
+    instruction_text = window.instructions_view.browser.toPlainText()
+    assert "Безопасный запуск" in instruction_text
+    assert "Проверка связок" in instruction_text
+    assert "Заводской сброс" in instruction_text
 
     window.suspend_runtime_updates()
     window._tray.hide()

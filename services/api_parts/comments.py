@@ -75,7 +75,7 @@ class CommentCampaignAPIMixin(_MixinHost):
         if restriction.get("active"):
             raise ValueError(
                 "Отправки заблокированы после ограничения Telegram. "
-                "Проверьте аккаунт через @SpamBot в живом журнале."
+                "Проверьте состояние аккаунта в официальном приложении Telegram."
             )
         # Persist first, then read back the authoritative SQLite value.  This
         # guarantees that the campaign snapshot exactly matches the setting the
@@ -293,7 +293,7 @@ class CommentCampaignAPIMixin(_MixinHost):
     def resume_comment_campaign(self) -> bool:
         if get_account_restriction_state(self.database).get("active"):
             raise ValueError(
-                "Кампания не может быть продолжена до снятия ограничения через @SpamBot"
+                "Кампания не может быть продолжена до снятия ограничения Telegram"
             )
         campaign = self.database.get_active_comment_campaign()
         if not campaign or campaign.get("status") != "paused":

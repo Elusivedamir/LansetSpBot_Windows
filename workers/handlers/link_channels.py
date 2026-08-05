@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from workers.handlers.link_channels_flow import LinkChannelsRunner
+from workers.handlers.link_channels_hardened import HardenedLinkChannelsRunner
 
 
 def create_link_channels_handler(
@@ -16,10 +16,10 @@ def create_link_channels_handler(
     set_runtime: Any,
     publish_activity: Any,
 ):
-    """Return the ``link_channels`` queue handler bound to its collaborators."""
+    """Return the account-bound hardened ``link_channels`` queue handler."""
 
     async def link_channels(task: dict[str, Any]) -> None:
-        runner = LinkChannelsRunner(
+        runner = HardenedLinkChannelsRunner(
             owner=self,
             telegram=telegram,
             worker_db=worker_db,
