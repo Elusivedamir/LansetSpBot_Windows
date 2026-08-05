@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timezone
+from datetime import timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -300,7 +300,7 @@ def test_deferred_task_has_bounded_lifetime(tmp_path):
     assert (
         db.defer_task(
             task_id,
-            retry_at=utc_now(),
+            retry_at=utc_now() - timedelta(seconds=1),
             error="wait once",
             max_defer_count=1,
         )
@@ -310,7 +310,7 @@ def test_deferred_task_has_bounded_lifetime(tmp_path):
     assert (
         db.defer_task(
             task_id,
-            retry_at=utc_now(),
+            retry_at=utc_now() - timedelta(seconds=1),
             error="wait twice",
             max_defer_count=1,
         )
