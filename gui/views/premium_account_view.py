@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtWidgets import (
@@ -68,7 +68,12 @@ class PremiumAccountView(AccountView):
 
     def _install_collapsible_schedule(self) -> None:
         position = self.form_layout.indexOf(self.schedule_enabled)
-        row = self.form_layout.getItemPosition(position)[0] if position >= 0 else 0
+        row = 0
+        if position >= 0:
+            position_info = cast(
+                tuple[int, ...], self.form_layout.getItemPosition(position)
+            )
+            row = int(position_info[0])
         self.schedule_toggle = QPushButton()
         self.schedule_toggle.setObjectName("secondaryButton")
         self.schedule_toggle.setCheckable(True)

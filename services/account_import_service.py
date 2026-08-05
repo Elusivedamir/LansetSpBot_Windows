@@ -18,13 +18,19 @@ class AccountImportService:
 
     @staticmethod
     def _account_id(value: object, *, field: str) -> int:
+        if value is None:
+            raw_value: str | bytes | bytearray | int | float = 0
+        elif isinstance(value, (str, bytes, bytearray, int, float)):
+            raw_value = value
+        else:
+            raise DatabaseError(f"Некорректный {field}")
         try:
-            account_id = int(value or 0)
+            account_id = int(raw_value)
         except (TypeError, ValueError, OverflowError) as exc:
             raise DatabaseError(f"Некорректный {field}") from exc
         if account_id <= 0:
             raise DatabaseError(f"Не выбран {field}")
-        return account_id
+        return int(account_id)
 
     def import_comments(
         self,

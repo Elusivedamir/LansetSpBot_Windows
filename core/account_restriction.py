@@ -99,6 +99,15 @@ def activate_account_restriction(
     return dict(activator(**restriction_kwargs) or {})
 
 
+def clear_account_restriction_after_spambot_confirmation(
+    database: Any, *, account_id: Any = None
+) -> dict[str, Any]:
+    # Compatibility name used only after the operator confirms @SpamBot is clean.
+    return clear_account_restriction_after_authoritative_check(
+        database, account_id=account_id
+    )
+
+
 def clear_account_restriction_after_authoritative_check(
     database: Any, *, account_id: Any = None
 ) -> dict[str, Any]:

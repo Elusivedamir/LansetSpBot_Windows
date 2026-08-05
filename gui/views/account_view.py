@@ -181,6 +181,8 @@ class AccountView(QWidget):
         self.quiet_start.setDisplayFormat("HH:mm")
         self.quiet_end = QTimeEdit(QTime(7, 0))
         self.quiet_end.setDisplayFormat("HH:mm")
+        self.quiet_start.setMinimumHeight(36)
+        self.quiet_end.setMinimumHeight(36)
         schedule_grid.addWidget(QLabel("Часовой пояс"), 0, 0)
         schedule_grid.addWidget(self.timezone_name, 0, 1, 1, 3)
         schedule_grid.addWidget(QLabel("Начало тишины"), 1, 0)

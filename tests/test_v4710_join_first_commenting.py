@@ -86,8 +86,9 @@ async def test_links_preparation_joins_missing_discussions_with_15_25_second_gap
     await handlers["link_channels"]({"id": 303, "payload": {}})
 
     assert telegram.join_calls == [20, 30]
-    assert len(worker.sleep_calls) == 1
-    assert 15 <= worker.sleep_calls[0] <= 25
+    assert len(worker.sleep_calls) == 2
+    assert 12 <= worker.sleep_calls[0] <= 20
+    assert 120 <= worker.sleep_calls[1] <= 300
     assert db.record_join_event.call_args_list[0].args == (20, "joined")
     assert db.record_join_event.call_args_list[0].kwargs == {"account_id": 77}
     assert db.record_join_event.call_args_list[1].args == (30, "joined")

@@ -322,7 +322,7 @@ class AccountManagerPanel(QFrame):
 
     def _selection_changed(self, _index: int) -> None:
         account_id = int(self.selector.currentData() or 0)
-        if account_id > 0 and account_id != self._selected_account_id:
+        if account_id > 0:
             self.account_selected.emit(account_id)
 
     def set_selected_account_id(self, account_id: int) -> None:

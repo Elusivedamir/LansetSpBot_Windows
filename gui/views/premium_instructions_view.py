@@ -19,6 +19,7 @@ h1, h2 { color: #FFFFFF; }
 p { line-height: 1.45; }
 </style>
 <h1>Инструкция LansetSpBot для Windows</h1>
+<h2>Безопасный запуск</h2>
 <p>Все действия относятся к явно выбранному Telegram-аккаунту. Кампании других
 аккаунтов продолжают работать в собственных изолированных runtime.</p>
 
@@ -36,7 +37,7 @@ p { line-height: 1.45; }
 подтверждёнными участие, права, discussion chat, access hash и результаты старой проверки.
 После импорта запустите перепроверку связок.</p>
 
-<h2>3. Каналы и связки</h2>
+<h2>3. Проверка связок</h2>
 <p>Получите список каналов во вкладке «Каналы». Во вкладке «Связки» кнопка
 «Проверить новые связки» запускает реальную проверку Telegram. Кнопка
 «Перепроверить всё принудительно» игнорирует сохранённый результат проверки.</p>
@@ -136,12 +137,14 @@ class PremiumInstructionsView(QWidget):
         self._set_point_size(self._base_point_size)
 
     def set_compact_mode(self, compact: bool) -> None:
-        self.layout().setContentsMargins(
-            16 if compact else 28,
-            10 if compact else 18,
-            16 if compact else 28,
-            16 if compact else 24,
-        )
+        layout = self.layout()
+        if layout is not None:
+            layout.setContentsMargins(
+                16 if compact else 28,
+                10 if compact else 18,
+                16 if compact else 28,
+                16 if compact else 24,
+            )
         self._fit()
 
     def set_page_active(self, active: bool) -> None:

@@ -365,7 +365,8 @@ def test_aurora_premium_account_controls_and_instruction_copy(
     app.processEvents()
     assert not proxy.proxy_box.isHidden()
 
-    assert not hasattr(window.activity_panel, "spambot_button")
+    assert hasattr(window.activity_panel, "spambot_button")
+    assert "@SpamBot" in window.activity_panel.spambot_button.text()
 
     from gui.theme import AURORA_GREEN, AURORA_PRESTIGE_QSS, TELEGRAM_PREMIUM_QSS
 

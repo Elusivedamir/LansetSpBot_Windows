@@ -44,7 +44,6 @@ class HardenedLinkChannelsRunner(LinkChannelsRunner):
                 "не провер",
                 "недоступ",
                 "ошиб",
-                "нет чата обсуждения",
                 "заявка на вступление",
             )
         ):
@@ -336,6 +335,9 @@ class HardenedLinkChannelsRunner(LinkChannelsRunner):
             cause = getattr(exc, "__cause__", None)
             server_wait = max(0, int(getattr(cause, "seconds", 0) or 0))
             safety_buffer = total_wait - server_wait if server_wait > 0 else 0
+            # The target that triggered FloodWait is deliberately skipped and
+            # never replayed automatically. Do not mark it checked.
+            self._advance_channel(mark_checked=False)
             self.checkpoint.update(
                 {
                     "wait_type": "telegram_flood_wait",
