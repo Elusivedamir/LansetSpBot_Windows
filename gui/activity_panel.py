@@ -5,13 +5,12 @@ from typing import cast
 import weakref
 
 import shiboken6
-from PySide6.QtCore import QThreadPool, QTimer, QUrl, Qt
-from PySide6.QtGui import QDesktopServices, QTextCursor
+from PySide6.QtCore import QThreadPool, QTimer, Qt
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
@@ -66,13 +65,6 @@ class ActivityPanel(QFrame):
         self.next_label.setMinimumWidth(290)
         self.next_label.setObjectName("activityNext")
 
-        self.spambot_button = QPushButton("Проверить @SpamBot")
-        self.spambot_button.setObjectName("spamBotButton")
-        self.spambot_button.setToolTip(
-            "Доступно после остановки операций из-за ограничения Telegram"
-        )
-        self.spambot_button.setEnabled(False)
-        self.spambot_button.clicked.connect(self._check_spambot)
 
         self.collapse_button = QPushButton("Свернуть")
         self.collapse_button.setObjectName("tinyButton")
@@ -84,7 +76,6 @@ class ActivityPanel(QFrame):
         header.addWidget(self.state_label)
         header.addStretch(1)
         header.addWidget(self.next_label)
-        header.addWidget(self.spambot_button)
         header.addWidget(self.collapse_button)
 
         self.feed = QPlainTextEdit()
@@ -140,66 +131,6 @@ class ActivityPanel(QFrame):
         self.collapse_button.setToolTip(
             "Развернуть журнал" if self._collapsed else "Свернуть журнал"
         )
-        self.spambot_button.setText(
-            "@SpamBot" if compact else "Проверить @SpamBot"
-        )
-
-    def _check_spambot(self) -> None:
-        try:
-            getter = getattr(self.adapter, "get_account_restriction_state", None)
-            state = getter() if callable(getter) else {}
-            state = state or {}
-        except Exception as exc:
-            QMessageBox.warning(self, "@SpamBot", str(exc))
-            return
-
-        opened = QDesktopServices.openUrl(QUrl("tg://resolve?domain=SpamBot"))
-        if not opened:
-            QDesktopServices.openUrl(QUrl("https://t.me/SpamBot"))
-
-        if not bool(state.get("active")):
-            QMessageBox.information(
-                self,
-                "Проверка @SpamBot",
-                "@SpamBot открыт в Telegram. Следуйте ответу официального бота.",
-            )
-            return
-
-        message = QMessageBox(self)
-        message.setWindowTitle("Проверка ограничения @SpamBot")
-        message.setIcon(QMessageBox.Icon.Warning)
-        message.setText(
-            "Снимайте локальную блокировку только если официальный @SpamBot "
-            "прямо сообщает, что ограничений больше нет."
-        )
-        clear_button = message.addButton(
-            "@SpamBot сообщил: ограничений нет",
-            QMessageBox.ButtonRole.AcceptRole,
-        )
-        message.addButton(
-            "Оставить блокировку", QMessageBox.ButtonRole.RejectRole
-        )
-        message.exec()
-        if message.clickedButton() is clear_button:
-            confirmer = getattr(
-                self.adapter, "confirm_spambot_restriction_cleared", None
-            )
-            if not callable(confirmer):
-                QMessageBox.warning(
-                    self,
-                    "@SpamBot",
-                    "Текущая версия адаптера не поддерживает снятие ограничения.",
-                )
-                return
-            try:
-                confirmer()
-            except Exception as exc:
-                QMessageBox.warning(self, "@SpamBot", str(exc))
-                return
-            self._append(
-                "Локальная блокировка снята после подтверждения ответа @SpamBot."
-            )
-            self.request_refresh()
 
     def _toggle_collapsed(self) -> None:
         self._collapsed = not self._collapsed
@@ -249,7 +180,6 @@ class ActivityPanel(QFrame):
         self.state_label.setText(
             "Ожидание кампании" if self._account_id > 0 else "Аккаунт не подключён"
         )
-        self.spambot_button.setEnabled(False)
         self._clear_countdown("Следующая проверка: —")
         if self._account_id > 0:
             prefix = "Аккаунт переключён. " if was_initialized else "Журнал загружен. "
@@ -586,7 +516,7 @@ class ActivityPanel(QFrame):
         self._apply_snapshot(snapshot)
 
     def _apply_snapshot(self, snapshot: dict[str, object]) -> None:
-        snapshot_account_id = max(
+        snapshot_account = max(
             0, int(cast(int, snapshot.get("account_id")) or 0)
         )
         try:
@@ -595,13 +525,13 @@ class ActivityPanel(QFrame):
             )
         except (TypeError, ValueError, OverflowError):
             snapshot_generation = -1
-        current_account_id = self._current_account_id()
+        current = self._current_account_id()
         if (
-            current_account_id != snapshot_account_id
+            current != snapshot_account
             or snapshot_generation != self._account_generation
         ):
-            if self._account_id != current_account_id:
-                self._reset_for_account(current_account_id)
+            if self._account_id != current:
+                self._reset_for_account(current)
             self._refresh_pending = True
             return
         if self._account_id != snapshot_account:
@@ -624,10 +554,9 @@ class ActivityPanel(QFrame):
             if not self._restriction_active:
                 self._append(
                     "Telegram ограничил аккаунт. Новые отправки и оставшиеся "
-                    "вступления остановлены; проверьте состояние через "
-                    "официальный @SpamBot."
+                    "вступления остановлены; проверьте состояние в "
+                    "официальном приложении Telegram."
                 )
-        self.spambot_button.setEnabled(restricted)
         self._restriction_active = restricted
 
         link_active = self._apply_link_task(snapshot.get("link_task"), restricted=restricted)

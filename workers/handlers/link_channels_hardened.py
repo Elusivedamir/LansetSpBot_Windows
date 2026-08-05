@@ -26,12 +26,13 @@ class HardenedLinkChannelsRunner(LinkChannelsRunner):
     REVALIDATE_AFTER_SECONDS = 24 * 60 * 60
 
     def _configure_delays(self) -> None:
-        # These are policy values, not a cosmetic status message.
+        # Базовый конфиг остаётся источником пауз между обычными проверками.
+        super()._configure_delays()
+        # JOIN выполняется существенно реже: 2–5 минут между попытками.
         self.minimum_join_interval = 120.0
         self.join_delay_min = 120.0
         self.join_delay_max = 300.0
-        self.check_delay_min = 12.0
-        self.check_delay_max = 20.0
+
 
     @staticmethod
     def _needs_revalidation(row: dict[str, Any]) -> bool:
@@ -63,31 +64,23 @@ class HardenedLinkChannelsRunner(LinkChannelsRunner):
         raw_checkpoint = self.payload.get("_link_checkpoint")
         checkpoint_valid = self._checkpoint_is_valid(raw_checkpoint)
         force = bool(self.payload.get("force_recheck"))
-        revalidate_cached = bool(self.payload.get("revalidate_cached", True))
+        revalidate_cached = bool(self.payload.get("revalidate_cached", False))
 
         eligible_rows = [row for row in all_rows if not row.get("local_banned_at")]
         if checkpoint_valid:
-            # The persisted cursor is authoritative. Keep the complete lookup map
-            # so channels remaining in the checkpoint can be refreshed in place.
+            # Сохранённый cursor является источником истины для продолжения.
             working_rows = all_rows
         elif force:
             working_rows = eligible_rows
+        elif revalidate_cached:
+            working_rows = [
+                row for row in eligible_rows if self._needs_revalidation(row)
+            ]
         else:
-            working_rows = [row for row in eligible_rows if self._needs_revalidation(row)]
-            if not working_rows and eligible_rows:
-                # A fresh cache may reduce the scope, but it must never turn an
-                # explicit user action into a fake 0% completion. Revalidate one
-                # deterministic health-check target and report that exact scope.
-                working_rows = [
-                    min(
-                        eligible_rows,
-                        key=lambda row: (
-                            from_db_time(row.get("link_checked_at")) or utc_now(),
-                            int(row.get("channel_id") or 0),
-                        ),
-                    )
-                ]
-                self.payload["cache_health_check"] = True
+            # Обычный новый проход не повторяет цели, уже проверенные хотя бы раз.
+            working_rows = [
+                row for row in eligible_rows if not row.get("link_checked_at")
+            ]
 
         channels = [
             row
@@ -123,11 +116,12 @@ class HardenedLinkChannelsRunner(LinkChannelsRunner):
         self._restore_checkpoint_state()
 
     def announce_start(self) -> None:
-        mode = (
-            "Принудительная перепроверка всех связок"
-            if bool(self.payload.get("force_recheck"))
-            else "Проверка новых, изменившихся и устаревших связок"
-        )
+        if bool(self.payload.get("force_recheck")):
+            mode = "Принудительная перепроверка всех связок"
+        elif bool(self.payload.get("revalidate_cached", False)):
+            mode = "Проверка новых, изменившихся и устаревших связок"
+        else:
+            mode = "Проверка новых связок"
         total = len(self.channel_ids) + len(self.group_ids)
         if self.completed_count() > 0:
             message = (
@@ -335,9 +329,17 @@ class HardenedLinkChannelsRunner(LinkChannelsRunner):
             cause = getattr(exc, "__cause__", None)
             server_wait = max(0, int(getattr(cause, "seconds", 0) or 0))
             safety_buffer = total_wait - server_wait if server_wait > 0 else 0
-            # The target that triggered FloodWait is deliberately skipped and
-            # never replayed automatically. Do not mark it checked.
-            self._advance_channel(mark_checked=False)
+
+            preserve_current_target = code == "telegram_flood_wait"
+            if not preserve_current_target:
+                self._update_channel_link(
+                    work,
+                    None,
+                    None,
+                    "Пропущено · Telegram FloodWait",
+                )
+                self._advance_channel(mark_checked=True)
+
             self.checkpoint.update(
                 {
                     "wait_type": "telegram_flood_wait",
@@ -357,14 +359,18 @@ class HardenedLinkChannelsRunner(LinkChannelsRunner):
                 if server_wait > 0 and 30 <= safety_buffer <= 45
                 else f"Telegram FloodWait: защищённое ожидание {total_wait} сек"
             )
+            suffix = (
+                "; текущий канал сохранён для безопасного продолжения"
+                if preserve_current_target
+                else "; цель отмечена и позиция сохранена на следующем канале"
+            )
             self.set_runtime(
                 self.task_id,
-                wait_text + "; позиция сохранена",
+                wait_text + suffix,
                 activity=True,
                 level="WARNING",
                 account_id=self.account_id,
             )
-            # Crucially, do not advance or mark the current channel checked.
             raise exc
 
         return super()._handle_deferred_channel(work, exc)

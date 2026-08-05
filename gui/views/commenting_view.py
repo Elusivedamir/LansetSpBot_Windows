@@ -5,7 +5,6 @@ from typing import cast
 import logging
 
 from PySide6.QtCore import QThreadPool, Qt, QTimer
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -91,13 +90,12 @@ class CommentingView(QWidget):
         self.comment_source_combo.setObjectName("commentSourceCombo")
         self.comment_source_combo.addItem("Готовые тексты", SOURCE_PREWRITTEN)
         self.comment_source_combo.addItem("OpenAI", SOURCE_OPENAI)
-        openai_index = self.comment_source_combo.findData(SOURCE_OPENAI)
-        if openai_index >= 0:
-            self.comment_source_combo.setItemData(
-                openai_index,
-                QColor("#39FF14"),
-                Qt.ItemDataRole.ForegroundRole,
-            )
+        self.comment_source_combo.view().setStyleSheet(
+            "QAbstractItemView {"
+            "background: #E6EBF1; color: #17202A;"
+            "selection-background-color: #596779; selection-color: #FFFFFF;"
+            "}"
+        )
         self.comment_source_combo.currentIndexChanged.connect(
             self._on_comment_source_changed
         )
