@@ -367,7 +367,7 @@ class AudienceParserView(QWidget):
             active_sync = result_map.get("active_sync_task")
             syncing = isinstance(active_sync, dict)
             view._replace_groups(groups, loaded=loaded, syncing=syncing)
-            if syncing and view.current_task_id is None:
+            if isinstance(active_sync, dict) and view.current_task_id is None:
                 view.current_task_id = int(active_sync.get("id") or 0) or None
                 if view.current_task_id is not None:
                     view.current_mode = "sync"
