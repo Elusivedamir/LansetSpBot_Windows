@@ -59,7 +59,9 @@ class TelegramAudienceMixin(_MixinHost):
             code="invalid_audience_source",
         )
 
-    async def resolve_audience_group(self, source: Mapping[str, Any]):
+    async def resolve_audience_group(
+        self, source: Mapping[str, Any], *, dispatch_barrier=None
+    ):
         await self.ensure_connected()
         link = str(source.get("link") or "").strip()
         invite_hash = self._invite_hash(link)
@@ -69,6 +71,7 @@ class TelegramAudienceMixin(_MixinHost):
                     self.client,
                     CheckChatInviteRequest(invite_hash),
                     retry_network=True,
+                    dispatch_barrier=dispatch_barrier,
                 )
                 if not isinstance(invite, types.ChatInviteAlready):
                     raise NonRetryableTelegramError(
@@ -81,6 +84,7 @@ class TelegramAudienceMixin(_MixinHost):
                     self.client.get_entity,
                     self._audience_input_peer(source),
                     retry_network=True,
+                    dispatch_barrier=dispatch_barrier,
                 )
         except ChannelPrivateError as exc:
             raise NonRetryableTelegramError(

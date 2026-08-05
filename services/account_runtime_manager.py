@@ -478,6 +478,7 @@ def create_multiaccount_handlers(
         "sync_saved_dialogs",
         "join_saved_slot",
         "openai_test",
+        "parse_audience",
     }
 
     handlers: dict[str, Callable[[dict[str, Any]], Awaitable[Any]]] = {}

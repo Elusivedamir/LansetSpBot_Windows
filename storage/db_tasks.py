@@ -817,6 +817,7 @@ class TaskRepositoryMixin:
             "sync_saved_dialogs",
             "link_channels",
             "import",
+            "parse_audience",
         )
         try:
             with self.get_connection() as conn:
@@ -825,7 +826,7 @@ class TaskRepositoryMixin:
                         SET status='pending', error='Recovered after unclean shutdown',
                             status_text=NULL, updated_at=CURRENT_TIMESTAMP
                         WHERE status IN ('running','processing')
-                          AND type IN (?,?,?,?,?)""",
+                          AND type IN (?,?,?,?,?,?)""",
                     safe_types,
                 ).rowcount
                 uncertain = conn.execute(
@@ -834,7 +835,7 @@ class TaskRepositoryMixin:
                             error='Interrupted with uncertain external result; review before retry',
                             status_text=NULL, updated_at=CURRENT_TIMESTAMP
                         WHERE status IN ('running','processing')
-                          AND type NOT IN (?,?,?,?,?)""",
+                          AND type NOT IN (?,?,?,?,?,?)""",
                     safe_types,
                 ).rowcount
             if requeued:
@@ -1132,6 +1133,27 @@ class TaskRepositoryMixin:
             raise
         except Exception as e:
             raise DatabaseError(f"Failed to cancel task: {e}") from e
+
+    def cancel_running_audience_task(self, task_id, reason="Cancelled by user"):
+        """Finalize a parser cancellation after its read-only handler stops."""
+
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.execute(
+                    """UPDATE tasks
+                       SET status='cancelled', status_text=NULL, error=?,
+                           not_before=NULL, updated_at=CURRENT_TIMESTAMP
+                       WHERE id=? AND type='parse_audience'
+                         AND status IN ('running', 'processing')""",
+                    (sanitize_text(reason), int(task_id)),
+                )
+                return cursor.rowcount == 1
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError(
+                f"Failed to cancel running audience task {task_id}: {exc}"
+            ) from exc
 
     def update_task_progress(self, task_id, progress):
         """Update progress only while a task is running."""

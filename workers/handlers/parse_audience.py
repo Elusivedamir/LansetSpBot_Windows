@@ -42,13 +42,13 @@ def create_audience_parser_handler(
         }
         seen: set[str] = set()
 
-        def cancelled() -> bool:
-            if queue_worker.isInterruptionRequested():
-                return True
+        def shutdown_requested() -> bool:
+            checker = getattr(queue_worker, "isInterruptionRequested", None)
+            return bool(callable(checker) and checker())
+
+        def task_cancel_requested() -> bool:
             checker = getattr(queue_worker, "is_scope_cancelled", None)
-            if callable(checker) and checker("task", task_id):
-                return True
-            return False
+            return bool(callable(checker) and checker("task", task_id))
 
         def status_text(prefix: str) -> str:
             return (
@@ -57,6 +57,23 @@ def create_audience_parser_handler(
                 f"{counters['missing_username']} · удалённых: "
                 f"{counters['deleted']} · ботов: {counters['bot']} · "
                 f"дубликатов: {counters['duplicate']}"
+            )
+
+        def finish_task_cancelled() -> None:
+            temp_path.unlink(missing_ok=True)
+            changed = worker_db.cancel_running_audience_task(
+                task_id, "Остановлено пользователем"
+            )
+            if not changed:
+                current = worker_db.get_task(task_id) or {}
+                if str(current.get("status") or "") != "cancelled":
+                    raise RuntimeError(
+                        f"Could not cancel running audience parser task {task_id}"
+                    )
+            publish_activity(
+                status_text("Парсинг остановлен"),
+                level="WARNING",
+                category="Парсинг аудитории",
             )
 
         set_runtime(
@@ -70,22 +87,32 @@ def create_audience_parser_handler(
         )
 
         try:
-            entity = await telegram.resolve_audience_group(source)
-            resolved_title = str(getattr(entity, "title", None) or source_title)
             barrier_factory = getattr(queue_worker, "create_scope_dispatch_barrier", None)
             dispatch_barrier = (
                 barrier_factory(("task", task_id))
                 if callable(barrier_factory)
                 else None
             )
+            if task_cancel_requested():
+                finish_task_cancelled()
+                return
+            if shutdown_requested():
+                raise asyncio.CancelledError
+
+            entity = await telegram.resolve_audience_group(
+                source, dispatch_barrier=dispatch_barrier
+            )
+            resolved_title = str(getattr(entity, "title", None) or source_title)
             cancel_requested = False
             with temp_path.open("w", encoding="utf-8", newline="\n") as output:
                 async for user in telegram.iter_audience_members(
                     entity, dispatch_barrier=dispatch_barrier
                 ):
-                    if cancelled():
+                    if task_cancel_requested():
                         cancel_requested = True
                         break
+                    if shutdown_requested():
+                        raise asyncio.CancelledError
 
                     counters["scanned"] += 1
                     reason, username = classify_audience_user(user)
@@ -108,29 +135,39 @@ def create_audience_parser_handler(
                             task_id, min(95, 5 + scanned // 50)
                         )
 
+                if not cancel_requested and task_cancel_requested():
+                    cancel_requested = True
+                if not cancel_requested and shutdown_requested():
+                    raise asyncio.CancelledError
                 if not cancel_requested:
                     output.flush()
                     os.fsync(output.fileno())
 
-            if cancel_requested or cancelled():
-                temp_path.unlink(missing_ok=True)
-                set_runtime(task_id, status_text("Остановлено пользователем"))
-                publish_activity(
-                    status_text("Парсинг остановлен"),
-                    level="WARNING",
-                    category="Парсинг аудитории",
-                )
+            if cancel_requested or task_cancel_requested():
+                finish_task_cancelled()
                 return
-            os.replace(temp_path, output_path)
+            if shutdown_requested():
+                raise asyncio.CancelledError
+
+            if dispatch_barrier is None:
+                os.replace(temp_path, output_path)
+            else:
+                # Linearize final-file publication with the same task-local Stop
+                # scope used at Telegram request boundaries.
+                with dispatch_barrier.dispatch(None):
+                    os.replace(temp_path, output_path)
+
             worker_db.update_task_progress(task_id, 100)
             final = status_text(f"Готово: {output_path}")
             set_runtime(task_id, final)
             publish_activity(final, category="Парсинг аудитории")
-        except DeferredTelegramError:
+        except DeferredTelegramError as exc:
             temp_path.unlink(missing_ok=True)
-            if cancelled():
-                set_runtime(task_id, status_text("Остановлено пользователем"))
+            if task_cancel_requested():
+                finish_task_cancelled()
                 return
+            if shutdown_requested():
+                raise asyncio.CancelledError from exc
             raise
         except asyncio.CancelledError:
             temp_path.unlink(missing_ok=True)

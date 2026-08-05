@@ -212,10 +212,31 @@ class TaskQueueAPIMixin(_MixinHost):
             return False
         if task and str(task.get("type") or "") == "parse_audience":
             # Останавливаем только этот парсинг; другие аккаунты продолжают работу.
+
+            def cancel_parser_task() -> bool:
+                current = self.database.get_task(task_id) or {}
+                status = str(current.get("status") or "")
+                if status in {"running", "processing"}:
+                    worker = self.queue_worker
+                    is_running = getattr(worker, "isRunning", None)
+                    if worker is not None and (
+                        not callable(is_running) or bool(is_running())
+                    ):
+                        # The task-local scope stops the read-only handler at its
+                        # next safe boundary. The handler persists cancellation
+                        # only after it has removed its temporary output.
+                        return True
+                    return bool(
+                        self.database.cancel_running_audience_task(
+                            task_id, "Остановлено пользователем"
+                        )
+                    )
+                return bool(self.database.cancel_task(task_id))
+
             return bool(
                 self._cancel_scopes_and_mutate(
                     (("task", int(task_id)),),
-                    lambda: self.database.cancel_task(task_id),
+                    cancel_parser_task,
                 )
             )
         return bool(self.database.cancel_task(task_id))
