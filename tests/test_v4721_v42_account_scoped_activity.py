@@ -122,18 +122,16 @@ def test_activity_panel_uses_current_account_logs_and_active_link_task_only():
         Path(__file__).resolve().parents[1] / "gui" / "activity_panel.py"
     ).read_text(encoding="utf-8")
 
-    assert '"account_id": owner_account_id' in source
-    assert "limit=150, account_id=owner_account_id" in source
-    assert 'getattr(self.adapter, "get_active_link_task", None)' in source
     load_snapshot = source.split("def _load_snapshot", 1)[1].split(
         "def request_refresh", 1
     )[0]
-    assert "if callable(link_task_getter)" in load_snapshot
-    assert "compatibility with older/lightweight adapters only" in load_snapshot
-    assert 'in {"pending", "running", "paused"}' in load_snapshot
-    assert "current_account_id != snapshot_account_id" in source
-    assert "self._reset_for_account(snapshot_account_id)" in source
-
+    assert "owner = self._current_account_id()" in load_snapshot
+    assert 'scoped("get_active_link_task")' in load_snapshot
+    assert "get_logs(limit=150, account_id=owner)" in load_snapshot
+    assert '"account_id": owner' in load_snapshot
+    assert "current != snapshot_account" in source
+    assert "self._reset_for_account" in source
+    assert "spambot_button" not in source
 
 def test_instruction_explains_account_switch_isolation():
     source = (

@@ -75,8 +75,8 @@ class GUIServiceAdapter:
                 "Дождитесь завершения авторизации."
             ),
             "account_restricted": (
-                "Telegram ограничил активность аккаунта. Проверьте статус через "
-                "кнопку @SpamBot в живом журнале."
+                "Telegram ограничил активность аккаунта. Новые JOIN/SEND "
+                "остановлены; проверьте состояние в официальном приложении Telegram."
             ),
             "worker_missing": "Фоновый обработчик не создан.",
         }.get(reason, "Фоновый обработчик недоступен")
@@ -209,9 +209,6 @@ class GUIServiceAdapter:
 
     def get_account_restriction_state(self, account_id=None):
         return self.api.get_account_restriction_state(account_id=account_id)
-
-    def confirm_spambot_restriction_cleared(self, account_id=None):
-        return self.api.confirm_spambot_restriction_cleared(account_id=account_id)
 
     def list_telegram_accounts(self):
         return self.api.list_telegram_accounts()

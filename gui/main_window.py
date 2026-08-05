@@ -7,26 +7,26 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QPushButton,
     QScrollArea,
     QSplitter,
     QStackedWidget,
     QVBoxLayout,
-    QWidget,
 )
 
 from core.version import APP_NAME, BUILD_ID, __version__
+from .aurora_background import AuroraBackgroundWidget
 from .activity_panel import ActivityPanel
 from .resources import asset_path
 from .theme import TELEGRAM_PREMIUM_QSS
-from .views.account_view import AccountView
 from .views.channels_view import ChannelsView
 from .views.commenting_view import CommentingView
-from .views.links_view import LinksView
-from .views.instructions_view import InstructionsView
+from .views.premium_account_view import PremiumAccountView
+from .views.premium_instructions_view import PremiumInstructionsView
+from .views.premium_links_view import PremiumLinksView
 from .views.target_audience_view import TargetAudienceView
 
 
@@ -54,12 +54,7 @@ class MainWindow(QMainWindow):
         self.config = config
         self.setWindowTitle(APP_NAME)
         self.resize(1280, 860)
-        # The old 1040px minimum made the window effectively fixed on smaller
-        # laptops. All important content now remains usable from 760px upward.
         self.setMinimumSize(760, 620)
-        # Ordinary window controls, stated explicitly: minimize puts the window
-        # on the taskbar and leaves the application running, which is the only
-        # way to get it off screen now that closing really closes.
         self.setWindowFlags(
             self.windowFlags()
             | Qt.WindowType.WindowMinimizeButtonHint
@@ -69,8 +64,10 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(TELEGRAM_PREMIUM_QSS)
         self.setWindowIcon(QIcon(str(asset_path("lansetspbot.png"))))
 
-        root = QWidget()
-        root.setObjectName("rootWindow")
+        # Exactly one scalable Aurora painter is shared by every page/card.
+        self.aurora_background = AuroraBackgroundWidget()
+        root = self.aurora_background
+        root.setObjectName("auroraBackground")
         root_layout = QHBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
@@ -94,7 +91,6 @@ class MainWindow(QMainWindow):
         brand_mark = QLabel("LSB")
         brand_mark.setFixedWidth(84)
         brand_mark.setObjectName("brandMark")
-        # Keep the compact product badge readable on Windows/Qt.
         brand_mark.setMaximumWidth(max(brand_mark.maximumWidth(), 72))
         brand_mark.setMinimumWidth(72)
         brand_text = QVBoxLayout()
@@ -153,14 +149,18 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
         self.stack.setObjectName("contentStack")
-        self.account_view = AccountView(adapter, config)
+        self.account_view = PremiumAccountView(adapter, config)
         self.channels_view = ChannelsView(adapter, queue_worker)
-        self.links_view = LinksView(adapter)
+        self.links_view = PremiumLinksView(adapter)
         self.commenting_view = CommentingView(adapter)
         self.target_audience_view = TargetAudienceView()
-        self.instructions_view = InstructionsView(adapter)
+        self.instructions_view = PremiumInstructionsView(adapter)
+
         self.account_view.account_changed.connect(
             self.commenting_view.handle_account_changed
+        )
+        self.account_view.link_recheck_requested.connect(
+            self._start_imported_link_recheck
         )
         for view in (
             self.account_view,
@@ -211,6 +211,13 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
         self._suspended_runtime_timers: list[object] = []
 
+    def _start_imported_link_recheck(self, force: bool) -> None:
+        self.menu.setCurrentRow(2)
+        if force:
+            self.links_view.start_force_recheck()
+        else:
+            self.links_view.start_linking()
+
     def _show_help_dialog(self) -> None:
         dialog = QDialog(self)
         dialog.setObjectName("helpDialog")
@@ -221,7 +228,7 @@ class MainWindow(QMainWindow):
         title = QLabel(f"Поддержка {APP_NAME}")
         title.setObjectName("cardTitle")
         contact = QLabel(
-            f'Контакт: <a href="{self.SUPPORT_URL}">{self.SUPPORT_CONTACT}</a>'
+            f'<a href="{self.SUPPORT_URL}">{self.SUPPORT_CONTACT}</a>'
         )
         contact.setObjectName("pageSubtitle")
         contact.setOpenExternalLinks(True)
@@ -250,14 +257,6 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _runtime_refresh_timers(self) -> tuple[object, ...]:
-        """Return GUI timers that may touch services or SQLite.
-
-        These timers are deliberately separate from the application shutdown
-        poller.  They must be stopped before the reset executor removes files,
-        because modal dialogs run a nested Qt event loop and can otherwise fire
-        while the schema is between deletion and recreation.
-        """
-
         return (
             self.activity_panel.timer,
             self.activity_panel.countdown_timer,
@@ -288,18 +287,6 @@ class MainWindow(QMainWindow):
                 start()
 
     def _widen_sidebar_to_fit_menu(self) -> None:
-        """Give the navigation the width its longest entry actually needs.
-
-        "Комментирование" was rendering as "Комментирова…". The width required
-        depends on the font, the icon and the stylesheet's padding, so it is
-        measured from the laid-out items instead of hard-coded - a fixed number
-        would clip again after any theme, font or DPI change.
-
-        The measurement runs once, on first show. ``visualItemRect`` reports the
-        larger of the item hint and the viewport, so re-measuring after the
-        sidebar has grown would feed the new width back in and widen it again.
-        """
-
         if self._sidebar_fitted or self.width() < 900:
             return
         needed_for_items = max(

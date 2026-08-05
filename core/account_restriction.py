@@ -17,7 +17,7 @@ RESTRICTION_CODES = frozenset(
 
 RESTRICTION_REASON = (
     "Telegram ограничил активность аккаунта. Кампании этого аккаунта "
-    "остановлены; проверьте статус через @SpamBot."
+    "остановлены; проверьте ограничения в официальном приложении Telegram."
 )
 
 
@@ -38,12 +38,7 @@ def _resolve_account_id(database: Any, account_id: Any = None) -> int:
 def get_account_restriction_state(
     database: Any, *, account_id: Any = None
 ) -> dict[str, Any]:
-    """Return the restriction row for exactly one Telegram account.
-
-    Omitting ``account_id`` intentionally means the currently selected account,
-    preserving the existing single-account GUI API. Workers and future
-    multi-account dispatchers pass their campaign/task owner explicitly.
-    """
+    """Return the restriction row for exactly one Telegram account."""
 
     owner_account_id = _resolve_account_id(database, account_id)
     getter = getattr(database, "get_account_restriction", None)
@@ -104,9 +99,16 @@ def activate_account_restriction(
     return dict(activator(**restriction_kwargs) or {})
 
 
-def clear_account_restriction_after_spambot_confirmation(
+def clear_account_restriction_after_authoritative_check(
     database: Any, *, account_id: Any = None
 ) -> dict[str, Any]:
+    """Clear a stored restriction after an external authoritative verification.
+
+    This low-level operation is intentionally not exposed as a GUI button. It is
+    retained for controlled recovery/migration code that has independently
+    verified Telegram-side state.
+    """
+
     owner_account_id = _resolve_account_id(database, account_id)
     state = get_account_restriction_state(database, account_id=owner_account_id)
     checked_at = _now_iso()

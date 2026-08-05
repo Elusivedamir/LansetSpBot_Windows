@@ -11,7 +11,7 @@ from telethon.tl.types import InputChannel, InputPeerSelf
 
 from core.account_restriction import (
     activate_account_restriction,
-    clear_account_restriction_after_spambot_confirmation,
+    clear_account_restriction_after_authoritative_check,
     get_account_restriction_state,
 )
 from core.rate_limiter import RateLimiter, RpcCategory, classify_rpc_request
@@ -48,7 +48,7 @@ def test_global_restriction_persists_and_cancels_only_mutating_tasks(
     assert db.get_task(mutating_id)["status"] == "cancelled"
     assert db.get_task(read_id)["status"] == "pending"
 
-    cleared = clear_account_restriction_after_spambot_confirmation(db)
+    cleared = clear_account_restriction_after_authoritative_check(db)
     assert cleared["active"] is False
     assert get_account_restriction_state(db)["active"] is False
 
@@ -127,7 +127,7 @@ def test_instruction_view_is_a_real_multi_step_slideshow() -> None:
     view.deleteLater()
 
 
-def test_activity_panel_has_spambot_button_without_requiring_new_adapter_api() -> None:
+def test_activity_panel_has_no_manual_restriction_clear_button() -> None:
     class Adapter:
         def get_logs(self, level=None, limit=100):
             return []
@@ -144,11 +144,11 @@ def test_activity_panel_has_spambot_button_without_requiring_new_adapter_api() -
     _app()
     panel = ActivityPanel(Adapter())
     panel.timer.stop()
-    assert "@SpamBot" in panel.spambot_button.text()
+    assert not hasattr(panel, "spambot_button")
     panel.deleteLater()
 
 
-def test_activity_panel_enables_spambot_after_persistent_restriction() -> None:
+def test_activity_panel_shows_persistent_restriction_without_manual_clear() -> None:
     class Adapter:
         def get_logs(self, level=None, limit=100):
             return []
@@ -169,7 +169,7 @@ def test_activity_panel_enables_spambot_after_persistent_restriction() -> None:
     panel = ActivityPanel(Adapter())
     panel.timer.stop()
     panel.refresh()
-    assert panel.spambot_button.isEnabled()
+    assert not hasattr(panel, "spambot_button")
     assert "RESTRICTED" in panel.state_label.text()
     assert "оставшиеся вступления остановлены" in panel.feed.toPlainText()
     panel.deleteLater()

@@ -5,7 +5,6 @@ from typing import cast
 import logging
 
 from PySide6.QtCore import QThreadPool, Qt, QTimer
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -91,13 +90,30 @@ class CommentingView(QWidget):
         self.comment_source_combo.setObjectName("commentSourceCombo")
         self.comment_source_combo.addItem("Готовые тексты", SOURCE_PREWRITTEN)
         self.comment_source_combo.addItem("OpenAI", SOURCE_OPENAI)
-        openai_index = self.comment_source_combo.findData(SOURCE_OPENAI)
-        if openai_index >= 0:
-            self.comment_source_combo.setItemData(
-                openai_index,
-                QColor("#39FF14"),
-                Qt.ItemDataRole.ForegroundRole,
-            )
+        source_popup = self.comment_source_combo.view()
+        source_popup.setStyleSheet(
+            "QAbstractItemView {"
+            "background: qlineargradient("
+            "x1: 0, y1: 0, x2: 0, y2: 1, "
+            "stop: 0 #FFFFFF, stop: 1 #7D8B9B"
+            ");"
+            "color: #17202A; outline: 0;"
+            "selection-background-color: #34465A; selection-color: #FFFFFF;"
+            "}"
+            "QAbstractItemView::item {"
+            "background: transparent; color: #17202A;"
+            "min-height: 28px; padding: 4px 8px;"
+            "}"
+            "QAbstractItemView::item:selected {"
+            "background: #34465A; color: #FFFFFF;"
+            "}"
+        )
+        source_popup.viewport().setStyleSheet(
+            "background: qlineargradient("
+            "x1: 0, y1: 0, x2: 0, y2: 1, "
+            "stop: 0 #FFFFFF, stop: 1 #7D8B9B"
+            ");"
+        )
         self.comment_source_combo.currentIndexChanged.connect(
             self._on_comment_source_changed
         )

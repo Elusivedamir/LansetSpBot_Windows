@@ -1,8 +1,8 @@
 # Popup and functional-toggle contrast must match the operator-facing design.
 #
 # The tray remains dark. Selection popups intentionally use a light surface
-# with dark text, and every functional QCheckBox uses red for OFF and green
-# for ON. The checks render real Qt surfaces instead of trusting text alone.
+# with dark text, and every functional QCheckBox uses red for OFF and the
+# centralized neon Aurora green for ON.
 
 from __future__ import annotations
 
@@ -108,7 +108,7 @@ def test_the_comment_source_list_is_light_with_dark_readable_text(window) -> Non
 
 
 def test_the_stylesheet_covers_popup_surfaces_and_toggle_states() -> None:
-    from gui.theme import TELEGRAM_PREMIUM_QSS
+    from gui.theme import AURORA_GREEN, TELEGRAM_PREMIUM_QSS
 
     for selector in (
         "QMenu {",
@@ -123,4 +123,5 @@ def test_the_stylesheet_covers_popup_surfaces_and_toggle_states() -> None:
     assert "color: #17202A;" in TELEGRAM_PREMIUM_QSS
     assert "QCheckBox::indicator:checked" in TELEGRAM_PREMIUM_QSS
     assert "background: #9C3542;" in TELEGRAM_PREMIUM_QSS
-    assert "background: #238B57;" in TELEGRAM_PREMIUM_QSS
+    assert AURORA_GREEN == "#39FF14"
+    assert f"background: {AURORA_GREEN};" in TELEGRAM_PREMIUM_QSS

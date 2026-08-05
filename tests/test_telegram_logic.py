@@ -430,9 +430,9 @@ async def test_flood_wait_is_reported_to_runtime_status(monkeypatch):
     with pytest.raises(DeferredTelegramError) as raised:
         await service.execute(operation)
     assert raised.value.code == "flood_wait_deferred"
-    assert raised.value.retry_after == 180
+    assert raised.value.retry_after == 22
     assert calls == 1
-    assert any("Ограничение Telegram" in item for item in statuses)
+    assert any("Telegram FloodWait" in item for item in statuses)
 
 
 @pytest.mark.asyncio

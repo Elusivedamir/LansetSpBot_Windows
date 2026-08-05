@@ -222,7 +222,7 @@ async def test_links_use_durable_join_guard_before_join_rpc():
 
     db.get_join_guard.assert_called_once_with(
         max_joins=40,
-        min_interval_seconds=45.0,
+        min_interval_seconds=120.0,
         window_seconds=3600,
         account_id=77,
     )

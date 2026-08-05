@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import random  # noqa: F401 - public monkeypatch compatibility
+import random  # public monkeypatch compatibility and FloodWait buffer source
 from typing import Any, Callable
 
 from telethon import connection
 
+from core.exceptions import DeferredTelegramError
 from core.version import APP_NAME, __version__
 from services.paced_telegram_client import PacedTelegramClient
 from services.account_sessions import validate_session_name
@@ -33,9 +34,40 @@ class TelegramService(
 
     FLOOD_WAIT_BUFFER_MIN_SECONDS = 30
     FLOOD_WAIT_BUFFER_MAX_SECONDS = 45
+    # Retained for configuration/backward compatibility. A real Telegram
+    # FloodWait no longer receives a synthetic 3–5 minute floor.
     FLOOD_WAIT_AUTO_RESUME_MIN_SECONDS = 3 * 60
     FLOOD_WAIT_AUTO_RESUME_MAX_SECONDS = 5 * 60
     AUTHORIZATION_RECHECK_SECONDS = 15 * 60
+
+    def _protected_flood_wait_seconds(self, raw_wait: int) -> int:
+        """Honor Telegram's exact wait and add only the required safety buffer."""
+
+        server_seconds = max(0, int(raw_wait))
+        buffer_seconds = random.randint(
+            self.FLOOD_WAIT_BUFFER_MIN_SECONDS,
+            self.FLOOD_WAIT_BUFFER_MAX_SECONDS,
+        )
+        return server_seconds + int(buffer_seconds)
+
+    async def _raise_flood_wait(self, exc: BaseException) -> None:
+        """Translate every timed Telegram FloodWait using server time + buffer."""
+
+        raw_wait = max(0, int(getattr(exc, "seconds", 0) or 0))
+        buffer_seconds = random.randint(
+            self.FLOOD_WAIT_BUFFER_MIN_SECONDS,
+            self.FLOOD_WAIT_BUFFER_MAX_SECONDS,
+        )
+        wait_time = raw_wait + int(buffer_seconds)
+        await self._report_status(
+            "Telegram FloodWait: "
+            f"{raw_wait} сек + защитный запас {buffer_seconds} сек"
+        )
+        raise DeferredTelegramError(
+            "Telegram FloodWait",
+            code="flood_wait_deferred",
+            retry_after=wait_time,
+        ) from exc
 
     def __init__(
         self,
