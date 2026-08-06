@@ -141,9 +141,21 @@ def test_mutating_ledger_reservations_are_persisted_before_dispatch() -> None:
     assert source.index("ledger.record_join_attempt(target") < source.index(
         "joined = await telegram.join(target)"
     )
-    first_reaction_record = source.index("ledger.record_reaction(rule.peer")
-    first_reaction_send = source.index("await send_reaction_once(")
-    assert first_reaction_record < first_reaction_send
+    group_reaction_record = source.index(
+        "ledger.record_reaction(group_rule.peer"
+    )
+    group_reaction_send = source.index(
+        "await send_reaction_once(", group_reaction_record
+    )
+    assert group_reaction_record < group_reaction_send
+
+    private_reaction_record = source.index(
+        "ledger.record_reaction(rule.peer", group_reaction_send
+    )
+    private_reaction_send = source.index(
+        "await send_reaction_once(", private_reaction_record
+    )
+    assert private_reaction_record < private_reaction_send
 
 
 def test_powershell_selects_python_before_single_runner_invocation() -> None:

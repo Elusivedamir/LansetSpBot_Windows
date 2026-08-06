@@ -354,13 +354,13 @@ async def execute_session(
             continue
         private_matches.append((rule, entry))
 
-    for rule in policy.groups:
-        entry = find_dialog(dialogs, rule.peer)
+    for group_rule in policy.groups:
+        entry = find_dialog(dialogs, group_rule.peer)
         if entry is None or not entry.is_group:
-            log.warning("Group is not present in the account: %r", rule.peer)
+            log.warning("Group is not present in the account: %r", group_rule.peer)
             summary.skipped += 1
             continue
-        group_matches.append((rule, entry))
+        group_matches.append((group_rule, entry))
 
     summary.matched_private_dialogs = len(private_matches)
     summary.matched_groups = len(group_matches)
@@ -373,7 +373,7 @@ async def execute_session(
     # are bounded and use the project's process-wide paced Telegram client.
     rng.shuffle(group_matches)
     reaction_budget = policy.max_reactions_per_run
-    for rule, entry in group_matches[: policy.max_group_reads_per_run]:
+    for group_rule, entry in group_matches[: policy.max_group_reads_per_run]:
         messages = await latest_messages(
             telegram, entry.entity, policy.read_messages_per_group
         )
@@ -392,18 +392,18 @@ async def execute_session(
         incoming = latest_incoming_message(messages)
         if (
             reaction_budget > 0
-            and rule.allow_reactions
+            and group_rule.allow_reactions
             and incoming is not None
             and rng.random() < policy.reaction_probability
             and ledger.reaction_due(
-                rule.peer, int(incoming.id), policy, utc_now()
+                group_rule.peer, int(incoming.id), policy, utc_now()
             )
         ):
             await pause_between_actions(telegram, policy, rng)
             emoji = rng.choice(policy.reaction_emojis)
             # Reserve before dispatch. A crash or ambiguous result must not
             # replay the same mutating action during the next one-shot run.
-            ledger.record_reaction(rule.peer, int(incoming.id), utc_now())
+            ledger.record_reaction(group_rule.peer, int(incoming.id), utc_now())
             save_ledger()
             await send_reaction_once(
                 telegram,
