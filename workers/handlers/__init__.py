@@ -2,10 +2,12 @@ from workers.handlers.parse_audience import create_audience_parser_handler
 from workers.handlers.comment_slot import create_comment_slot_handler
 from workers.handlers.join_slot import create_join_slot_handler
 from workers.handlers.manual_comment import create_manual_comment_handler
+from workers.handlers.warmup_step import create_warmup_step_handler
 
 __all__ = [
     "create_audience_parser_handler",
     "create_comment_slot_handler",
     "create_join_slot_handler",
     "create_manual_comment_handler",
+    "create_warmup_step_handler",
 ]

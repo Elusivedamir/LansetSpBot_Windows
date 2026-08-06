@@ -28,6 +28,7 @@ from .theme import (
     theme_stylesheet,
 )
 from .views.account_view import AccountView
+from .views.warmup_view import WarmupView
 from .views.channels_view import ChannelsView
 from .views.commenting_view import CommentingView
 from .views.links_view import LinksView
@@ -39,6 +40,7 @@ from .views.target_audience_view import TargetAudienceView
 class MainWindow(QMainWindow):
     MENU_ICONS = (
         "account.svg",
+        "warmup.svg",
         "channels.svg",
         "links.svg",
         "comments.svg",
@@ -129,6 +131,7 @@ class MainWindow(QMainWindow):
         self.menu.setIconSize(QSize(20, 20))
         self._menu_full = [
             "Аккаунт",
+            "Прогрев",
             "Каналы",
             "Связки",
             "Комментирование",
@@ -138,6 +141,7 @@ class MainWindow(QMainWindow):
         ]
         self._menu_compact = [
             "Аккаунт",
+            "Прогрев",
             "Каналы",
             "Связки",
             "Комменты",
@@ -170,6 +174,7 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.stack.setObjectName("contentStack")
         self.account_view = AccountView(adapter, config)
+        self.warmup_view = WarmupView(adapter)
         self.channels_view = ChannelsView(adapter, queue_worker)
         self.links_view = LinksView(adapter)
         self.commenting_view = CommentingView(adapter)
@@ -180,8 +185,12 @@ class MainWindow(QMainWindow):
         self.account_view.account_changed.connect(
             self.commenting_view.handle_account_changed
         )
+        self.account_view.account_changed.connect(
+            self.warmup_view.handle_account_changed
+        )
         for view in (
             self.account_view,
+            self.warmup_view,
             self.channels_view,
             self.links_view,
             self.commenting_view,
@@ -311,6 +320,7 @@ class MainWindow(QMainWindow):
         return (
             self.activity_panel.timer,
             self.activity_panel.countdown_timer,
+            self.warmup_view.refresh_timer,
             self.channels_view.timer,
             self.channels_view.watcher.timer,
             self.links_view.watcher.timer,
@@ -402,6 +412,7 @@ class MainWindow(QMainWindow):
         self.activity_panel.set_compact(compact)
         for view in (
             self.account_view,
+            self.warmup_view,
             self.channels_view,
             self.links_view,
             self.commenting_view,
@@ -425,6 +436,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(index)
         page_views = (
             self.account_view,
+            self.warmup_view,
             self.channels_view,
             self.links_view,
             self.commenting_view,

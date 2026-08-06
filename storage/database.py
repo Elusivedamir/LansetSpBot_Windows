@@ -35,6 +35,7 @@ from storage.db_join_campaigns import JoinCampaignRepositoryMixin
 from storage.db_settings import SettingsRepositoryMixin
 from storage.db_schema import DatabaseSchemaMixin
 from storage.db_tasks import TaskRepositoryMixin
+from storage.db_warmup import WarmupRepositoryMixin
 from storage.sqlcipher_driver import (
     default_database_key_storage_dir,
     forget_database_key,
@@ -48,6 +49,7 @@ _NATIVE_OS = os
 class Database(
     DatabaseSchemaMixin,
     AccountActivityRepositoryMixin,
+    WarmupRepositoryMixin,
     AccountRestrictionRepositoryMixin,
     AccountRepositoryMixin,
     TaskRepositoryMixin,

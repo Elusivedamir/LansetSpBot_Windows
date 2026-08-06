@@ -17,12 +17,14 @@ from core.openai_settings import (
     CommentGenerationSettings,
 )
 from services.import_service import ImportValidationError
+from services.account_context import account_secret_key
 from services.openai_comment_service import OpenAICommentService
 from workers.handlers import (
     create_audience_parser_handler,
     create_comment_slot_handler,
     create_join_slot_handler,
     create_manual_comment_handler,
+    create_warmup_step_handler,
 )
 from workers.handlers.link_channels import create_link_channels_handler
 
@@ -99,6 +101,7 @@ def create_worker_handlers(
             "openai_test": secret_store_unavailable,
             "telegram_health": secret_store_unavailable,
             "parse_audience": secret_store_unavailable,
+            "warmup_step": secret_store_unavailable,
         }, None
 
     def openai_api_key_provider() -> str | None:
@@ -154,6 +157,7 @@ def create_worker_handlers(
             "openai_test": openai_test,
             "telegram_health": telegram_not_configured,
             "parse_audience": telegram_not_configured,
+            "warmup_step": telegram_not_configured,
         }, None
 
     limiter = RateLimiter(self.config.rate_limit)
@@ -527,6 +531,33 @@ def create_worker_handlers(
             "connected": True,
         }
 
+    def warmup_contact_phone_provider(target_account_id: int) -> str | None:
+        target = int(target_account_id or 0)
+        if target <= 0:
+            return None
+        base = getattr(self, "_base", self)
+        store = getattr(base, "secret_store", None)
+        if store is None:
+            return None
+        active_lock = secret_lock if secret_lock is not None else nullcontext()
+        with active_lock:
+            key = account_secret_key(target, "telegram.phone")
+            strict_getter = getattr(type(store), "get_strict_optional", None)
+            if callable(strict_getter):
+                value = store.get_strict_optional(key)
+            else:  # pragma: no cover - compatibility for test doubles
+                value = store.get(key, "")
+        return None if value in (None, "") else str(value)
+
+    warmup_step = create_warmup_step_handler(
+        queue_worker=self.queue_worker,
+        worker_db=worker_db,
+        telegram=telegram,
+        set_runtime=set_runtime,
+        publish_activity=publish_activity,
+        contact_phone_provider=warmup_contact_phone_provider,
+    )
+
     handlers = {
         "noop": noop,
         "import": import_data,
@@ -541,5 +572,6 @@ def create_worker_handlers(
         "openai_test": openai_test,
         "telegram_health": telegram_health,
         "parse_audience": parse_audience,
+        "warmup_step": warmup_step,
     }
     return handlers, telegram.disconnect

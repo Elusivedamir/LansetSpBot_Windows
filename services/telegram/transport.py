@@ -32,8 +32,10 @@ from telethon.errors import (
     UnauthorizedError,
 )
 from telethon.tl.functions.channels import JoinChannelRequest
+from telethon.tl.functions.contacts import ImportContactsRequest
 from telethon.tl.functions.messages import (
     ImportChatInviteRequest,
+    ReadHistoryRequest,
     SendMessageRequest,
     SendReactionRequest,
 )
@@ -54,15 +56,17 @@ from services.telegram_error_translation import (
     PERMANENT_SEND_ERRORS,
     translate_permanent_send_error,
 )
+from services.telegram_result_catalog import (
+    TelegramResultDisposition,
+    classify_telegram_rpc_error,
+)
 from services.telegram_transport_decisions import (
     CancellationAction,
     NetworkFailureAction,
     OperationFailureAction,
-    RpcFailureAction,
     cancellation_action,
     network_failure_decision,
     operation_failure_decision,
-    rpc_failure_action,
 )
 
 log = logging.getLogger(__name__)
@@ -82,6 +86,8 @@ class TelegramTransportMixin(_MixinHost):
         SendReactionRequest,
         ImportChatInviteRequest,
         JoinChannelRequest,
+        ImportContactsRequest,
+        ReadHistoryRequest,
     )
 
     @staticmethod
@@ -643,44 +649,45 @@ class TelegramTransportMixin(_MixinHost):
         rpc_code = int(getattr(exc, "code", 0) or 0)
         rpc_name = type(exc).__name__
         rpc_message = str(exc)
-        action = rpc_failure_action(
+        result = classify_telegram_rpc_error(
             rpc_code=rpc_code,
             rpc_name=rpc_name,
             rpc_text=rpc_message,
             retry_network=retry_network,
             request_dispatched=request_dispatched,
+            wait_seconds=int(getattr(exc, "seconds", 0) or 0),
         )
         details: dict[str, object] = {
             "rpc_error": rpc_name,
+            "rpc_code": rpc_code,
             "rpc_message": rpc_message,
+            "classified_code": result.code,
+            "disposition": result.disposition.value,
         }
-        if action is RpcFailureAction.USER_RESTRICTED:
-            raise NonRetryableTelegramError(
-                "Telegram restricted this user account",
-                code="user_restricted",
-                details=details,
+        if result.disposition is TelegramResultDisposition.DEFERRED:
+            raise DeferredTelegramError(
+                result.message,
+                code=result.code,
+                retry_after=max(1, int(result.retry_after or 45)),
             ) from exc
-        if action is RpcFailureAction.AUTH_KEY_DUPLICATED:
-            self._connected = False
+        if result.disposition is TelegramResultDisposition.UNCERTAIN:
             raise NonRetryableTelegramError(
-                "Telegram invalidated the duplicated authorization key",
-                code="auth_key_duplicated",
-                details=details,
-            ) from exc
-        if action is RpcFailureAction.UNCERTAIN:
-            raise NonRetryableTelegramError(
-                "Telegram delivery result is unknown after a transient RPC failure; "
-                "review before retry",
+                result.message,
                 code=unknown_result_code,
                 details=details,
             ) from exc
-        if action is RpcFailureAction.DEFER:
-            raise DeferredTelegramError(
-                f"Temporary Telegram RPC error: {exc}",
-                code="telegram_rpc_deferred",
-                retry_after=random.randint(30, 90),
-            ) from exc
-        raise TelegramOperationError(f"Telegram RPC error: {exc}") from exc
+        if result.code in {
+            "auth_key_duplicated",
+            "auth_key_invalid",
+            "authorization_required",
+            "telegram_auth_key_rejected",
+        }:
+            self._connected = False
+        raise NonRetryableTelegramError(
+            result.message,
+            code=result.code,
+            details=details,
+        ) from exc
 
     async def execute(
         self,

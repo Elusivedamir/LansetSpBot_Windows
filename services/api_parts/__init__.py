@@ -5,6 +5,7 @@ from services.api_parts.openai_comments import OpenAICommentAPIMixin
 from services.api_parts.restrictions import AccountRestrictionAPIMixin
 from services.api_parts.settings import SettingsAPIMixin
 from services.api_parts.task_queue import TaskQueueAPIMixin
+from services.api_parts.warmup import WarmupAPIMixin
 
 __all__ = [
     "AccountsAPIMixin",
@@ -14,4 +15,5 @@ __all__ = [
     "SettingsAPIMixin",
     "TaskQueueAPIMixin",
     "OpenAICommentAPIMixin",
+    "WarmupAPIMixin",
 ]

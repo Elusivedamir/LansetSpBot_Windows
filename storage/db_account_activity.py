@@ -195,6 +195,12 @@ class AccountActivityRepositoryMixin(_MixinHost):
     def require_account_not_warming(self, account_id) -> None:
         if self.get_account_activity_lease(account_id) is not None:
             raise DatabaseError(WARMUP_CAMPAIGN_CONFLICT_MESSAGE)
+        normalized_account_id = int(account_id)
+        if normalized_account_id <= 0:
+            return
+        durable_check = getattr(self, "is_account_in_active_warmup", None)
+        if callable(durable_check) and bool(durable_check(normalized_account_id)):
+            raise DatabaseError(WARMUP_CAMPAIGN_CONFLICT_MESSAGE)
 
     def acquire_account_activity_lease(
         self,

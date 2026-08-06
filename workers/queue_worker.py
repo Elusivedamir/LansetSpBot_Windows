@@ -110,6 +110,7 @@ class QueueWorker(QThread):
             "direct_message",
             "comment",
             "parse_audience",
+            "warmup_step",
         }
     )
     ACCOUNT_RPC_TASK_TYPES = frozenset(
@@ -123,6 +124,7 @@ class QueueWorker(QThread):
             "comment",
             "join_saved_slot",
             "parse_audience",
+            "warmup_step",
         }
     )
 

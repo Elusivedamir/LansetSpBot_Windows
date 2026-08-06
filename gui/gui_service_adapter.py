@@ -273,3 +273,31 @@ class GUIServiceAdapter:
 
     def import_channels_from_previous_account(self):
         return self.api.import_channels_from_previous_account()
+
+
+    def get_warmup_overview(self):
+        return self.api.get_warmup_overview()
+
+    def create_warmup_pair(self, account_a_id, account_b_id):
+        return self.api.create_warmup_pair(account_a_id, account_b_id)
+
+    def add_warmup_group(self, chat_ref):
+        return self.api.add_warmup_group(chat_ref)
+
+    def remove_warmup_group(self, group_id):
+        return self.api.remove_warmup_group(group_id)
+
+    def pause_warmup_pair(self, pair_id):
+        return self.api.pause_warmup_pair(pair_id)
+
+    def resume_warmup_pair(self, pair_id):
+        return self.api.resume_warmup_pair(pair_id)
+
+    def retry_failed_warmup_pair(self, pair_id):
+        return self.api.retry_failed_warmup_pair(pair_id)
+
+    def extend_warmup_pair(self, pair_id):
+        return self.api.extend_warmup_pair(pair_id)
+
+    def transfer_warmup_account(self, account_id):
+        return self.api.transfer_warmup_account(account_id)

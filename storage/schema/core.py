@@ -42,6 +42,9 @@ from storage.migrations.account_activity_leases_v34 import (
 from storage.migrations.account_activity_lease_fk_v35 import (
     migrate_account_activity_lease_fk_v35,
 )
+from storage.migrations.warmup_workflows_v36 import (
+    migrate_warmup_workflows_v36,
+)
 
 log = logging.getLogger(__name__)
 
@@ -278,6 +281,13 @@ class SchemaCoreMixin(_MixinHost):
             current_version = self.get_version()
         if current_version < 35:
             migrate_account_activity_lease_fk_v35(
+                self.path,
+                sqlite_timeout_seconds=self.sqlite_timeout_seconds,
+                busy_timeout_ms=self.busy_timeout_ms,
+            )
+            current_version = self.get_version()
+        if current_version < 36:
+            migrate_warmup_workflows_v36(
                 self.path,
                 sqlite_timeout_seconds=self.sqlite_timeout_seconds,
                 busy_timeout_ms=self.busy_timeout_ms,

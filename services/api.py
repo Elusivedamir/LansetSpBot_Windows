@@ -27,6 +27,7 @@ from services.api_parts import (
     OpenAICommentAPIMixin,
     SettingsAPIMixin,
     TaskQueueAPIMixin,
+    WarmupAPIMixin,
 )
 from storage.database import Database
 
@@ -42,6 +43,7 @@ class ServiceAPI(
     CommentCampaignAPIMixin,
     JoinCampaignAPIMixin,
     OpenAICommentAPIMixin,
+    WarmupAPIMixin,
 ):
     """Single synchronous facade used by the Qt GUI."""
 
@@ -174,8 +176,15 @@ class ServiceAPI(
         self._maintenance_timer.timeout.connect(self._run_daily_maintenance)
         self._maintenance_timer.start()
 
+        self._warmup_recovery_done = False
+        self._warmup_lease_timer = QTimer(self)
+        self._warmup_lease_timer.setInterval(5 * 60 * 1000)
+        self._warmup_lease_timer.timeout.connect(self._warmup_lease_tick)
+        self._warmup_lease_timer.start()
+
         QTimer.singleShot(750, self._campaign_tick)
         QTimer.singleShot(1_500, self._run_daily_maintenance)
+        QTimer.singleShot(0, self._warmup_bootstrap)
 
     def get_account_observability(self, account_id=None):
         owner = (
