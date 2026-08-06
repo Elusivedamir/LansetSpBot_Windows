@@ -255,7 +255,8 @@ def test_shutdown_does_not_persist_user_cancellation(tmp_path) -> None:
 
     task = database.get_task(task_id)
     assert task["status"] == "running"
-    assert load_audience_checkpoint(task["payload"]) == {}
+    payload = database._decode_task_payload(task["payload"])
+    assert load_audience_checkpoint(payload) == {}
     assert not output.exists()
     assert list(tmp_path.glob("*.part")) == []
 
@@ -279,7 +280,8 @@ def test_shutdown_after_progress_preserves_resumable_checkpoint(tmp_path) -> Non
 
     task = database.get_task(task_id)
     assert task["status"] == "paused"
-    checkpoint = load_audience_checkpoint(task["payload"])
+    payload = database._decode_task_payload(task["payload"])
+    checkpoint = load_audience_checkpoint(payload)
     assert checkpoint["offset"] == 1
     assert checkpoint["counters"]["scanned"] == 1
     assert checkpoint["counters"]["saved"] == 1
