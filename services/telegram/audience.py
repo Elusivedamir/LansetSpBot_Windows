@@ -154,9 +154,9 @@ class TelegramAudienceMixin(_MixinHost):
                     )
                     ordered.append((user, is_admin))
                 while current < len(ordered):
-                    page = ordered[current : current + size]
-                    current += len(page)
-                    yield current, page
+                    basic_page = ordered[current : current + size]
+                    current += len(basic_page)
+                    yield current, basic_page
                 return
 
             input_channel = utils.get_input_channel(entity)

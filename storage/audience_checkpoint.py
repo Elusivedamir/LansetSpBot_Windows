@@ -60,7 +60,7 @@ def persist_audience_checkpoint(
                    WHERE id=? AND type='parse_audience'""",
                 (_encode_payload(database, payload), int(task_id)),
             )
-            return cursor.rowcount == 1
+            return bool(cursor.rowcount == 1)
     except DatabaseError:
         raise
     except Exception as exc:
@@ -89,7 +89,7 @@ def clear_audience_checkpoint(database: Any, task_id: int) -> bool:
                    WHERE id=? AND type='parse_audience'""",
                 (_encode_payload(database, payload), int(task_id)),
             )
-            return cursor.rowcount == 1
+            return bool(cursor.rowcount == 1)
     except DatabaseError:
         raise
     except Exception as exc:
@@ -130,7 +130,7 @@ def pause_audience_task_for_recovery(database: Any, task_id: int, reason: str) -
                     int(task_id),
                 ),
             )
-            return cursor.rowcount == 1
+            return bool(cursor.rowcount == 1)
     except DatabaseError:
         raise
     except Exception as exc:
