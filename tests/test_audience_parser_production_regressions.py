@@ -9,6 +9,7 @@ import pytest
 from services.account_runtime_manager import create_multiaccount_handlers
 from services.api_parts.task_queue import TaskQueueAPIMixin
 from services.telegram.audience import TelegramAudienceMixin
+from storage.audience_checkpoint import load_audience_checkpoint
 from storage.database import Database
 from workers.handlers.parse_audience import create_audience_parser_handler
 
@@ -252,9 +253,41 @@ def test_shutdown_does_not_persist_user_cancellation(tmp_path) -> None:
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(handler(_parser_task(task_id, output)))
 
-    assert database.get_task(task_id)["status"] == "running"
+    task = database.get_task(task_id)
+    assert task["status"] == "running"
+    assert load_audience_checkpoint(task["payload"]) == {}
     assert not output.exists()
     assert list(tmp_path.glob("*.part")) == []
+
+
+def test_shutdown_after_progress_preserves_resumable_checkpoint(tmp_path) -> None:
+    database = Database(tmp_path / "shutdown-progress.db")
+    output = tmp_path / "audience.txt"
+    task_id = database.insert_task("parse_audience", _parser_payload(output))
+    assert database.set_processing(task_id)
+
+    handler = create_audience_parser_handler(
+        queue_worker=_ParserQueue(task_id, interrupt_after_scope_checks=3),
+        worker_db=database,
+        telegram=_ParserTelegram(),
+        set_runtime=lambda *args, **kwargs: None,
+        publish_activity=lambda *args, **kwargs: None,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(handler(_parser_task(task_id, output)))
+
+    task = database.get_task(task_id)
+    assert task["status"] == "paused"
+    checkpoint = load_audience_checkpoint(task["payload"])
+    assert checkpoint["offset"] == 1
+    assert checkpoint["counters"]["scanned"] == 1
+    assert checkpoint["counters"]["saved"] == 1
+    partial = output.with_name(f".{output.name}.{task_id}.part")
+    assert partial.read_text(encoding="utf-8") == "@User0\n"
+    assert checkpoint["file_size"] == partial.stat().st_size
+    assert checkpoint["awaiting_user_choice"] is True
+    assert not output.exists()
 
 
 def test_crash_recovery_requeues_audience_parser(tmp_path) -> None:

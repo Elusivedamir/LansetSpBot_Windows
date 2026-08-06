@@ -219,6 +219,26 @@ def create_audience_parser_handler(
                 category="Парсинг аудитории",
             )
 
+        def preserve_shutdown_checkpoint(title: str, reason: str) -> None:
+            """Keep only useful durable progress during cooperative app shutdown."""
+
+            has_progress = offset > 0 or counters["scanned"] > 0
+            if not has_progress or not temp_path.is_file():
+                # A clean shutdown before the first processed member must retain
+                # the historical startup-recovery state: the running task is
+                # requeued on next launch, without presenting an empty resume.
+                temp_path.unlink(missing_ok=True)
+                clear_audience_checkpoint(worker_db, task_id)
+                return
+
+            # The parser's text stream has already unwound and closed before an
+            # outer exception handler runs. Reopen only to flush filesystem
+            # metadata, then persist the exact offset/counters that match it.
+            with temp_path.open("ab") as partial:
+                file_size = _durable_file_size(partial)
+            persist_checkpoint(title, file_size)
+            pause_audience_task_for_recovery(worker_db, task_id, reason)
+
         set_runtime(
             task_id,
             (
@@ -370,17 +390,15 @@ def create_audience_parser_handler(
                 finish_task_cancelled()
                 return
             if shutdown_requested():
-                pause_audience_task_for_recovery(
-                    worker_db,
-                    task_id,
+                preserve_shutdown_checkpoint(
+                    resolved_title,
                     "Парсинг остановлен при завершении программы",
                 )
                 raise asyncio.CancelledError from exc
             raise
         except asyncio.CancelledError:
-            pause_audience_task_for_recovery(
-                worker_db,
-                task_id,
+            preserve_shutdown_checkpoint(
+                resolved_title,
                 "Парсинг остановлен при завершении программы",
             )
             raise
