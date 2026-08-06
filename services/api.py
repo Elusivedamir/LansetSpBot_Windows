@@ -1,3 +1,4 @@
+# OBSERVABILITY-PACKAGE-V3
 from __future__ import annotations
 
 from typing import cast
@@ -10,6 +11,13 @@ from PySide6.QtCore import QObject, QThreadPool, QTimer, Slot
 from core.config import DEFAULT_MAX_CHANNELS_PER_RUN
 from core.secret_store import SecretStore
 from services.account_sessions import migrate_legacy_account_secrets
+from services.observability import build_account_health_snapshot
+from storage.audience_checkpoint import (
+    discard_audience_task as discard_audience_task_repository,
+    find_resumable_audience_task as find_resumable_audience_task_repository,
+    restart_audience_task as restart_audience_task_repository,
+    resume_audience_task as resume_audience_task_repository,
+)
 from gui.background import BackgroundCall
 from services.api_parts import (
     AccountRestrictionAPIMixin,
@@ -168,6 +176,34 @@ class ServiceAPI(
 
         QTimer.singleShot(750, self._campaign_tick)
         QTimer.singleShot(1_500, self._run_daily_maintenance)
+
+    def get_account_observability(self, account_id=None):
+        owner = (
+            self.database.get_setting("telegram.account_id", 0)
+            if account_id is None
+            else account_id
+        )
+        return build_account_health_snapshot(self.database, int(owner or 0))
+
+    def find_resumable_audience_task(self, account_id=None):
+        owner = (
+            self.database.get_setting("telegram.account_id", 0)
+            if account_id is None
+            else account_id
+        )
+        return find_resumable_audience_task_repository(
+            self.database,
+            account_id=int(owner or 0),
+        )
+
+    def resume_audience_task(self, task_id):
+        return resume_audience_task_repository(self.database, int(task_id))
+
+    def restart_audience_task(self, task_id):
+        return restart_audience_task_repository(self.database, int(task_id))
+
+    def discard_audience_task(self, task_id):
+        return discard_audience_task_repository(self.database, int(task_id))
 
     @Slot()
     def _reconcile_stale_deliveries(self) -> None:

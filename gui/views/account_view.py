@@ -1,3 +1,4 @@
+# OBSERVABILITY-PACKAGE-V3
 from __future__ import annotations
 
 import secrets
@@ -35,6 +36,7 @@ from core.version import APP_NAME
 from gui.auth_worker import TelegramAuthWorker
 from gui.account_manager_panel import AccountManagerPanel
 from gui.background import BackgroundCall, connect_lifecycle_safe
+from gui.views.account_health_card import AccountHealthCard
 from services.proxy_validation import normalize_proxy_config
 
 
@@ -316,6 +318,9 @@ class AccountView(QWidget):
             Qt.AlignmentFlag.AlignTop,
         )
         layout.addWidget(self.account_manager)
+        self.account_health_card = AccountHealthCard(self.adapter, self)
+        self.account_changed.connect(self.account_health_card.refresh)
+        layout.addWidget(self.account_health_card)
         layout.addWidget(form_card)
         layout.addWidget(self.reset_card)
         layout.addStretch(1)

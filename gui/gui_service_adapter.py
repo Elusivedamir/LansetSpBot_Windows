@@ -1,3 +1,4 @@
+# OBSERVABILITY-PACKAGE-V3
 from __future__ import annotations
 
 
@@ -28,6 +29,21 @@ class GUIServiceAdapter:
 
     def get_tasks(self):
         return self.api.get_tasks()
+
+    def get_account_observability(self, account_id=None):
+        return self.api.get_account_observability(account_id)
+
+    def find_resumable_audience_task(self, account_id=None):
+        return self.api.find_resumable_audience_task(account_id)
+
+    def resume_audience_task(self, task_id):
+        return self.api.resume_audience_task(task_id)
+
+    def restart_audience_task(self, task_id):
+        return self.api.restart_audience_task(task_id)
+
+    def discard_audience_task(self, task_id):
+        return self.api.discard_audience_task(task_id)
 
     def get_active_link_task(self, account_id=None):
         return self.api.get_active_link_task(account_id=account_id)

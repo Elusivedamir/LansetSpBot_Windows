@@ -1,3 +1,4 @@
+# OBSERVABILITY-PACKAGE-V3
 from __future__ import annotations
 
 from typing import cast
@@ -38,6 +39,12 @@ from core.config import MAX_COMMENT_VARIANTS
 from core.countdown import countdown_label, seconds_until
 from core.campaign_schedule import from_db_time
 from gui.background import BackgroundCall, connect_lifecycle_safe
+from services.observability import (
+    campaign_statistics,
+    classify_result,
+    format_campaign_statistics,
+    humanize_reason,
+)
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +57,7 @@ class CommentingView(QWidget):
         self.adapter = adapter
         self.current_campaign_id: int | None = None
         self.channel_names: dict[int, str] = {}
+        self._last_history_rows: list[dict] = []
         self._loading_comments = False
         self._comments_dirty = False
         self._loaded_account_id: int | None = None
@@ -337,6 +345,20 @@ class CommentingView(QWidget):
         self.campaign_layout.addWidget(self.period_label, 1, 0)
         self.campaign_layout.addWidget(self.next_label, 1, 1)
         self.campaign_layout.addWidget(self.count_label, 2, 0, 1, 2)
+        self.campaign_stats_label = QLabel(
+            format_campaign_statistics(campaign_statistics(None, []))
+        )
+        self.campaign_stats_label.setObjectName("mutedText")
+        self.campaign_stats_label.setWordWrap(True)
+        self.history_filter = QComboBox()
+        self.history_filter.addItem("Все результаты", "all")
+        self.history_filter.addItem("Успешные", "success")
+        self.history_filter.addItem("Пропущенные", "skipped")
+        self.history_filter.addItem("Ошибки", "failed")
+        self.history_filter.addItem("Отменённые", "cancelled")
+        self.history_filter.addItem("Не подтверждённые", "uncertain")
+        self.campaign_layout.addWidget(self.campaign_stats_label, 3, 0, 1, 2)
+        self.campaign_layout.addWidget(self.history_filter, 4, 0, 1, 2)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -363,6 +385,7 @@ class CommentingView(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(
             3, QHeaderView.ResizeMode.Stretch
         )
+        self.history_filter.currentIndexChanged.connect(self._rerender_history)
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(34, 28, 34, 28)
@@ -1275,6 +1298,10 @@ class CommentingView(QWidget):
             self.progress.setValue(0)
             self._set_buttons("none")
             self.table.setRowCount(0)
+            self._last_history_rows = []
+            self.campaign_stats_label.setText(
+                format_campaign_statistics(campaign_statistics(None, []))
+            )
             self.channel_names = {}
             return True
 
@@ -1321,12 +1348,26 @@ class CommentingView(QWidget):
         }
         history_rows = snapshot.get("history")
         rows = list(history_rows) if isinstance(history_rows, list) else []
+        self.campaign_stats_label.setText(
+            format_campaign_statistics(campaign_statistics(state, rows))
+        )
         self._render_history(rows)
         return True
 
-    def _render_history(self, rows: list[dict]) -> None:
-        self.table.setRowCount(len(rows))
-        for row, item in enumerate(rows):
+    def _rerender_history(self, _index: int = -1) -> None:
+        self._render_history(self._last_history_rows, remember=False)
+
+    def _render_history(self, rows: list[dict], *, remember: bool = True) -> None:
+        if remember:
+            self._last_history_rows = list(rows)
+        selected = str(self.history_filter.currentData() or "all")
+        visible = [
+            item
+            for item in self._last_history_rows
+            if selected == "all" or classify_result(item.get("status")) == selected
+        ]
+        self.table.setRowCount(len(visible))
+        for row, item in enumerate(visible):
             channel_id = item.get("channel_id")
             values = [
                 self.channel_names.get(int(channel_id), str(channel_id))
@@ -1334,7 +1375,7 @@ class CommentingView(QWidget):
                 else "—",
                 str(item.get("post_id") or "обычное сообщение"),
                 str(item.get("comment_text") or "—"),
-                str(item.get("status") or ""),
+                humanize_reason(item.get("status")),
             ]
             for column, value in enumerate(values):
                 widget_item = QTableWidgetItem(value)

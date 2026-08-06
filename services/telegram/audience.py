@@ -5,14 +5,14 @@ from urllib.parse import urlparse
 
 from telethon import types, utils
 from telethon.errors import ChannelPrivateError, ChatAdminRequiredError
-from telethon.tl.functions.messages import CheckChatInviteRequest
+from telethon.tl.functions.channels import GetParticipantsRequest
+from telethon.tl.functions.messages import CheckChatInviteRequest, GetFullChatRequest
 
 from core.exceptions import NonRetryableTelegramError
 
 if TYPE_CHECKING:
     from core.mixin_host import MixinHost as _MixinHost
 else:
-
     class _MixinHost:
         pass
 
@@ -41,7 +41,6 @@ class TelegramAudienceMixin(_MixinHost):
         link = str(source.get("link") or "").strip()
         if link:
             return link
-
         peer_id = int(source.get("peer_id") or 0)
         peer_type = str(source.get("peer_type") or "").strip().lower()
         real_id, _peer_class = utils.resolve_id(peer_id)
@@ -50,8 +49,6 @@ class TelegramAudienceMixin(_MixinHost):
         if peer_type == "channel":
             access_hash = source.get("access_hash")
             if access_hash is None:
-                # Telethon can resolve a marked peer from its encrypted session
-                # cache when the dialog was synchronized earlier.
                 return peer_id
             return types.InputPeerChannel(real_id, int(access_hash))
         raise NonRetryableTelegramError(
@@ -111,27 +108,93 @@ class TelegramAudienceMixin(_MixinHost):
                 "Выбранный источник не является группой",
                 code="audience_group_required",
             )
-        if bool(getattr(entity, "left", False)) or bool(
-            getattr(entity, "deactivated", False)
-        ):
+        if bool(getattr(entity, "left", False)) or bool(getattr(entity, "deactivated", False)):
             raise NonRetryableTelegramError(
                 "Выбранный аккаунт больше не состоит в этой группе",
                 code="audience_membership_required",
             )
         return entity
 
-    async def iter_audience_members(
-        self, entity: Any, *, dispatch_barrier=None
-    ) -> AsyncIterator[Any]:
-        """Yield members while preserving the shared pagination/FloodWait policy."""
+    async def iter_audience_member_pages(
+        self,
+        entity: Any,
+        *,
+        offset: int = 0,
+        page_size: int = 200,
+        dispatch_barrier=None,
+    ) -> AsyncIterator[tuple[int, list[tuple[Any, bool]]]]:
+        """Yield stable Telegram pages and their next offset for crash-safe resume."""
 
         await self.ensure_connected()
-        iterator = self.client.iter_participants(entity).__aiter__()
+        current = max(0, int(offset or 0))
+        size = max(1, min(200, int(page_size or 200)))
         try:
-            async for user in self._iter_with_timeout(
-                iterator, dispatch_barrier=dispatch_barrier
-            ):
-                yield user
+            if isinstance(entity, types.Chat):
+                full = await self.execute(
+                    self.client,
+                    GetFullChatRequest(chat_id=int(entity.id)),
+                    retry_network=True,
+                    dispatch_barrier=dispatch_barrier,
+                )
+                participants_obj = getattr(getattr(full, "full_chat", None), "participants", None)
+                participants = list(getattr(participants_obj, "participants", None) or [])
+                users_by_id = {
+                    int(getattr(user, "id", 0) or 0): user
+                    for user in list(getattr(full, "users", None) or [])
+                }
+                ordered: list[tuple[Any, bool]] = []
+                for participant in participants:
+                    user_id = int(getattr(participant, "user_id", 0) or 0)
+                    user = users_by_id.get(user_id)
+                    if user is None:
+                        continue
+                    is_admin = isinstance(
+                        participant,
+                        (types.ChatParticipantAdmin, types.ChatParticipantCreator),
+                    )
+                    ordered.append((user, is_admin))
+                while current < len(ordered):
+                    page = ordered[current : current + size]
+                    current += len(page)
+                    yield current, page
+                return
+
+            input_channel = utils.get_input_channel(entity)
+            while True:
+                result = await self.execute(
+                    self.client,
+                    GetParticipantsRequest(
+                        channel=input_channel,
+                        filter=types.ChannelParticipantsSearch(""),
+                        offset=current,
+                        limit=size,
+                        hash=0,
+                    ),
+                    retry_network=True,
+                    dispatch_barrier=dispatch_barrier,
+                )
+                participants = list(getattr(result, "participants", None) or [])
+                users_by_id = {
+                    int(getattr(user, "id", 0) or 0): user
+                    for user in list(getattr(result, "users", None) or [])
+                }
+                page: list[tuple[Any, bool]] = []
+                for participant in participants:
+                    user_id = int(getattr(participant, "user_id", 0) or 0)
+                    user = users_by_id.get(user_id)
+                    if user is None:
+                        continue
+                    is_admin = isinstance(
+                        participant,
+                        (types.ChannelParticipantAdmin, types.ChannelParticipantCreator),
+                    )
+                    page.append((user, is_admin))
+                if not participants:
+                    break
+                current += len(participants)
+                yield current, page
+                if len(participants) < size:
+                    break
         except ChatAdminRequiredError as exc:
             raise NonRetryableTelegramError(
                 "Telegram скрыл список участников этой группы для выбранного аккаунта",
@@ -142,3 +205,17 @@ class TelegramAudienceMixin(_MixinHost):
                 "Группа недоступна выбранному аккаунту",
                 code="audience_group_inaccessible",
             ) from exc
+
+    async def iter_audience_members(
+        self, entity: Any, *, dispatch_barrier=None
+    ) -> AsyncIterator[Any]:
+        """Compatibility stream preserving the historical public method."""
+
+        async for _next_offset, page in self.iter_audience_member_pages(
+            entity,
+            offset=0,
+            page_size=200,
+            dispatch_barrier=dispatch_barrier,
+        ):
+            for user, _is_admin in page:
+                yield user

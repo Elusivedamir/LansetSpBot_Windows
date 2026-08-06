@@ -1,3 +1,4 @@
+# OBSERVABILITY-PACKAGE-V3
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,6 +7,7 @@ from typing import Any
 from PySide6.QtCore import QStandardPaths, QThreadPool, QTimer, QUrl, Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -40,6 +42,7 @@ class AudienceParserView(QWidget):
         self._page_active = False
         self._compact_mode = False
         self._source_guard = False
+        self._resumable_task: dict[str, Any] | None = None
         self.current_task_id: int | None = None
         self.current_mode = ""
         self.output_path: Path | None = None
@@ -124,6 +127,65 @@ class AudienceParserView(QWidget):
         source_layout.addWidget(self.groups_status)
         self._root_layout.addWidget(source_card)
 
+        filters_card = QFrame()
+        filters_card.setObjectName("card")
+        filters_layout = QVBoxLayout(filters_card)
+        filters_layout.setContentsMargins(22, 18, 22, 20)
+        filters_layout.setSpacing(10)
+        filters_title = QLabel("Дополнительные фильтры")
+        filters_title.setObjectName("cardTitle")
+        filters_hint = QLabel(
+            "Все новые фильтры выключены по умолчанию. Без них правила парсинга не меняются."
+        )
+        filters_hint.setObjectName("mutedText")
+        filters_hint.setWordWrap(True)
+        filters_layout.addWidget(filters_title)
+        filters_layout.addWidget(filters_hint)
+        filters_row = QHBoxLayout()
+        self.exclude_admins = QCheckBox("Исключать администраторов")
+        self.exclude_scam_fake = QCheckBox("Исключать scam/fake")
+        self.activity_filter = QComboBox()
+        self.activity_filter.addItem("Активность: не учитывать", 0)
+        self.activity_filter.addItem("Активность: 7 дней", 7)
+        self.activity_filter.addItem("Активность: 30 дней", 30)
+        self.activity_filter.addItem("Активность: 90 дней", 90)
+        filters_row.addWidget(self.exclude_admins)
+        filters_row.addWidget(self.exclude_scam_fake)
+        filters_row.addStretch(1)
+        filters_row.addWidget(self.activity_filter)
+        filters_layout.addLayout(filters_row)
+        self._root_layout.addWidget(filters_card)
+
+        self.recovery_card = QFrame()
+        self.recovery_card.setObjectName("infoCard")
+        recovery_layout = QVBoxLayout(self.recovery_card)
+        recovery_layout.setContentsMargins(22, 18, 22, 18)
+        recovery_layout.setSpacing(10)
+        recovery_title = QLabel("Незавершённая выгрузка")
+        recovery_title.setObjectName("cardTitle")
+        self.recovery_label = QLabel("—")
+        self.recovery_label.setObjectName("mutedText")
+        self.recovery_label.setWordWrap(True)
+        recovery_actions = QHBoxLayout()
+        self.resume_recovery_button = QPushButton("Продолжить")
+        self.resume_recovery_button.setObjectName("primaryButton")
+        self.resume_recovery_button.clicked.connect(self.resume_recovered_export)
+        self.restart_recovery_button = QPushButton("Начать заново")
+        self.restart_recovery_button.setObjectName("secondaryButton")
+        self.restart_recovery_button.clicked.connect(self.restart_recovered_export)
+        self.discard_recovery_button = QPushButton("Удалить")
+        self.discard_recovery_button.setObjectName("dangerButton")
+        self.discard_recovery_button.clicked.connect(self.discard_recovered_export)
+        recovery_actions.addWidget(self.resume_recovery_button)
+        recovery_actions.addWidget(self.restart_recovery_button)
+        recovery_actions.addWidget(self.discard_recovery_button)
+        recovery_actions.addStretch(1)
+        recovery_layout.addWidget(recovery_title)
+        recovery_layout.addWidget(self.recovery_label)
+        recovery_layout.addLayout(recovery_actions)
+        self.recovery_card.hide()
+        self._root_layout.addWidget(self.recovery_card)
+
         result_card = QFrame()
         result_card.setObjectName("card")
         result_layout = QVBoxLayout(result_card)
@@ -138,6 +200,10 @@ class AudienceParserView(QWidget):
         self.summary.setObjectName("statusTitle")
         self.summary.setWordWrap(True)
         result_layout.addWidget(self.summary)
+        self.parser_stats = QLabel("Статистика появится после запуска")
+        self.parser_stats.setObjectName("mutedText")
+        self.parser_stats.setWordWrap(True)
+        result_layout.addWidget(self.parser_stats)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -226,6 +292,7 @@ class AudienceParserView(QWidget):
         self.current_mode = ""
         self.output_path = None
         self.progress.setValue(0)
+        self.parser_stats.setText("Статистика появится после запуска")
         self.stop_button.setEnabled(False)
         self.open_folder_button.setEnabled(False)
         self.account_label.setText(self._account_caption(self._account_id))
@@ -239,6 +306,7 @@ class AudienceParserView(QWidget):
         self._set_work_enabled(self._account_id > 0)
         if self._page_active and self._account_id > 0:
             self.load_cached_groups()
+        self.refresh_recovery()
 
     def set_page_active(self, active: bool) -> None:
         self._page_active = bool(active)
@@ -247,12 +315,17 @@ class AudienceParserView(QWidget):
             self.handle_account_changed()
         elif self._page_active and self._account_id > 0:
             self.load_cached_groups()
+        if self._page_active:
+            self.refresh_recovery()
 
     def _set_work_enabled(self, enabled: bool) -> None:
         idle = bool(enabled and self.current_task_id is None)
         self.group_combo.setEnabled(idle)
         self.link_input.setEnabled(idle)
         self.start_button.setEnabled(idle)
+        self.exclude_admins.setEnabled(idle)
+        self.exclude_scam_fake.setEnabled(idle)
+        self.activity_filter.setEnabled(idle)
         if not enabled:
             self.load_groups_button.setEnabled(False)
 
@@ -512,6 +585,11 @@ class AudienceParserView(QWidget):
                 "source": source,
                 "source_title": title,
                 "output_path": str(output_path),
+                "filters": {
+                    "exclude_admins": self.exclude_admins.isChecked(),
+                    "exclude_scam_fake": self.exclude_scam_fake.isChecked(),
+                    "activity_days": int(self.activity_filter.currentData() or 0),
+                },
             },
             mode="parse",
         )
@@ -530,6 +608,10 @@ class AudienceParserView(QWidget):
             if mode == "parse"
             else "Получаем список каналов и групп…"
         )
+        if mode == "parse":
+            self.parser_stats.setText(
+                "Просмотрено: 0 · сохранено: 0 · скорость: 0.0/с"
+            )
         self.stop_button.setEnabled(mode == "parse")
         self._set_work_enabled(False)
         self.load_groups_button.setEnabled(False)
@@ -571,6 +653,8 @@ class AudienceParserView(QWidget):
         status_text = str(task.get("status_text") or "").strip()
         if status_text:
             self.summary.setText(status_text)
+            if self.current_mode == "parse":
+                self.parser_stats.setText(status_text)
 
     def _task_finished(self, task: dict[str, Any]) -> None:
         if self._task_account_id(task) != self._current_account_id():
@@ -582,6 +666,7 @@ class AudienceParserView(QWidget):
         self.current_mode = ""
         self.stop_button.setEnabled(False)
         self._set_work_enabled(self._account_id > 0)
+        self.refresh_recovery()
 
         status = str(task.get("status") or "")
         if mode == "sync":
@@ -616,6 +701,110 @@ class AudienceParserView(QWidget):
 
     def _watch_failed(self, message: str) -> None:
         self.summary.setText(f"Не удалось получить состояние задачи: {message}")
+
+    def refresh_recovery(self) -> None:
+        account_id = self._current_account_id()
+        if account_id <= 0 or self.current_task_id is not None:
+            self._resumable_task = None
+            self.recovery_card.hide()
+            return
+        try:
+            task = self.adapter.find_resumable_audience_task(account_id)
+        except Exception as exc:
+            self._resumable_task = None
+            self.recovery_card.hide()
+            self.parser_stats.setText(f"Не удалось проверить восстановление: {exc}")
+            return
+        self._resumable_task = dict(task) if isinstance(task, dict) else None
+        if not self._resumable_task:
+            self.recovery_card.hide()
+            return
+        checkpoint = self._resumable_task.get("checkpoint") or {}
+        payload = self._resumable_task.get("payload") or {}
+        counters = checkpoint.get("counters") or {}
+        title = (
+            checkpoint.get("source_title")
+            or payload.get("source_title")
+            or "группа"
+        )
+        self.recovery_label.setText(
+            f"Группа: {title} · позиция: {int(checkpoint.get('offset') or 0)} · "
+            f"просмотрено: {int(counters.get('scanned') or 0)} · "
+            f"сохранено: {int(counters.get('saved') or 0)}"
+        )
+        self.recovery_card.show()
+
+    def _activate_recovered_task(self, task: dict[str, Any]) -> None:
+        task_id = int(task.get("id") or 0)
+        if task_id <= 0:
+            return
+        payload = task.get("payload") or {}
+        self.current_task_id = task_id
+        self.current_mode = "parse"
+        output = str(payload.get("output_path") or "") if isinstance(payload, dict) else ""
+        self.output_path = Path(output) if output else None
+        if self.output_path is not None:
+            self.output_label.setText(str(self.output_path))
+        self.progress.setValue(max(0, min(100, int(task.get("progress") or 0))))
+        self.stop_button.setEnabled(True)
+        self.open_folder_button.setEnabled(False)
+        self._set_work_enabled(False)
+        self.recovery_card.hide()
+        self.watcher.watch(task_id)
+        if not self.adapter.start_queue():
+            self.summary.setText("Задача подготовлена, но фоновый обработчик недоступен")
+            QMessageBox.warning(self, APP_NAME, self.adapter.get_queue_unavailable_message())
+
+    def resume_recovered_export(self) -> None:
+        task = self._resumable_task
+        if not task:
+            return
+        task_id = int(task.get("id") or 0)
+        try:
+            changed = bool(self.adapter.resume_audience_task(task_id))
+        except Exception as exc:
+            QMessageBox.warning(self, APP_NAME, str(exc))
+            return
+        if not changed:
+            QMessageBox.warning(self, APP_NAME, "Не удалось продолжить сохранённую выгрузку")
+            self.refresh_recovery()
+            return
+        task["status"] = "pending"
+        self._activate_recovered_task(task)
+
+    def restart_recovered_export(self) -> None:
+        task = self._resumable_task
+        if not task:
+            return
+        task_id = int(task.get("id") or 0)
+        try:
+            changed = bool(self.adapter.restart_audience_task(task_id))
+        except Exception as exc:
+            QMessageBox.warning(self, APP_NAME, str(exc))
+            return
+        if not changed:
+            QMessageBox.warning(self, APP_NAME, "Не удалось начать выгрузку заново")
+            self.refresh_recovery()
+            return
+        task["status"] = "pending"
+        task["progress"] = 0
+        self._activate_recovered_task(task)
+
+    def discard_recovered_export(self) -> None:
+        task = self._resumable_task
+        if not task:
+            return
+        task_id = int(task.get("id") or 0)
+        try:
+            changed = bool(self.adapter.discard_audience_task(task_id))
+        except Exception as exc:
+            QMessageBox.warning(self, APP_NAME, str(exc))
+            return
+        if not changed:
+            QMessageBox.warning(self, APP_NAME, "Не удалось удалить незавершённую выгрузку")
+        self._resumable_task = None
+        self.recovery_card.hide()
+        self.parser_stats.setText("Незавершённая выгрузка удалена")
 
     def open_output_folder(self) -> None:
         path = self.output_path
