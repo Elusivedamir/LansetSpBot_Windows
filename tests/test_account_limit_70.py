@@ -47,12 +47,12 @@ def test_existing_v31_database_replaces_the_five_account_trigger(
                    SELECT RAISE(ABORT, 'telegram account limit reached');
                END"""
         )
-        conn.execute("DELETE FROM migrations WHERE version IN (32, 33)")
+        conn.execute("DELETE FROM migrations WHERE version >= 32")
         conn.execute("PRAGMA user_version = 31")
     db.close_thread_connection()
 
     migrated = Database(path)
-    assert migrated.get_version() == 33
+    assert migrated.get_version() == 35
     for account_id in range(1, 71):
         _register(migrated, account_id)
     try:
@@ -132,3 +132,11 @@ def test_secret_store_capacity_covers_seventy_accounts(tmp_path: Path) -> None:
     assert len(payload) == 350
     store.replace_snapshot(payload)
     assert store.export_snapshot() == payload
+
+
+def test_legacy_non_positive_account_id_does_not_block_campaigns(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "legacy-zero-account.db")
+    assert db.get_account_activity_lease(0) is None
+    db.require_account_not_warming(0)

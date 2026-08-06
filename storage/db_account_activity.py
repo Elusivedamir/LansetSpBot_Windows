@@ -100,7 +100,14 @@ def get_active_account_activity_lease_in_transaction(
     activity: str = WARMUP_ACTIVITY,
     now=None,
 ) -> dict[str, Any] | None:
-    owner = _account_id(account_id)
+    try:
+        owner = int(account_id)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("Warmup requires an integer account_id") from exc
+    if owner <= 0:
+        return None
+    if owner > MAX_SQLITE_INTEGER:
+        raise ValueError("Warmup requires a positive 64-bit account_id")
     moment = now or utc_now()
     prune_expired_account_activity_leases(conn, now=moment)
     row = conn.execute(
@@ -287,7 +294,7 @@ class AccountActivityRepositoryMixin(_MixinHost):
                         token,
                     ),
                 )
-                return cursor.rowcount == 1
+                return int(getattr(cursor, "rowcount", 0) or 0) == 1
         except DatabaseError:
             raise
         except Exception as exc:
@@ -308,7 +315,7 @@ class AccountActivityRepositoryMixin(_MixinHost):
                        WHERE account_id=? AND activity=? AND owner_token=?""",
                     (owner, WARMUP_ACTIVITY, token),
                 )
-                return cursor.rowcount == 1
+                return int(getattr(cursor, "rowcount", 0) or 0) == 1
         except DatabaseError:
             raise
         except Exception as exc:
