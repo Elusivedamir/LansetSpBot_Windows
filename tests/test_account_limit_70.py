@@ -52,7 +52,7 @@ def test_existing_v31_database_replaces_the_five_account_trigger(
     db.close_thread_connection()
 
     migrated = Database(path)
-    assert migrated.get_version() == 35
+    assert migrated.get_version() == Database.SCHEMA_VERSION
     for account_id in range(1, 71):
         _register(migrated, account_id)
     try:

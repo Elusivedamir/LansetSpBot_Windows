@@ -370,7 +370,7 @@ def test_fresh_database_bootstraps_activity_schema_and_cascade(tmp_path) -> None
     )
     assert created is True
     assert account["telegram_account_id"] == 101
-    assert database.get_version() == 35
+    assert database.get_version() == Database.SCHEMA_VERSION
     with database.get_connection() as connection:
         table = connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' "
