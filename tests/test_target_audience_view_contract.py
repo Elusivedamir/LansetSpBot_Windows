@@ -16,5 +16,5 @@ def test_target_audience_view_contract() -> None:
     ast.parse(main_text)
     assert "https://t.me/TargetAudienceCommentBot" in view_text
     assert "class TargetAudienceView" in view_text
-    assert "Режим поиска ЦА" in main_text
+    assert "Поиск ЦА" in main_text
     assert "self.target_audience_view = TargetAudienceView()" in main_text

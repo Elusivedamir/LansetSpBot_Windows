@@ -84,9 +84,29 @@ class AccountView(QWidget):
         subtitle.setObjectName("pageSubtitle")
         subtitle.setWordWrap(True)
 
+        self.theme_selector = QComboBox()
+        self.theme_selector.setObjectName("themeSelector")
+        self.theme_selector.setToolTip("Выбрать оформление программы")
+        self.theme_selector.setMinimumContentsLength(18)
+        self.theme_selector.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+
+        title_column = QVBoxLayout()
+        title_column.setSpacing(2)
+        title_column.addWidget(title)
+        title_column.addWidget(subtitle)
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(16)
+        header_layout.addLayout(title_column, 1)
+        header_layout.addWidget(
+            self.theme_selector, 0, Qt.AlignmentFlag.AlignTop
+        )
+
         self.status_card = QFrame()
         self.status_card.setObjectName("statusCard")
         status_layout = QHBoxLayout(self.status_card)
+        self.status_layout = status_layout
         self.status_dot = QLabel("●")
         self.status_dot.setObjectName("statusDotOffline")
         self.status_label = QLabel("Аккаунт не подключён")
@@ -267,8 +287,7 @@ class AccountView(QWidget):
         layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         layout.setContentsMargins(34, 28, 34, 28)
         layout.setSpacing(18)
-        layout.addWidget(title)
-        layout.addWidget(subtitle)
+        layout.addLayout(header_layout)
         layout.addWidget(self.status_card)
 
         self.account_manager = AccountManagerPanel()
@@ -285,6 +304,16 @@ class AccountView(QWidget):
         )
         self.account_manager.import_channels_requested.connect(
             self._import_channels_from_previous
+        )
+        # Keep one real delete control. Reparent the already wired button from
+        # the selector row into the top status card requested by the operator.
+        self.account_manager.selector_row.removeWidget(
+            self.account_manager.delete_button
+        )
+        self.status_layout.addWidget(
+            self.account_manager.delete_button,
+            0,
+            Qt.AlignmentFlag.AlignTop,
         )
         layout.addWidget(self.account_manager)
         layout.addWidget(form_card)

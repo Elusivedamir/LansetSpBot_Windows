@@ -846,4 +846,490 @@ QPushButton:disabled {
 }
 """
 
-TELEGRAM_PREMIUM_QSS += AURORA_PRESTIGE_QSS
+BASE_PREMIUM_QSS = TELEGRAM_PREMIUM_QSS
+
+
+# The selector is deliberately more specific than the general QComboBox popup
+# rules. Ordinary application lists remain high-contrast light popups, while
+# the theme picker visually belongs to the selected premium skin.
+DARK_THEME_SELECTOR_QSS = r"""
+QComboBox#themeSelector {
+    min-width: 196px;
+    min-height: 38px;
+    max-height: 38px;
+    padding: 0 14px;
+    border-radius: 19px;
+    background: rgba(26, 14, 39, 0.94);
+    border: 1px solid #7E397D;
+    color: #FFF7FF;
+    font-size: 13px;
+    font-weight: 750;
+}
+QComboBox#themeSelector:hover, QComboBox#themeSelector:focus {
+    border: 1px solid #F05ACD;
+    background: rgba(47, 18, 55, 0.98);
+}
+QComboBox#themeSelector::drop-down {
+    border: none;
+    width: 30px;
+}
+QComboBox#themeSelector QAbstractItemView {
+    background: #160C1D;
+    color: #F8EBF8;
+    border: 1px solid #633064;
+    border-radius: 10px;
+    padding: 5px;
+    outline: none;
+    selection-background-color: #7D246B;
+    selection-color: #FFFFFF;
+}
+QComboBox#themeSelector QAbstractItemView::item {
+    min-height: 31px;
+    padding: 4px 10px;
+}
+"""
+
+LIGHT_THEME_SELECTOR_QSS = r"""
+QComboBox#themeSelector {
+    min-width: 196px;
+    min-height: 38px;
+    max-height: 38px;
+    padding: 0 14px;
+    border-radius: 19px;
+    background: #FFFFFF;
+    border: 1px solid #B8B5FF;
+    color: #5146D8;
+    font-size: 13px;
+    font-weight: 750;
+}
+QComboBox#themeSelector:hover, QComboBox#themeSelector:focus {
+    border: 1px solid #7167F0;
+    background: #F8F7FF;
+}
+QComboBox#themeSelector::drop-down {
+    border: none;
+    width: 30px;
+}
+QComboBox#themeSelector QAbstractItemView {
+    background: #FFFFFF;
+    color: #20243A;
+    border: 1px solid #C8CBE3;
+    border-radius: 10px;
+    padding: 5px;
+    outline: none;
+    selection-background-color: #E4E2FF;
+    selection-color: #342CA8;
+}
+QComboBox#themeSelector QAbstractItemView::item {
+    min-height: 31px;
+    padding: 4px 10px;
+}
+"""
+
+
+# Main skin requested by the operator. It intentionally overrides every
+# prominent Aurora/legacy accent, so no green navigation colour leaks through.
+VELVET_NIGHT_QSS = r"""
+QMainWindow, QWidget#rootWindow {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 #090611, stop:0.48 #100817, stop:1 #170A1D);
+    color: #F8F0FA;
+    font-family: "Segoe UI Variable Text", "Segoe UI", "Inter", Arial;
+}
+QWidget {
+    color: #F8F0FA;
+    font-family: "Segoe UI Variable Text", "Segoe UI", "Inter", Arial;
+}
+QFrame#sidebar {
+    background: qlineargradient(x1:0, y1:0, x2:0.92, y2:1,
+        stop:0 #13091B, stop:0.58 #110817, stop:1 #1C0A23);
+    border-right: 1px solid #442248;
+}
+QLabel#brandMark {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 #4B185A, stop:0.52 #8B266F, stop:1 #C63C94);
+    color: #FFFFFF;
+    border: 1px solid #DE5BC2;
+}
+QLabel#brandTitle { color: #FFFFFF; }
+QLabel#brandSubtitle, QLabel#pageSubtitle, QLabel#mutedText { color: #B9A9BE; }
+QLabel#pageTitle { color: #FFFFFF; }
+QLabel#cardTitle, QLabel#statusTitle { color: #FFF9FF; }
+QListWidget#navigation::item {
+    color: #D8CBDD;
+    padding: 15px 17px;
+    margin: 4px 0;
+    border-radius: 13px;
+}
+QListWidget#navigation::item:hover {
+    color: #FFFFFF;
+    background: rgba(124, 35, 103, 0.28);
+}
+QListWidget#navigation::item:selected {
+    color: #FFFFFF;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #4B185D, stop:0.52 #7A236F, stop:1 #9E285F);
+    border-left: 3px solid #F150C8;
+}
+QStackedWidget#contentStack,
+QScrollArea#pageScroll, QScrollArea#pageScroll > QWidget > QWidget {
+    background: transparent;
+}
+QFrame#card, QFrame#statusCard, QFrame#infoCard,
+QFrame#accountManagerCard {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 rgba(31, 16, 39, 0.96), stop:1 rgba(43, 18, 47, 0.92));
+    border: 1px solid #502A56;
+    border-radius: 17px;
+}
+QFrame#statusCard { border: 1px solid #633166; }
+QFrame#authChallengeCard, QFrame#commentVariantRow, QFrame#proxyCard {
+    background: #160D1C;
+    border: 1px solid #4A2850;
+    border-radius: 12px;
+}
+QFrame#dangerCard {
+    background: #21101F;
+    border: 1px solid #73314E;
+}
+QLineEdit, QPlainTextEdit, QComboBox, QAbstractSpinBox {
+    background: #130C19;
+    border: 1px solid #49304F;
+    color: #FFF8FF;
+    selection-background-color: #A72F82;
+}
+QLineEdit:hover, QPlainTextEdit:hover, QComboBox:hover, QAbstractSpinBox:hover {
+    border: 1px solid #765078;
+}
+QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {
+    border: 1px solid #E050BC;
+    background: #180D1E;
+}
+QPushButton#primaryButton, QPushButton#saveButton {
+    color: #FFFFFF;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #54156D, stop:0.5 #86216F, stop:1 #B21E63);
+    border: 1px solid #C13FA4;
+}
+QPushButton#primaryButton:hover, QPushButton#saveButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #70208D, stop:0.5 #A52D89, stop:1 #D12B7A);
+    border: 1px solid #F06DD1;
+}
+QPushButton#primaryButton:pressed, QPushButton#saveButton:pressed {
+    background: #681C68;
+}
+QPushButton#secondaryButton {
+    background: #29182F;
+    color: #F6EAF8;
+    border: 1px solid #57345D;
+}
+QPushButton#secondaryButton:hover {
+    background: #38203E;
+    border: 1px solid #8D4C8B;
+}
+QPushButton#dangerButton {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #741A46, stop:1 #A81755);
+    color: #FFFFFF;
+    border: 1px solid #C34872;
+}
+QPushButton#dangerButton:hover {
+    background: #BE205F;
+    border: 1px solid #F16A98;
+}
+QPushButton#accountDeleteButton {
+    min-width: 42px;
+    max-width: 42px;
+    min-height: 40px;
+    max-height: 40px;
+    padding: 0;
+    background: rgba(53, 24, 52, 0.9);
+    border: 1px solid #693769;
+    border-radius: 11px;
+}
+QPushButton#accountDeleteButton:hover {
+    background: #6E2148;
+    border: 1px solid #E35E99;
+}
+QPushButton#spamBotButton, QPushButton#tinyButton {
+    background: #321631;
+    color: #F2C7EA;
+    border: 1px solid #6B3567;
+}
+QPushButton#spamBotButton:hover, QPushButton#tinyButton:hover {
+    color: #FFFFFF;
+    border: 1px solid #E05BC0;
+}
+QCheckBox::indicator:checked {
+    background: #C32F9A;
+    border: 1px solid #F27AD4;
+}
+QProgressBar { background: #211126; border: 1px solid #4D2A52; }
+QProgressBar::chunk {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #8E2A8D, stop:1 #E33C9E);
+}
+QTableWidget, QTableView {
+    background: #100B16;
+    alternate-background-color: #17101D;
+    border: 1px solid #4B2B50;
+    gridline-color: #352039;
+    selection-background-color: #63265A;
+}
+QHeaderView::section {
+    background: #211226;
+    color: #CBB9CF;
+    border-bottom: 1px solid #513055;
+}
+QFrame#activityPanel {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #160C1D, stop:1 #211024);
+    border-top: 1px solid #5A2B5A;
+}
+QLabel#activityBadge {
+    color: #FFD8F6;
+    background: #4D1745;
+    border: 1px solid #933879;
+}
+QLabel#activityNext { color: #EE8FD6; }
+QPlainTextEdit#activityLog {
+    background: #100A15;
+    border: 1px solid #422247;
+    color: #DCCFE0;
+}
+QSplitter#mainSplitter::handle, QSplitter#contentSplitter::handle {
+    background: #2B1730;
+}
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+    background: #B42D8F;
+}
+"""
+
+
+TELEGRAM_OBSIDIAN_QSS = r"""
+QMainWindow, QWidget#rootWindow { background: #080E17; color: #EEF4FF; }
+QWidget { color: #EEF4FF; }
+QFrame#sidebar { background: #0C1521; border-right: 1px solid #243750; }
+QLabel#brandMark { background: #172843; border: 1px solid #4F75B8; }
+QLabel#brandSubtitle, QLabel#pageSubtitle, QLabel#mutedText { color: #91A0B7; }
+QListWidget#navigation::item { color: #C6D1E2; }
+QListWidget#navigation::item:hover { background: rgba(53, 84, 128, 0.36); color: #FFFFFF; }
+QListWidget#navigation::item:selected {
+    color: #FFFFFF;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #24436D, stop:1 #263454);
+    border-left: 3px solid #6EA7FF;
+}
+QFrame#card, QFrame#statusCard, QFrame#infoCard, QFrame#accountManagerCard {
+    background: #101A27; border: 1px solid #26374D; border-radius: 17px;
+}
+QLineEdit, QPlainTextEdit, QComboBox, QAbstractSpinBox {
+    background: #0A131F; border: 1px solid #2A3B51; color: #F4F8FF;
+}
+QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {
+    border: 1px solid #6799E8; background: #0D1825;
+}
+QPushButton#primaryButton, QPushButton#saveButton {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #4169E1, stop:1 #5146B9); border: 1px solid #7189FF; color: #FFFFFF;
+}
+QPushButton#primaryButton:hover, QPushButton#saveButton:hover {
+    background: #5577E8; border: 1px solid #9AB0FF;
+}
+QPushButton#secondaryButton { background: #1A2737; border: 1px solid #33465E; color: #E4EBF5; }
+QPushButton#secondaryButton:hover { background: #24354A; border: 1px solid #55739A; }
+QPushButton#accountDeleteButton { background: #182332; border: 1px solid #35465B; }
+QPushButton#accountDeleteButton:hover { background: #542A3A; border: 1px solid #C55E7A; }
+QFrame#activityPanel { background: #0D1723; border-top: 1px solid #2C4159; }
+QPlainTextEdit#activityLog { background: #08121C; border: 1px solid #26394D; color: #C7D3E2; }
+QLabel#activityBadge { background: #17284A; border: 1px solid #355B99; color: #CFE1FF; }
+QLabel#activityNext { color: #7FAEFF; }
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: #567DE0; }
+"""
+
+
+MIDNIGHT_GLASS_QSS = r"""
+QMainWindow, QWidget#rootWindow {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 #060D1D, stop:0.55 #0A1730, stop:1 #111A3C);
+    color: #F2F6FF;
+}
+QWidget { color: #F2F6FF; }
+QFrame#sidebar {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(15, 29, 58, 0.96), stop:1 rgba(12, 24, 48, 0.94));
+    border-right: 1px solid #3A5795;
+}
+QLabel#brandMark { background: #1B3A79; border: 1px solid #7196FF; }
+QLabel#brandSubtitle, QLabel#pageSubtitle, QLabel#mutedText { color: #A8B6D3; }
+QListWidget#navigation::item { color: #C9D5EE; }
+QListWidget#navigation::item:hover { background: rgba(65, 105, 205, 0.25); color: #FFFFFF; }
+QListWidget#navigation::item:selected {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(41, 101, 214, 0.86), stop:1 rgba(66, 57, 161, 0.78));
+    color: #FFFFFF; border: 1px solid #668CFF;
+}
+QFrame#card, QFrame#statusCard, QFrame#infoCard, QFrame#accountManagerCard {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 rgba(19, 42, 82, 0.86), stop:1 rgba(17, 30, 67, 0.82));
+    border: 1px solid #405E9C; border-radius: 17px;
+}
+QLineEdit, QPlainTextEdit, QComboBox, QAbstractSpinBox {
+    background: rgba(7, 20, 43, 0.82); border: 1px solid #3B5487; color: #F8FAFF;
+}
+QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {
+    border: 1px solid #6C94FF; background: rgba(12, 28, 58, 0.94);
+}
+QPushButton#primaryButton, QPushButton#saveButton {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #2465D8, stop:1 #344EB1); border: 1px solid #6A8FFF; color: #FFFFFF;
+}
+QPushButton#primaryButton:hover, QPushButton#saveButton:hover { background: #3479E5; border: 1px solid #90ADFF; }
+QPushButton#secondaryButton { background: rgba(40, 61, 106, 0.72); border: 1px solid #506DA4; color: #E7EEFF; }
+QPushButton#secondaryButton:hover { background: rgba(56, 82, 137, 0.9); border: 1px solid #7899D7; }
+QPushButton#accountDeleteButton { background: rgba(44, 54, 92, 0.8); border: 1px solid #596EA7; }
+QPushButton#accountDeleteButton:hover { background: #602D50; border: 1px solid #D468A4; }
+QFrame#activityPanel { background: rgba(10, 25, 54, 0.9); border-top: 1px solid #4362A1; }
+QPlainTextEdit#activityLog { background: rgba(4, 15, 35, 0.88); border: 1px solid #34528A; color: #CFD9EF; }
+QLabel#activityBadge { background: #172E5B; border: 1px solid #3D6EBA; color: #DCE9FF; }
+QLabel#activityNext { color: #88B1FF; }
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: #527BE2; }
+"""
+
+
+CYBER_AZURE_QSS = r"""
+QMainWindow, QWidget#rootWindow { background: #020A13; color: #E9FAFF; }
+QWidget { color: #E9FAFF; }
+QFrame#sidebar { background: #03101C; border-right: 1px solid #075078; }
+QLabel#brandMark { background: #05263A; border: 1px solid #00BDF5; color: #EFFFFF; }
+QLabel#brandSubtitle, QLabel#pageSubtitle, QLabel#mutedText { color: #8DA9B8; }
+QListWidget#navigation::item { color: #BBD5E2; }
+QListWidget#navigation::item:hover { background: rgba(0, 165, 225, 0.16); color: #FFFFFF; }
+QListWidget#navigation::item:selected {
+    color: #FFFFFF;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #053F61, stop:1 #06192B);
+    border-left: 3px solid #00CFFF; border-top: 1px solid #0879AA; border-bottom: 1px solid #0879AA;
+}
+QFrame#card, QFrame#statusCard, QFrame#infoCard, QFrame#accountManagerCard {
+    background: #05111E; border: 1px solid #08628E; border-radius: 13px;
+}
+QLineEdit, QPlainTextEdit, QComboBox, QAbstractSpinBox {
+    background: #020C16; border: 1px solid #075078; color: #ECFBFF;
+}
+QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {
+    border: 1px solid #00CFFF; background: #041320;
+}
+QPushButton#primaryButton, QPushButton#saveButton {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #0079B8, stop:1 #00AEE9); border: 1px solid #00D9FF; color: #FFFFFF;
+}
+QPushButton#primaryButton:hover, QPushButton#saveButton:hover { background: #00AEE9; border: 1px solid #8BEAFF; }
+QPushButton#secondaryButton { background: #061B2B; border: 1px solid #0A638E; color: #D8F6FF; }
+QPushButton#secondaryButton:hover { background: #092A40; border: 1px solid #00BCEB; }
+QPushButton#accountDeleteButton { background: #061827; border: 1px solid #08749E; }
+QPushButton#accountDeleteButton:hover { background: #4E1730; border: 1px solid #FF4E8B; }
+QFrame#activityPanel { background: #03111E; border-top: 1px solid #08739E; }
+QPlainTextEdit#activityLog { background: #010A12; border: 1px solid #07577D; color: #B9DCE8; }
+QLabel#activityBadge { background: #04334A; border: 1px solid #008DBD; color: #BDF4FF; }
+QLabel#activityNext { color: #2EDBFF; }
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: #00BFEA; }
+"""
+
+
+CRYSTAL_PREMIUM_QSS = r"""
+QMainWindow, QWidget#rootWindow { background: #F5F7FC; color: #20243A; }
+QWidget { color: #20243A; }
+QFrame#sidebar { background: #FBFCFF; border-right: 1px solid #D9DEEA; }
+QLabel#brandMark { background: #F0EEFF; color: #5E50E6; border: 1px solid #C8C2FF; }
+QLabel#brandTitle { color: #1F2436; }
+QLabel#brandSubtitle, QLabel#pageSubtitle, QLabel#mutedText { color: #6F788E; }
+QLabel#pageTitle, QLabel#cardTitle, QLabel#statusTitle { color: #171C2D; }
+QListWidget#navigation::item { color: #596277; }
+QListWidget#navigation::item:hover { background: #F0F1FF; color: #4C43D0; }
+QListWidget#navigation::item:selected {
+    color: #5146D8; background: #EDEBFF; border-left: 3px solid #6C5CE7;
+}
+QStackedWidget#contentStack, QScrollArea#pageScroll,
+QScrollArea#pageScroll > QWidget > QWidget { background: #F5F7FC; }
+QFrame#card, QFrame#statusCard, QFrame#infoCard, QFrame#accountManagerCard {
+    background: #FFFFFF; border: 1px solid #DDE2EC; border-radius: 17px;
+}
+QFrame#authChallengeCard, QFrame#commentVariantRow, QFrame#proxyCard {
+    background: #F8F9FD; border: 1px solid #D9DEEA;
+}
+QFrame#dangerCard { background: #FFF9FA; border: 1px solid #E8C8CE; }
+QLabel#dangerTitle { color: #A43D51; }
+QLabel#dangerText { color: #825761; }
+QLineEdit, QPlainTextEdit, QComboBox, QAbstractSpinBox {
+    background: #FFFFFF; border: 1px solid #CFD5E2; color: #20243A;
+    selection-background-color: #D9D5FF;
+}
+QLineEdit:hover, QPlainTextEdit:hover, QComboBox:hover, QAbstractSpinBox:hover { border: 1px solid #AEB6C8; }
+QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {
+    border: 1px solid #7167F0; background: #FFFFFF;
+}
+QPushButton#primaryButton, QPushButton#saveButton {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #6457EE, stop:1 #795FEF); border: 1px solid #756AF0; color: #FFFFFF;
+}
+QPushButton#primaryButton:hover, QPushButton#saveButton:hover { background: #7568F2; border: 1px solid #A39BFF; }
+QPushButton#secondaryButton { background: #FFFFFF; border: 1px solid #CBD1DF; color: #343A50; }
+QPushButton#secondaryButton:hover { background: #F5F4FF; border: 1px solid #8E85F4; color: #5146D8; }
+QPushButton#dangerButton { background: #FFF7F8; border: 1px solid #E7A8B4; color: #B43851; }
+QPushButton#dangerButton:hover { background: #FFECEF; border: 1px solid #D96980; }
+QPushButton#accountDeleteButton { background: #FFFFFF; border: 1px solid #D4D9E5; }
+QPushButton#accountDeleteButton:hover { background: #FFF0F3; border: 1px solid #D96C83; }
+QPushButton:disabled { background: #F0F2F6; border: 1px solid #DFE3EB; color: #9CA4B5; }
+QCheckBox { color: #3A4055; }
+QTableWidget, QTableView { background: #FFFFFF; alternate-background-color: #F8F9FC; border: 1px solid #D8DEEA; color: #22283A; }
+QHeaderView::section { background: #F0F2F8; color: #596277; border-bottom: 1px solid #D5DAE5; }
+QProgressBar { background: #ECEFF6; border: 1px solid #D5DAE7; }
+QProgressBar::chunk { background: #6E61EB; }
+QFrame#activityPanel { background: #FFFFFF; border-top: 1px solid #D7DCE8; }
+QLabel#activityTitle { color: #20243A; }
+QLabel#activityBadge { background: #F0EEFF; border: 1px solid #C3BCFF; color: #5B4DDC; }
+QLabel#activityNext { color: #6B63D8; }
+QPlainTextEdit#activityLog { background: #FBFCFF; border: 1px solid #D8DEEA; color: #3D455B; }
+QSplitter#mainSplitter::handle, QSplitter#contentSplitter::handle { background: #E0E4EC; }
+QScrollBar { background: #F2F4F8; }
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: #8C82EE; }
+QMenu { background: #FFFFFF; border: 1px solid #D2D8E4; color: #20243A; }
+QMenu::item { color: #20243A; }
+QMenu::item:selected { background: #E9E7FF; color: #4439BA; }
+QToolTip { background: #FFFFFF; border: 1px solid #C9CFDC; color: #20243A; }
+"""
+
+
+DEFAULT_THEME_KEY = "velvet-night"
+THEME_OPTIONS = (
+    ("velvet-night", "Velvet Night"),
+    ("aurora-prestige", "Aurora Prestige 2.0"),
+    ("telegram-obsidian", "Telegram Obsidian"),
+    ("midnight-glass", "Midnight Glass"),
+    ("cyber-azure", "Cyber Azure"),
+    ("crystal-premium", "Crystal Premium"),
+)
+
+THEME_STYLESHEETS = {
+    "velvet-night": BASE_PREMIUM_QSS + VELVET_NIGHT_QSS + DARK_THEME_SELECTOR_QSS,
+    "aurora-prestige": BASE_PREMIUM_QSS + AURORA_PRESTIGE_QSS + DARK_THEME_SELECTOR_QSS,
+    "telegram-obsidian": BASE_PREMIUM_QSS + TELEGRAM_OBSIDIAN_QSS + DARK_THEME_SELECTOR_QSS,
+    "midnight-glass": BASE_PREMIUM_QSS + MIDNIGHT_GLASS_QSS + DARK_THEME_SELECTOR_QSS,
+    "cyber-azure": BASE_PREMIUM_QSS + CYBER_AZURE_QSS + DARK_THEME_SELECTOR_QSS,
+    "crystal-premium": BASE_PREMIUM_QSS + CRYSTAL_PREMIUM_QSS + LIGHT_THEME_SELECTOR_QSS,
+}
+
+
+def normalize_theme_key(value: object) -> str:
+    key = str(value or "").strip().casefold()
+    return key if key in THEME_STYLESHEETS else DEFAULT_THEME_KEY
+
+
+def theme_stylesheet(value: object) -> str:
+    return THEME_STYLESHEETS[normalize_theme_key(value)]
+
+
+# Backwards-compatible public name used by existing windows and tests.
+TELEGRAM_PREMIUM_QSS = theme_stylesheet(DEFAULT_THEME_KEY)

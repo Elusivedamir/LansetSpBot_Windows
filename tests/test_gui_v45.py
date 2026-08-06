@@ -24,8 +24,8 @@ def test_main_gui_has_seven_user_pages(monkeypatch, tmp_path):
         "Каналы",
         "Связки",
         "Комментирование",
+        "Поиск ЦА",
         "Парсинг аудитории",
-        "Режим поиска ЦА",
         "Инструкция",
     ]
     assert window.stack.count() == 7
@@ -349,8 +349,9 @@ def test_aurora_prestige_account_controls_and_instruction_copy(
 
     assert manager.delete_button.objectName() == "accountDeleteButton"
     assert manager.selector_row.indexOf(manager.selector) >= 0
-    assert manager.selector_row.indexOf(manager.delete_button) >= 0
+    assert manager.selector_row.indexOf(manager.delete_button) == -1
     assert manager.actions_layout.indexOf(manager.delete_button) == -1
+    assert window.account_view.status_layout.indexOf(manager.delete_button) >= 0
 
     proxy = window.account_view
     # Account settings are loaded through BackgroundCall. Wait for the initial
@@ -375,12 +376,25 @@ def test_aurora_prestige_account_controls_and_instruction_copy(
     assert window.activity_panel.spambot_button.text() == "Проверить @SpamBot"
     assert window.activity_panel.spambot_button.objectName() == "spamBotButton"
 
-    from gui.theme import AURORA_PRESTIGE_QSS, TELEGRAM_PREMIUM_QSS
+    from gui.theme import (
+        AURORA_PRESTIGE_QSS,
+        DEFAULT_THEME_KEY,
+        TELEGRAM_PREMIUM_QSS,
+        THEME_OPTIONS,
+        VELVET_NIGHT_QSS,
+        theme_stylesheet,
+    )
     from gui.views.instructions_view import InstructionsView
 
     assert "AURORA" not in AURORA_PRESTIGE_QSS  # theme is CSS, not placeholder copy
     assert "#5546C8" in AURORA_PRESTIGE_QSS
-    assert TELEGRAM_PREMIUM_QSS.endswith(AURORA_PRESTIGE_QSS)
+    assert DEFAULT_THEME_KEY == "velvet-night"
+    assert "#F150C8" in VELVET_NIGHT_QSS
+    assert TELEGRAM_PREMIUM_QSS == theme_stylesheet(DEFAULT_THEME_KEY)
+    selector = window.account_view.theme_selector
+    assert [selector.itemData(index) for index in range(selector.count())] == [
+        key for key, _label in THEME_OPTIONS
+    ]
     instruction_text = " ".join(
         f"{title} {body}" for title, _image, body in InstructionsView.STEPS
     )

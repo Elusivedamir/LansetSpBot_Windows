@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, QUrl
+from PySide6.QtCore import QSignalBlocker, QSize, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QDialog,
@@ -21,7 +21,12 @@ from PySide6.QtWidgets import (
 from core.version import APP_NAME, BUILD_ID, __version__
 from .activity_panel import ActivityPanel
 from .resources import asset_path
-from .theme import TELEGRAM_PREMIUM_QSS
+from .theme import (
+    DEFAULT_THEME_KEY,
+    THEME_OPTIONS,
+    normalize_theme_key,
+    theme_stylesheet,
+)
 from .views.account_view import AccountView
 from .views.channels_view import ChannelsView
 from .views.commenting_view import CommentingView
@@ -37,8 +42,8 @@ class MainWindow(QMainWindow):
         "channels.svg",
         "links.svg",
         "comments.svg",
-        "audience.svg",
         "target.svg",
+        "audience.svg",
         "instructions.svg",
     )
     SIDEBAR_MAX_WIDTH = 360
@@ -68,7 +73,14 @@ class MainWindow(QMainWindow):
             | Qt.WindowType.WindowMaximizeButtonHint
             | Qt.WindowType.WindowCloseButtonHint
         )
-        self.setStyleSheet(TELEGRAM_PREMIUM_QSS)
+        try:
+            saved_ui_settings = adapter.get_settings(prefix="ui.") or {}
+        except Exception:
+            saved_ui_settings = {}
+        self._theme_key = normalize_theme_key(
+            saved_ui_settings.get("ui.theme", DEFAULT_THEME_KEY)
+        )
+        self.setStyleSheet(theme_stylesheet(self._theme_key))
         self.setWindowIcon(QIcon(str(asset_path("lansetspbot.png"))))
 
         root = QWidget()
@@ -120,8 +132,8 @@ class MainWindow(QMainWindow):
             "Каналы",
             "Связки",
             "Комментирование",
+            "Поиск ЦА",
             "Парсинг аудитории",
-            "Режим поиска ЦА",
             "Инструкция",
         ]
         self._menu_compact = [
@@ -129,8 +141,8 @@ class MainWindow(QMainWindow):
             "Каналы",
             "Связки",
             "Комменты",
-            "Парсинг",
             "Поиск ЦА",
+            "Парсинг",
             "Инструкция",
         ]
         for label, icon_name in zip(self._menu_full, self.MENU_ICONS):
@@ -161,9 +173,10 @@ class MainWindow(QMainWindow):
         self.channels_view = ChannelsView(adapter, queue_worker)
         self.links_view = LinksView(adapter)
         self.commenting_view = CommentingView(adapter)
-        self.audience_parser_view = AudienceParserView(adapter)
         self.target_audience_view = TargetAudienceView()
+        self.audience_parser_view = AudienceParserView(adapter)
         self.instructions_view = InstructionsView(adapter)
+        self._configure_theme_selector()
         self.account_view.account_changed.connect(
             self.commenting_view.handle_account_changed
         )
@@ -172,8 +185,8 @@ class MainWindow(QMainWindow):
             self.channels_view,
             self.links_view,
             self.commenting_view,
-            self.audience_parser_view,
             self.target_audience_view,
+            self.audience_parser_view,
             self.instructions_view,
         ):
             scroll = QScrollArea()
@@ -219,6 +232,34 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self.horizontal_splitter)
         self.setCentralWidget(root)
         self._suspended_runtime_timers: list[object] = []
+
+    @property
+    def current_theme_key(self) -> str:
+        return self._theme_key
+
+    def _configure_theme_selector(self) -> None:
+        selector = self.account_view.theme_selector
+        blocker = QSignalBlocker(selector)
+        selector.clear()
+        for key, label in THEME_OPTIONS:
+            selector.addItem(label, key)
+        index = selector.findData(self._theme_key)
+        selector.setCurrentIndex(index if index >= 0 else 0)
+        del blocker
+        selector.currentIndexChanged.connect(self._theme_selection_changed)
+
+    def _theme_selection_changed(self, _index: int) -> None:
+        key = normalize_theme_key(self.account_view.theme_selector.currentData())
+        if key == self._theme_key:
+            return
+        self._theme_key = key
+        self.setStyleSheet(theme_stylesheet(key))
+        try:
+            self.adapter.save_settings({"ui.theme": key})
+        except Exception:
+            # Theme switching is presentation-only. A transient settings write
+            # failure must not make the entire window unusable.
+            pass
 
     def _show_help_dialog(self) -> None:
         dialog = QDialog(self)
@@ -364,8 +405,8 @@ class MainWindow(QMainWindow):
             self.channels_view,
             self.links_view,
             self.commenting_view,
-            self.audience_parser_view,
             self.target_audience_view,
+            self.audience_parser_view,
             self.instructions_view,
         ):
             setter = getattr(view, "set_compact_mode", None)
@@ -387,8 +428,8 @@ class MainWindow(QMainWindow):
             self.channels_view,
             self.links_view,
             self.commenting_view,
-            self.audience_parser_view,
             self.target_audience_view,
+            self.audience_parser_view,
             self.instructions_view,
         )
         for page_index, view in enumerate(page_views):
