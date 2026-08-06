@@ -88,6 +88,7 @@ class CommentCampaignAPIMixin(_MixinHost):
         account_id = int(self.database.get_setting("telegram.account_id", 0) or 0)
         if account_id <= 0:
             raise ValueError("Сначала авторизуйте Telegram-аккаунт")
+        self.database.require_account_not_warming(account_id)
         self.database.reconcile_comment_schedule()
         if self.database.get_active_comment_campaign():
             raise ValueError(

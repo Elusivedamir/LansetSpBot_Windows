@@ -18,6 +18,7 @@ from core.local_security import (
 )
 from core.paths import APP_PATHS
 from core.performance import log_if_slow, wal_size_bytes
+from storage.db_account_activity import AccountActivityRepositoryMixin
 from storage.db_account_restrictions import AccountRestrictionRepositoryMixin
 from storage.db_accounts import AccountRepositoryMixin
 from storage.db_channels import ChannelRepositoryMixin
@@ -46,6 +47,7 @@ _NATIVE_OS = os
 
 class Database(
     DatabaseSchemaMixin,
+    AccountActivityRepositoryMixin,
     AccountRestrictionRepositoryMixin,
     AccountRepositoryMixin,
     TaskRepositoryMixin,

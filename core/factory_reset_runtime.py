@@ -39,6 +39,7 @@ PARENT_EXIT_TIMEOUT_SECONDS = 180.0
 
 REQUIRED_PROFILE_TABLES = frozenset(
     {
+        "account_activity_leases",
         "channels",
         "comment_campaigns",
         "comment_deliveries",

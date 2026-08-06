@@ -1,0 +1,42 @@
+{
+  "account_id": 0,
+  "private_dialogs": [
+    {
+      "peer": "@existing_contact_username",
+      "messages": [
+        "Привет! Как ты?",
+        "Добрый день. Как проходит неделя?"
+      ],
+      "allow_reactions": true
+    }
+  ],
+  "groups": [
+    {
+      "peer": "@group_already_in_account",
+      "allow_reactions": true
+    }
+  ],
+  "join_targets": [
+    "@explicit_public_group_1",
+    "@explicit_public_group_2"
+  ],
+  "weekly_join_limit": 7,
+  "max_joins_per_run": 1,
+  "send_messages_per_run": 1,
+  "max_group_reads_per_run": 3,
+  "read_messages_per_group": 5,
+  "max_reactions_per_run": 2,
+  "reaction_probability": 0.25,
+  "reaction_emojis": [
+    "👍",
+    "❤️",
+    "🔥"
+  ],
+  "message_cooldown_hours": 24,
+  "reaction_cooldown_hours": 24,
+  "join_target_cooldown_days": 30,
+  "min_hours_between_joins": 8,
+  "action_pause_min_seconds": 20,
+  "action_pause_max_seconds": 90,
+  "max_dialog_scan": 200
+}

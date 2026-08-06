@@ -37,6 +37,7 @@ _SEND_REQUEST_NAMES = frozenset(
         "SendMessageRequest",
         "SendMediaRequest",
         "SendMultiMediaRequest",
+        "SendReactionRequest",
     }
 )
 

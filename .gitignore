@@ -30,6 +30,8 @@ marlen.db-*
 .master-key.dpapi
 .env
 .env.*
+# Local warmup allowlists and operator-written messages.
+account_activity.json
 logs/
 *.log
 

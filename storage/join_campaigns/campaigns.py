@@ -11,6 +11,10 @@ from core.campaign_schedule import (
     to_db_time,
     utc_now,
 )
+from storage.db_account_activity import (
+    WARMUP_CAMPAIGN_CONFLICT_MESSAGE,
+    get_active_account_activity_lease_in_transaction,
+)
 from storage.db_common import DatabaseError, resolve_account_id
 
 log = logging.getLogger(__name__)
@@ -36,6 +40,11 @@ class JoinCampaignLifecycleMixin(_MixinHost):
         try:
             with self.get_connection() as conn:
                 conn.execute("BEGIN IMMEDIATE")
+                warmup = get_active_account_activity_lease_in_transaction(
+                    conn, account_id
+                )
+                if warmup is not None:
+                    raise DatabaseError(WARMUP_CAMPAIGN_CONFLICT_MESSAGE)
                 active = conn.execute(
                     """SELECT id FROM join_campaigns
                        WHERE account_id=?

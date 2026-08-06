@@ -32,7 +32,11 @@ from telethon.errors import (
     UnauthorizedError,
 )
 from telethon.tl.functions.channels import JoinChannelRequest
-from telethon.tl.functions.messages import ImportChatInviteRequest, SendMessageRequest
+from telethon.tl.functions.messages import (
+    ImportChatInviteRequest,
+    SendMessageRequest,
+    SendReactionRequest,
+)
 
 try:
     from telethon.errors import SecurityError
@@ -75,6 +79,7 @@ else:
 class TelegramTransportMixin(_MixinHost):
     _MUTATING_REQUEST_TYPES = (
         SendMessageRequest,
+        SendReactionRequest,
         ImportChatInviteRequest,
         JoinChannelRequest,
     )

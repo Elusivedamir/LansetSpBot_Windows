@@ -15,6 +15,10 @@ from core.campaign_schedule import (
     to_db_time,
     utc_now,
 )
+from storage.db_account_activity import (
+    WARMUP_CAMPAIGN_CONFLICT_MESSAGE,
+    get_active_account_activity_lease_in_transaction,
+)
 from storage.db_common import DatabaseError, json_dumps_safe, resolve_account_id
 from storage.comment_campaigns.common import _timedelta_microseconds
 
@@ -90,6 +94,11 @@ class CommentCampaignLifecycleMixin(_MixinHost):
         try:
             with self.get_connection() as conn:
                 conn.execute("BEGIN IMMEDIATE")
+                warmup = get_active_account_activity_lease_in_transaction(
+                    conn, owner_account_id
+                )
+                if warmup is not None:
+                    raise DatabaseError(WARMUP_CAMPAIGN_CONFLICT_MESSAGE)
                 if not allow_existing:
                     active = conn.execute(
                         """SELECT id FROM comment_campaigns

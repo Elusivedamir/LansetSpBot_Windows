@@ -36,6 +36,12 @@ from storage.migrations.account_limit_v32 import migrate_account_limit_v32
 from storage.migrations.legacy_proxy_cleanup_v33 import (
     migrate_legacy_proxy_cleanup_v33,
 )
+from storage.migrations.account_activity_leases_v34 import (
+    migrate_account_activity_leases_v34,
+)
+from storage.migrations.account_activity_lease_fk_v35 import (
+    migrate_account_activity_lease_fk_v35,
+)
 
 log = logging.getLogger(__name__)
 
@@ -258,6 +264,20 @@ class SchemaCoreMixin(_MixinHost):
             current_version = self.get_version()
         if current_version < 33:
             migrate_legacy_proxy_cleanup_v33(
+                self.path,
+                sqlite_timeout_seconds=self.sqlite_timeout_seconds,
+                busy_timeout_ms=self.busy_timeout_ms,
+            )
+            current_version = self.get_version()
+        if current_version < 34:
+            migrate_account_activity_leases_v34(
+                self.path,
+                sqlite_timeout_seconds=self.sqlite_timeout_seconds,
+                busy_timeout_ms=self.busy_timeout_ms,
+            )
+            current_version = self.get_version()
+        if current_version < 35:
+            migrate_account_activity_lease_fk_v35(
                 self.path,
                 sqlite_timeout_seconds=self.sqlite_timeout_seconds,
                 busy_timeout_ms=self.busy_timeout_ms,
