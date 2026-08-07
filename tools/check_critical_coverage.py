@@ -14,6 +14,7 @@ LINE_THRESHOLDS = {
     "storage/db_tasks.py": 55.0,
     "storage/db_channels.py": 60.0,
     "workers/queue_worker.py": 40.0,
+    "workers/handlers/warmup_step.py": 40.0,
 }
 
 LINE_GROUP_THRESHOLDS = {
@@ -89,12 +90,27 @@ LINE_GROUP_THRESHOLDS = {
         ),
         65.0,
     ),
+    "warmup_runtime": (
+        (
+            "core/warmup_planner.py",
+            "core/warmup_scenarios.py",
+            "services/api_parts/warmup.py",
+            "storage/db_warmup.py",
+            "workers/handlers/warmup_step.py",
+        ),
+        45.0,
+    ),
 }
+
+# A group-level average must not let a heavily tested large module hide an
+# effectively untested member of the same critical subsystem.
+LINE_GROUP_MEMBER_MINIMUM = 30.0
 
 # The most stateful modules must exercise decision paths, not only execute lines.
 BRANCH_THRESHOLDS = {
     "workers/handlers/join_slot.py": 30.0,
     "workers/queue_worker.py": 30.0,
+    "workers/handlers/warmup_step.py": 12.0,
 }
 
 BRANCH_GROUP_THRESHOLDS = {
@@ -147,7 +163,18 @@ BRANCH_GROUP_THRESHOLDS = {
         ),
         35.0,
     ),
+    "warmup_runtime": (
+        (
+            "core/warmup_planner.py",
+            "services/api_parts/warmup.py",
+            "storage/db_warmup.py",
+            "workers/handlers/warmup_step.py",
+        ),
+        28.0,
+    ),
 }
+
+BRANCH_GROUP_MEMBER_MINIMUM = 10.0
 
 # Backward-compatible public name used by existing tests and tooling.
 THRESHOLDS = LINE_THRESHOLDS
@@ -157,7 +184,7 @@ def _normalize_report_path(filename: str) -> str:
     """Return a platform-independent coverage filename.
 
     coverage.py emits backslashes on Windows even when ``relative_files`` is
-    enabled.  CI thresholds are intentionally written with POSIX separators,
+    enabled. CI thresholds are intentionally written with POSIX separators,
     so normalize both separators, leading ``./`` segments and case here.
     """
 
@@ -187,22 +214,92 @@ def _find_coverage_entry(files: dict[str, object], filename: str) -> object | No
     return matches[0] if len(matches) == 1 else None
 
 
+def _summary_counts(
+    files: dict[str, object], filename: str
+) -> tuple[int, int, int, int] | None:
+    entry = _find_coverage_entry(files, filename)
+    if not isinstance(entry, dict):
+        return None
+    summary = entry.get("summary", {})
+    if not isinstance(summary, dict):
+        return None
+    return (
+        int(summary.get("num_statements", 0)),
+        int(summary.get("covered_lines", 0)),
+        int(summary.get("num_branches", 0)),
+        int(summary.get("covered_branches", 0)),
+    )
+
+
 def _aggregate_summary(
     files: dict[str, object], filenames: tuple[str, ...]
 ) -> tuple[int, int, int, int] | None:
     statements = covered_lines = branches = covered_branches = 0
     for filename in filenames:
-        entry = _find_coverage_entry(files, filename)
-        if not isinstance(entry, dict):
+        counts = _summary_counts(files, filename)
+        if counts is None:
             return None
-        summary = entry.get("summary", {})
-        if not isinstance(summary, dict):
-            return None
-        statements += int(summary.get("num_statements", 0))
-        covered_lines += int(summary.get("covered_lines", 0))
-        branches += int(summary.get("num_branches", 0))
-        covered_branches += int(summary.get("covered_branches", 0))
+        file_statements, file_covered_lines, file_branches, file_covered_branches = counts
+        statements += file_statements
+        covered_lines += file_covered_lines
+        branches += file_branches
+        covered_branches += file_covered_branches
     return statements, covered_lines, branches, covered_branches
+
+
+def _check_group_member_lines(
+    files: dict[str, object],
+    *,
+    group_name: str,
+    filenames: tuple[str, ...],
+    minimum: float,
+) -> list[str]:
+    failures: list[str] = []
+    for filename in filenames:
+        counts = _summary_counts(files, filename)
+        if counts is None:
+            continue
+        statements, covered_lines, _branches, _covered_branches = counts
+        if statements <= 0:
+            continue
+        actual = covered_lines * 100.0 / statements
+        print(
+            f"{group_name}:{filename} lines: {actual:.1f}% "
+            f"(member minimum {minimum:.1f}%)"
+        )
+        if actual + 1e-9 < minimum:
+            failures.append(
+                f"{group_name}:{filename} lines: {actual:.1f}% < {minimum:.1f}%"
+            )
+    return failures
+
+
+def _check_group_member_branches(
+    files: dict[str, object],
+    *,
+    group_name: str,
+    filenames: tuple[str, ...],
+    minimum: float,
+) -> list[str]:
+    failures: list[str] = []
+    for filename in filenames:
+        counts = _summary_counts(files, filename)
+        if counts is None:
+            continue
+        _statements, _covered_lines, branches, covered_branches = counts
+        # Files without decisions should not fail a branch floor.
+        if branches <= 0:
+            continue
+        actual = covered_branches * 100.0 / branches
+        print(
+            f"{group_name}:{filename} branches: {actual:.1f}% "
+            f"(member minimum {minimum:.1f}%)"
+        )
+        if actual + 1e-9 < minimum:
+            failures.append(
+                f"{group_name}:{filename} branches: {actual:.1f}% < {minimum:.1f}%"
+            )
+    return failures
 
 
 def main() -> int:
@@ -254,6 +351,14 @@ def main() -> int:
         print(f"{group_name} lines: {actual:.1f}% (minimum {minimum:.1f}%)")
         if actual + 1e-9 < minimum:
             failures.append(f"{group_name} lines: {actual:.1f}% < {minimum:.1f}%")
+        failures.extend(
+            _check_group_member_lines(
+                files,
+                group_name=group_name,
+                filenames=filenames,
+                minimum=LINE_GROUP_MEMBER_MINIMUM,
+            )
+        )
 
     for filename, minimum in BRANCH_THRESHOLDS.items():
         entry = _find_coverage_entry(files, filename)
@@ -291,6 +396,14 @@ def main() -> int:
         print(f"{group_name} branches: {actual:.1f}% (minimum {minimum:.1f}%)")
         if actual + 1e-9 < minimum:
             failures.append(f"{group_name} branches: {actual:.1f}% < {minimum:.1f}%")
+        failures.extend(
+            _check_group_member_branches(
+                files,
+                group_name=group_name,
+                filenames=filenames,
+                minimum=BRANCH_GROUP_MEMBER_MINIMUM,
+            )
+        )
 
     if failures:
         print("Critical coverage gate failed:", file=sys.stderr)

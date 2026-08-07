@@ -426,3 +426,127 @@ def test_warmup_contact_phone_provider_is_account_scoped() -> None:
     assert len(store.keys) == 1
     assert store.keys[0].endswith(".telegram.phone")
 
+
+def test_finish_warmup_step_persists_message_context_and_advances_pair(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "finish-step.db"
+    _base_database(path)
+    migration = _load_migration()
+    migration.migrate_warmup_workflows_v36(
+        path, sqlite_timeout_seconds=5.0, busy_timeout_ms=5000
+    )
+    repository = _Repository(path)
+    pair, queued = _create_running_first_step(repository, "f" * 32)
+
+    outcome = repository.finish_warmup_step(
+        int(queued["id"]),
+        telegram_message_id=555,
+        result_text="ok",
+        skipped=False,
+    )
+
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    step = conn.execute(
+        "SELECT status,telegram_message_id,result_text FROM warmup_steps WHERE id=?",
+        (int(queued["id"]),),
+    ).fetchone()
+    pair_row = conn.execute(
+        "SELECT current_step,last_message_id,last_sender_account_id,status "
+        "FROM warmup_pairs WHERE id=?",
+        (int(pair["id"]),),
+    ).fetchone()
+    conn.close()
+
+    assert outcome["completed"] is False
+    assert step["status"] == "done"
+    assert int(step["telegram_message_id"]) == 555
+    assert step["result_text"] == "ok"
+    assert int(pair_row["current_step"]) >= int(queued["sequence_no"])
+    assert int(pair_row["last_message_id"]) == 555
+    assert int(pair_row["last_sender_account_id"]) == int(
+        queued["actor_account_id"]
+    )
+    assert pair_row["status"] == "running"
+
+
+def test_fail_warmup_step_pauses_pair_and_marks_step_failed(tmp_path: Path) -> None:
+    path = tmp_path / "fail-step.db"
+    _base_database(path)
+    migration = _load_migration()
+    migration.migrate_warmup_workflows_v36(
+        path, sqlite_timeout_seconds=5.0, busy_timeout_ms=5000
+    )
+    repository = _Repository(path)
+    pair, queued = _create_running_first_step(repository, "1f" * 16)
+
+    result = repository.fail_warmup_step(
+        int(queued["id"]),
+        message="telegram failure",
+        uncertain=False,
+    )
+
+    conn = sqlite3.connect(path)
+    step = conn.execute(
+        "SELECT status,result_text FROM warmup_steps WHERE id=?",
+        (int(queued["id"]),),
+    ).fetchone()
+    pair_row = conn.execute(
+        "SELECT status,last_error FROM warmup_pairs WHERE id=?",
+        (int(pair["id"]),),
+    ).fetchone()
+    conn.close()
+
+    assert result["status"] == "failed"
+    assert step[0] == "failed"
+    assert step[1] == "telegram failure"
+    assert pair_row[0] == "paused"
+    assert pair_row[1] == "telegram failure"
+
+
+def test_defer_warmup_step_preserves_or_clears_queue_task_as_requested(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "defer-step.db"
+    _base_database(path)
+    migration = _load_migration()
+    migration.migrate_warmup_workflows_v36(
+        path, sqlite_timeout_seconds=5.0, busy_timeout_ms=5000
+    )
+    repository = _Repository(path)
+    _pair, queued = _create_running_first_step(repository, "2f" * 16)
+    original_task_id = int(queued["queue_task_id"])
+
+    assert repository.defer_warmup_step(
+        int(queued["id"]), clear_queue_task=False
+    )
+
+    conn = sqlite3.connect(path)
+    row = conn.execute(
+        "SELECT status,queue_task_id,started_at FROM warmup_steps WHERE id=?",
+        (int(queued["id"]),),
+    ).fetchone()
+    assert row[0] == "pending"
+    assert int(row[1]) == original_task_id
+    assert row[2] is None
+
+    conn.execute(
+        "UPDATE warmup_steps SET status='running' WHERE id=?",
+        (int(queued["id"]),),
+    )
+    conn.commit()
+    conn.close()
+
+    assert repository.defer_warmup_step(
+        int(queued["id"]), clear_queue_task=True
+    )
+    conn = sqlite3.connect(path)
+    row = conn.execute(
+        "SELECT status,queue_task_id FROM warmup_steps WHERE id=?",
+        (int(queued["id"]),),
+    ).fetchone()
+    conn.close()
+
+    assert row[0] == "pending"
+    assert row[1] is None

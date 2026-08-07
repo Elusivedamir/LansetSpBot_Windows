@@ -167,21 +167,25 @@ def create_warmup_step_handler(
             return
 
         owner_token = str(step.get("owner_token") or "")
-        worker_db.acquire_account_activity_lease(
-            account_id,
-            owner_token=owner_token,
-            lease_seconds=30 * 60,
-            metadata={"pair_id": pair_id, "step_id": step_id, "source": "queue"},
-        )
-        barrier = queue_worker.create_scope_dispatch_barrier(
-            ("warmup_pair", pair_id),
-            ("account", account_id),
-            pre_dispatch_check=lambda: bool(
-                (worker_db.get_warmup_pair(pair_id) or {}).get("status") == "running"
-            ),
-        )
-
         try:
+            # Claim finalization must cover lease/barrier setup too. If either
+            # setup operation fails after begin_warmup_step() marked the step
+            # running, the common exception handlers below persist the failure
+            # instead of leaving a durable step stuck in running state.
+            worker_db.acquire_account_activity_lease(
+                account_id,
+                owner_token=owner_token,
+                lease_seconds=30 * 60,
+                metadata={"pair_id": pair_id, "step_id": step_id, "source": "queue"},
+            )
+            barrier = queue_worker.create_scope_dispatch_barrier(
+                ("warmup_pair", pair_id),
+                ("account", account_id),
+                pre_dispatch_check=lambda: bool(
+                    (worker_db.get_warmup_pair(pair_id) or {}).get("status") == "running"
+                ),
+            )
+
             action = str(step.get("action") or "")
             telegram_message_id: int | None = None
             result_text = ""

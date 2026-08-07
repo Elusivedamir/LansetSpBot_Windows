@@ -313,7 +313,12 @@ def consume_factory_reset_result(config: Config) -> dict[str, Any] | None:
     except Exception as exc:  # noqa: BLE001 - startup must remain recoverable
         return {"ok": False, "message": f"Не удалось прочитать результат сброса: {exc}"}
     finally:
-        path.unlink(missing_ok=True)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            # Result cleanup is best-effort. A transient Windows file lock must
+            # not turn a handled startup result into a fatal startup exception.
+            pass
 
 
 def _remove_stale_instance_locks(config: Config) -> None:

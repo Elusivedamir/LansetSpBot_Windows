@@ -45,7 +45,11 @@ class WarmupAPIMixin(_MixinHost):
         port = str(values.get("telegram.proxy_port") or "").strip()
         proxy_type = str(values.get("telegram.proxy_type") or "SOCKS5").upper()
         username = str(values.get("telegram.proxy_username") or "").strip()
-        configured = enabled and bool(host) and port.isdigit() and int(port) > 0
+        try:
+            port_number = int(port)
+        except (TypeError, ValueError, OverflowError):
+            port_number = 0
+        configured = enabled and bool(host) and 1 <= port_number <= 65535
         return {
             "enabled": enabled,
             "configured": configured,
