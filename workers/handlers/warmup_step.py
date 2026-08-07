@@ -212,8 +212,13 @@ def create_warmup_step_handler(
                     last_name=last_name,
                 )
                 request = functions.contacts.ImportContactsRequest(contacts=[contact])
-                with barrier.dispatch(request):
-                    await telegram.client(request)
+                await telegram.execute(
+                    telegram.client,
+                    request,
+                    retry_network=False,
+                    unknown_result_code="warmup_contact_result_unknown",
+                    dispatch_barrier=barrier,
+                )
                 result_text = "Связанный аккаунт добавлен в контакты"
                 publish_activity(
                     f"Связка #{pair_id}: контакт связанного аккаунта подготовлен",
@@ -349,8 +354,13 @@ def create_warmup_step_handler(
                         reaction=[types.ReactionEmoji(emoticon=emoji)],
                     )
                     try:
-                        with barrier.dispatch(reaction_request):
-                            await telegram.client(reaction_request)
+                        await telegram.execute(
+                            telegram.client,
+                            reaction_request,
+                            retry_network=False,
+                            unknown_result_code="warmup_private_reaction_result_unknown",
+                            dispatch_barrier=barrier,
+                        )
                         result_text = "Реакция в личном диалоге поставлена"
                         publish_activity(
                             f"Связка #{pair_id}: поставлена реакция в диалоге",
@@ -480,8 +490,13 @@ def create_warmup_step_handler(
                             request = functions.messages.ReadHistoryRequest(
                                 peer=peer, max_id=last_read
                             )
-                            with barrier.dispatch(request):
-                                await telegram.client(request)
+                            await telegram.execute(
+                                telegram.client,
+                                request,
+                                retry_network=False,
+                                unknown_result_code="warmup_read_history_result_unknown",
+                                dispatch_barrier=barrier,
+                            )
                             if bool(step.get("should_react")):
                                 candidate = readable[0]
                                 message_id = int(getattr(candidate, "id", 0) or 0)
@@ -492,8 +507,13 @@ def create_warmup_step_handler(
                                     reaction=[types.ReactionEmoji(emoticon=emoji)],
                                 )
                                 try:
-                                    with barrier.dispatch(reaction_request):
-                                        await telegram.client(reaction_request)
+                                    await telegram.execute(
+                                        telegram.client,
+                                        reaction_request,
+                                        retry_network=False,
+                                        unknown_result_code="warmup_group_reaction_result_unknown",
+                                        dispatch_barrier=barrier,
+                                    )
                                     reacted = message_id
                                 except Exception as exc:
                                     if type(exc).__name__ not in _REACTION_SKIP_ERRORS:
