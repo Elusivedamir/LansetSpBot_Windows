@@ -174,7 +174,7 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.stack.setObjectName("contentStack")
         self.account_view = AccountView(adapter, config)
-        self.warmup_view = WarmupView(adapter)
+        self.warmup_view = WarmupView(adapter, config)
         self.channels_view = ChannelsView(adapter, queue_worker)
         self.links_view = LinksView(adapter)
         self.commenting_view = CommentingView(adapter)
@@ -187,6 +187,10 @@ class MainWindow(QMainWindow):
         )
         self.account_view.account_changed.connect(
             self.warmup_view.handle_account_changed
+        )
+        self.warmup_view.account_added.connect(self.account_view.load_settings)
+        self.warmup_view.account_added.connect(
+            self.account_view.account_changed.emit
         )
         for view in (
             self.account_view,

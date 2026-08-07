@@ -77,6 +77,7 @@ class LansetSpBotApp(MainWindow):
         self._shutdown_timer.setInterval(100)
         self._shutdown_timer.timeout.connect(self._poll_shutdown)
         self.quit_requested.connect(self.account_view.request_auth_stop)
+        self.quit_requested.connect(self.warmup_view.request_auth_stop)
         self.account_view.factory_reset_requested.connect(self.request_factory_reset)
 
     def _create_tray(self) -> QSystemTrayIcon:

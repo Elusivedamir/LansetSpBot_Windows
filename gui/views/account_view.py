@@ -42,12 +42,14 @@ from services.proxy_validation import normalize_proxy_config
 
 class AccountView(QWidget):
     account_changed = Signal()
+    onboarding_completed = Signal()
     factory_reset_requested = Signal()
 
-    def __init__(self, adapter, config):
+    def __init__(self, adapter, config, *, onboarding_only: bool = False):
         super().__init__()
         self.adapter = adapter
         self.config = config
+        self._onboarding_only = bool(onboarding_only)
         self.auth_worker = None
         self.phone_code_hash = ""
         self._cached_account_values: dict = {}
@@ -123,6 +125,19 @@ class AccountView(QWidget):
         status_layout.addLayout(status_text)
         status_layout.addStretch(1)
 
+        self.proxy_status_card = QFrame()
+        self.proxy_status_card.setObjectName("infoCard")
+        proxy_status_layout = QHBoxLayout(self.proxy_status_card)
+        proxy_status_layout.setContentsMargins(18, 14, 18, 14)
+        proxy_status_layout.setSpacing(12)
+        proxy_status_title = QLabel("Прокси текущего аккаунта")
+        proxy_status_title.setObjectName("cardTitle")
+        self.proxy_status_value = QLabel("Прокси: не подключён")
+        self.proxy_status_value.setObjectName("mutedText")
+        self.proxy_status_value.setWordWrap(True)
+        proxy_status_layout.addWidget(proxy_status_title)
+        proxy_status_layout.addWidget(self.proxy_status_value, 1)
+
         form_card = QFrame()
         self.form_card = form_card
         form_card.setObjectName("card")
@@ -148,6 +163,13 @@ class AccountView(QWidget):
         self.proxy_enabled.toggled.connect(self._toggle_proxy)
         form_layout.addRow("", self.proxy_enabled)
 
+        self.proxy_details_button = QPushButton("Настройки прокси ▸")
+        self.proxy_details_button.setObjectName("secondaryButton")
+        self.proxy_details_button.setCheckable(True)
+        self.proxy_details_button.setEnabled(False)
+        self.proxy_details_button.toggled.connect(self._toggle_proxy_details)
+        form_layout.addRow("", self.proxy_details_button)
+
         self.proxy_box = QFrame()
         self.proxy_box.setObjectName("proxyCard")
         proxy_grid = QGridLayout(self.proxy_box)
@@ -165,6 +187,10 @@ class AccountView(QWidget):
         self.proxy_password = QLineEdit()
         self.proxy_password.setEchoMode(QLineEdit.EchoMode.Password)
         self.proxy_password.setPlaceholderText("Необязательно")
+        self.proxy_type.currentTextChanged.connect(self._update_proxy_status_card)
+        self.proxy_host.textChanged.connect(self._update_proxy_status_card)
+        self.proxy_port.textChanged.connect(self._update_proxy_status_card)
+        self.proxy_login.textChanged.connect(self._update_proxy_status_card)
         proxy_grid.addWidget(QLabel("Тип"), 0, 0)
         proxy_grid.addWidget(self.proxy_type, 0, 1)
         proxy_grid.addWidget(QLabel("Адрес"), 1, 0)
@@ -291,6 +317,7 @@ class AccountView(QWidget):
         layout.setSpacing(18)
         layout.addLayout(header_layout)
         layout.addWidget(self.status_card)
+        layout.addWidget(self.proxy_status_card)
 
         self.account_manager = AccountManagerPanel()
         self.account_manager.account_selected.connect(self._select_account)
@@ -324,7 +351,53 @@ class AccountView(QWidget):
         layout.addWidget(form_card)
         layout.addWidget(self.reset_card)
         layout.addStretch(1)
-        self.load_settings()
+
+        if self._onboarding_only:
+            self.theme_selector.hide()
+            self.proxy_status_card.hide()
+            self.account_manager.hide()
+            self.account_health_card.hide()
+            self.reset_card.hide()
+            self.schedule_enabled.hide()
+            self.schedule_box.hide()
+            self.logout_button.hide()
+            self.root_layout.setContentsMargins(0, 0, 0, 0)
+            self.root_layout.setSpacing(12)
+            self.status_label.setText("Добавление аккаунта для прогрева")
+            self.account_label.setText(
+                "Откройте блок и заполните Telegram API, телефон и proxy"
+            )
+        else:
+            self.load_settings()
+
+    def begin_onboarding(self) -> None:
+        """Prepare the shared account form for one new Telegram account."""
+        if not self._onboarding_only:
+            return
+        worker = self.auth_worker
+        if worker is not None and worker.isRunning():
+            QMessageBox.warning(self, APP_NAME, "Авторизация уже выполняется")
+            return
+        if not self._adding_account:
+            self._begin_add_account()
+
+    def _update_proxy_status_card(self, *_args) -> None:
+        if not self.proxy_enabled.isChecked():
+            self.proxy_status_value.setText("Прокси: не подключён")
+            return
+        proxy_type = str(self.proxy_type.currentText() or "SOCKS5").upper()
+        host = self.proxy_host.text().strip()
+        port = self.proxy_port.text().strip()
+        login = self.proxy_login.text().strip()
+        if not host or not port:
+            self.proxy_status_value.setText(
+                f"Прокси: {proxy_type} включён · заполните адрес и порт"
+            )
+            return
+        value = f"Прокси: {proxy_type} · {host}:{port}"
+        if login:
+            value += f" · логин {login}"
+        self.proxy_status_value.setText(value)
 
     def _containing_scroll_area(self) -> QScrollArea | None:
         parent = self.parentWidget()
@@ -749,8 +822,24 @@ class AccountView(QWidget):
         self.proxy_enabled.setText(
             "Прокси подключён" if active else "Подключить прокси"
         )
-        self.proxy_box.setVisible(active)
+        self.proxy_details_button.setEnabled(active)
+        if active:
+            self.proxy_details_button.setChecked(True)
+        else:
+            self.proxy_details_button.setChecked(False)
+        self._toggle_proxy_details(
+            self.proxy_details_button.isChecked()
+        )
         self._sync_proxy_type_fields(self.proxy_type.currentText())
+        self._update_proxy_status_card()
+        self._refresh_dynamic_layout()
+
+    def _toggle_proxy_details(self, expanded: bool) -> None:
+        visible = bool(expanded and self.proxy_enabled.isChecked())
+        self.proxy_box.setVisible(visible)
+        self.proxy_details_button.setText(
+            "Настройки прокси ▾" if visible else "Настройки прокси ▸"
+        )
         self._refresh_dynamic_layout()
 
     def _toggle_schedule(self, enabled: bool) -> None:
@@ -779,6 +868,7 @@ class AccountView(QWidget):
             self.api_hash,
             self.phone,
             self.proxy_enabled,
+            self.proxy_details_button,
             self.proxy_type,
             self.proxy_host,
             self.proxy_port,
@@ -945,6 +1035,7 @@ class AccountView(QWidget):
         self.proxy_login.setText(str(values.get("telegram.proxy_username") or ""))
         self.proxy_password.setText(str(values.get("telegram.proxy_password") or ""))
         self._sync_proxy_type_fields(self.proxy_type.currentText())
+        self._update_proxy_status_card()
         self._applying_settings = True
         try:
             schedule_enabled = str(
@@ -1316,7 +1407,10 @@ class AccountView(QWidget):
             self._cached_account_values = dict(compatibility)
             self._set_authorized_ui(compatibility)
             self._set_code_card_visible(False)
-            self.load_settings()
+            if self._onboarding_only:
+                self.onboarding_completed.emit()
+            else:
+                self.load_settings()
             self.account_changed.emit()
 
         self.status_label.setText("Сохранение изолированного аккаунта…")

@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import partial
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt, QThreadPool, QTimer
+from PySide6.QtCore import Qt, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.background import BackgroundCall, connect_lifecycle_safe
+from gui.views.account_view import AccountView
 
 
 _STATUS_LABELS = {
@@ -31,9 +32,12 @@ _STATUS_LABELS = {
 class WarmupView(QWidget):
     """Managed seven-day account-pair workflows with native controls."""
 
-    def __init__(self, adapter) -> None:
+    account_added = Signal()
+
+    def __init__(self, adapter, config=None) -> None:
         super().__init__()
         self.adapter = adapter
+        self.config = config
         self._overview: dict[str, Any] = {}
         self._busy = False
         self._page_active = False
@@ -56,6 +60,38 @@ class WarmupView(QWidget):
         subtitle.setWordWrap(True)
         root.addWidget(title)
         root.addWidget(subtitle)
+
+        onboarding_card = QFrame()
+        onboarding_card.setObjectName("card")
+        onboarding_layout = QVBoxLayout(onboarding_card)
+        onboarding_layout.setContentsMargins(20, 18, 20, 18)
+        onboarding_layout.setSpacing(12)
+        self.onboarding_toggle = QPushButton("Добавить аккаунт для прогрева ▸")
+        self.onboarding_toggle.setObjectName("secondaryButton")
+        self.onboarding_toggle.setCheckable(True)
+        self.onboarding_toggle.toggled.connect(self._toggle_onboarding)
+        onboarding_layout.addWidget(self.onboarding_toggle)
+
+        onboarding_hint = QLabel(
+            "API ID, API Hash, телефон, Telegram-код/2FA и отдельный proxy "
+            "используют тот же защищённый flow, что и вкладка «Аккаунт». "
+            "Настройки proxy можно свернуть, не отключая сам proxy."
+        )
+        onboarding_hint.setObjectName("mutedText")
+        onboarding_hint.setWordWrap(True)
+        onboarding_layout.addWidget(onboarding_hint)
+
+        self.account_onboarding = AccountView(
+            adapter,
+            config,
+            onboarding_only=True,
+        )
+        self.account_onboarding.onboarding_completed.connect(
+            self._onboarding_completed
+        )
+        self.account_onboarding.hide()
+        onboarding_layout.addWidget(self.account_onboarding)
+        root.addWidget(onboarding_card)
 
         create_card = QFrame()
         create_card.setObjectName("card")
@@ -124,6 +160,20 @@ class WarmupView(QWidget):
         self.refresh_timer.setInterval(5_000)
         self.refresh_timer.timeout.connect(self.refresh)
         QTimer.singleShot(0, self.refresh)
+
+    def _toggle_onboarding(self, expanded: bool) -> None:
+        self.account_onboarding.setVisible(bool(expanded))
+        self.onboarding_toggle.setText(
+            "Добавить аккаунт для прогрева ▾"
+            if expanded
+            else "Добавить аккаунт для прогрева ▸"
+        )
+        if expanded:
+            self.account_onboarding.begin_onboarding()
+
+    def _onboarding_completed(self) -> None:
+        self.account_added.emit()
+        self.refresh(force=True)
 
     @staticmethod
     def _clear_layout(layout) -> None:
@@ -553,7 +603,7 @@ class WarmupView(QWidget):
                 break
         self.account_b.setFocus(Qt.FocusReason.OtherFocusReason)
 
-    def handle_account_changed(self, _account_id: int) -> None:
+    def handle_account_changed(self, _account_id: int | None = None) -> None:
         self.refresh(force=True)
 
     def set_page_active(self, active: bool) -> None:
@@ -570,6 +620,11 @@ class WarmupView(QWidget):
         layout = self.layout()
         if layout is not None:
             layout.setContentsMargins(margin, 22, margin, 26)
+        self.account_onboarding.set_compact_mode(compact)
+
+    def request_auth_stop(self) -> bool:
+        return self.account_onboarding.request_auth_stop()
 
     def shutdown(self) -> None:
         self.refresh_timer.stop()
+        self.request_auth_stop()

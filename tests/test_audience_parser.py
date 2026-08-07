@@ -27,6 +27,7 @@ def test_audience_payload_accepts_exactly_one_group_source(tmp_path):
     path = tmp_path / "audience.txt"
     selected = validate_audience_task_payload(
         {
+            "account_id": 404,
             "source": {
                 "peer_id": -100123,
                 "peer_type": "channel",
@@ -37,6 +38,7 @@ def test_audience_payload_accepts_exactly_one_group_source(tmp_path):
         }
     )
     assert selected["source"]["access_hash"] == 456
+    assert selected["account_id"] == 404
 
     linked = validate_audience_task_payload(
         {"source": {"link": "https://t.me/example"}, "output_path": str(path)}
