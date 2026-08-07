@@ -4,7 +4,6 @@ import json
 import types
 from pathlib import Path
 
-import pytest
 
 import core.factory_reset_runtime as runtime
 from core.factory_reset import FactoryResetError
