@@ -50,7 +50,7 @@ class AccountView(QWidget):
         self.adapter = adapter
         self.config = config
         self._onboarding_only = bool(onboarding_only)
-        self.auth_worker = None
+        self.auth_worker: TelegramAuthWorker | None = None
         self.phone_code_hash = ""
         self._cached_account_values: dict = {}
         self._adding_account = False

@@ -379,8 +379,7 @@ def test_aurora_prestige_account_controls_and_instruction_copy(
     assert not proxy.proxy_box.isHidden()
     assert proxy.proxy_enabled.text() == "Прокси подключён"
 
-    assert window.activity_panel.spambot_button.text() == "Проверить @SpamBot"
-    assert window.activity_panel.spambot_button.objectName() == "spamBotButton"
+    assert not hasattr(window.activity_panel, "spambot_button")
 
     from gui.theme import (
         AURORA_PRESTIGE_QSS,
