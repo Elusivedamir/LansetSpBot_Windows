@@ -140,7 +140,8 @@ def _close_test_database_connections(monkeypatch):
     except ImportError:
         pass
     else:
-        app = QApplication.instance()
+        pending = BackgroundCall.pending_count()
+        app = QApplication.instance() if pending else None
         if app is not None:
             # Stop timers before pumping deferred deletes, otherwise a teardown
             # event can enqueue another database refresh while we are draining.
@@ -152,10 +153,11 @@ def _close_test_database_connections(monkeypatch):
             app.processEvents()
 
         deadline = time.monotonic() + 10.0
-        while BackgroundCall.has_pending_jobs() and time.monotonic() < deadline:
+        while pending and time.monotonic() < deadline:
             if app is not None:
                 app.processEvents()
             time.sleep(0.01)
+            pending = BackgroundCall.pending_count()
 
         if app is not None:
             QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

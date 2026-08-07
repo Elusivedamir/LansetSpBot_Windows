@@ -30,6 +30,11 @@ def test_main_gui_has_eight_user_pages(monkeypatch, tmp_path):
         "Инструкция",
     ]
     assert window.stack.count() == 8
+    assert hasattr(window.account_view, "proxy_status_card")
+    assert hasattr(window.account_view, "proxy_details_button")
+    assert window.warmup_view.account_onboarding._onboarding_only is True
+    assert hasattr(window.audience_parser_view, "account_selector")
+    assert not hasattr(window.activity_panel, "spambot_button")
     window._tray.hide()
     window.deleteLater()
     app.processEvents()
@@ -374,8 +379,7 @@ def test_aurora_prestige_account_controls_and_instruction_copy(
     assert not proxy.proxy_box.isHidden()
     assert proxy.proxy_enabled.text() == "Прокси подключён"
 
-    assert window.activity_panel.spambot_button.text() == "Проверить @SpamBot"
-    assert window.activity_panel.spambot_button.objectName() == "spamBotButton"
+    assert not hasattr(window.activity_panel, "spambot_button")
 
     from gui.theme import (
         AURORA_PRESTIGE_QSS,

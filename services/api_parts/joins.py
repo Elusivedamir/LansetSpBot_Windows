@@ -31,7 +31,7 @@ class JoinCampaignAPIMixin(_MixinHost):
         if get_account_restriction_state(self.database).get("active"):
             raise ValueError(
                 "Вступления заблокированы после ограничения Telegram. "
-                "Проверьте аккаунт через @SpamBot в живом журнале."
+                "Проверьте состояние аккаунта вручную в Telegram."
             )
         account_id = int(self.database.get_setting("telegram.account_id", 0) or 0)
         if account_id <= 0:
@@ -81,7 +81,7 @@ class JoinCampaignAPIMixin(_MixinHost):
     def resume_join_campaign(self):
         if get_account_restriction_state(self.database).get("active"):
             raise ValueError(
-                "Вступления нельзя продолжить до снятия ограничения через @SpamBot"
+                "Вступления нельзя продолжить, пока ограничение Telegram не снято"
             )
         campaign = self.database.get_active_join_campaign()
         if not campaign or campaign.get("status") not in {"paused", "network_wait"}:

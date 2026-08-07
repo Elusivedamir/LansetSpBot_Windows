@@ -86,7 +86,8 @@ def persisted_account_flood_wait_remaining(
     # legacy rows that do not yet have a persisted fallback.
     fallback_wait = stored_fallback if stored_fallback > 0 else max(wall_remaining, 1)
 
-    if row_boot_id != boot_id or row_deadline <= 0:
+    reanchored_from_fallback = row_boot_id != boot_id or row_deadline <= 0
+    if reanchored_from_fallback:
         candidate = now + float(fallback_wait)
         reanchor = getattr(worker_db, "reanchor_account_rpc_cooldown", None)
         if callable(reanchor):
@@ -123,6 +124,10 @@ def persisted_account_flood_wait_remaining(
         return 0
 
     remaining = row_deadline - now
+    if reanchored_from_fallback:
+        # The persisted integer fallback is authoritative after a boot
+        # change. Do not let floating-point roundoff extend it by 1 second.
+        remaining = min(remaining, float(fallback_wait))
     return max(1, int(math.ceil(remaining))) if remaining > 0 else 0
 
 
