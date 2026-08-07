@@ -75,7 +75,7 @@ class CommentCampaignAPIMixin(_MixinHost):
         if restriction.get("active"):
             raise ValueError(
                 "Отправки заблокированы после ограничения Telegram. "
-                "Проверьте аккаунт через @SpamBot в живом журнале."
+                "Проверьте состояние аккаунта вручную в Telegram."
             )
         # Persist first, then read back the authoritative SQLite value.  This
         # guarantees that the campaign snapshot exactly matches the setting the

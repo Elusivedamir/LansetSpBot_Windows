@@ -236,6 +236,16 @@ def test_gui_has_no_json_editor_and_reuses_theme_object_names() -> None:
     assert 'setObjectName("card")' in source
     assert 'setObjectName("proxyToggle")' in source
     assert 'setObjectName("proxyCard")' in source
+    assert "AccountView" in source
+    assert "onboarding_only=True" in source
+
+    parser_source = (
+        ROOT / "gui" / "views" / "audience_parser_view.py"
+    ).read_text(encoding="utf-8")
+    assert "self.account_selector = QComboBox()" in parser_source
+    assert "get_warmup_overview" in parser_source
+    assert "get_comment_campaign_state" in parser_source
+    assert 'payload["account_id"] = self._current_account_id()' in parser_source
 
 
 def test_transfer_does_not_touch_session_or_proxy_settings() -> None:

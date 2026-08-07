@@ -28,6 +28,25 @@ from gui.views.common import TaskWatcher
 from services.audience_parser import build_audience_export_filename
 
 
+_CAMPAIGN_STATUS_LABELS = {
+    "running": "активна",
+    "paused": "на паузе",
+    "network_wait": "ожидает сеть",
+    "cycle_wait": "ожидает цикл",
+    "stopped": "остановлена",
+    "failed": "ошибка",
+    "completed": "завершена",
+}
+
+_WARMUP_STATUS_LABELS = {
+    "active": "активен",
+    "paused": "на паузе",
+    "completed": "завершён",
+    "failed": "ошибка",
+    "available": "свободен",
+}
+
+
 class AudienceParserView(QWidget):
     """Aurora page for exporting visible group members' usernames to TXT."""
 
@@ -35,6 +54,7 @@ class AudienceParserView(QWidget):
         super().__init__(parent)
         self.adapter = adapter
         self._account_id = 0
+        self._account_rows: dict[int, dict[str, Any]] = {}
         self._account_generation = 0
         self._load_generation = 0
         self._load_job: BackgroundCall | None = None
@@ -73,13 +93,19 @@ class AudienceParserView(QWidget):
         account_card.setObjectName("infoCard")
         account_layout = QVBoxLayout(account_card)
         account_layout.setContentsMargins(22, 18, 22, 18)
-        account_layout.setSpacing(7)
-        account_title = QLabel("Активный аккаунт")
+        account_layout.setSpacing(8)
+        account_title = QLabel("Аккаунт для парсинга")
         account_title.setObjectName("cardTitle")
+        self.account_selector = QComboBox()
+        self.account_selector.setMinimumContentsLength(28)
+        self.account_selector.currentIndexChanged.connect(
+            self._parser_account_selected
+        )
         self.account_label = QLabel("Telegram-аккаунт не выбран")
         self.account_label.setObjectName("mutedText")
         self.account_label.setWordWrap(True)
         account_layout.addWidget(account_title)
+        account_layout.addWidget(self.account_selector)
         account_layout.addWidget(self.account_label)
         self._root_layout.addWidget(account_card)
 
@@ -234,13 +260,21 @@ class AudienceParserView(QWidget):
         self._root_layout.addWidget(result_card)
         self._root_layout.addStretch(1)
 
+        self.account_refresh_timer = QTimer(self)
+        self.account_refresh_timer.setInterval(5_000)
+        self.account_refresh_timer.timeout.connect(
+            self._periodic_account_refresh
+        )
         self.handle_account_changed()
 
-    def _current_account_id(self) -> int:
+    def _global_account_id(self) -> int:
         try:
             return max(0, int(self.adapter.get_current_account_id() or 0))
         except (TypeError, ValueError, OverflowError):
             return 0
+
+    def _current_account_id(self) -> int:
+        return max(0, int(self._account_id or 0))
 
     @staticmethod
     def _task_account_id(task: dict[str, Any]) -> int:
@@ -250,41 +284,374 @@ class AudienceParserView(QWidget):
                 0,
                 int(
                     task.get("account_id")
-                    or (payload.get("account_id") if isinstance(payload, dict) else 0)
+                    or (
+                        payload.get("account_id")
+                        if isinstance(payload, dict)
+                        else 0
+                    )
                     or 0
                 ),
             )
         except (TypeError, ValueError, OverflowError):
             return 0
 
-    def _account_caption(self, account_id: int) -> str:
-        if account_id <= 0:
-            return "Telegram-аккаунт не выбран"
+    @staticmethod
+    def _account_identity(
+        account: dict[str, Any],
+        account_id: int,
+    ) -> str:
+        name = str(
+            account.get("display_name")
+            or account.get("account_name")
+            or account.get("username")
+            or account.get("phone_masked")
+            or f"ID {account_id}"
+        ).strip()
+        username = str(account.get("username") or "").strip().lstrip("@")
+        if username and f"@{username}" not in name:
+            return f"{name} · @{username}"
+        return name
+
+    @staticmethod
+    def _campaign_state_for(
+        adapter,
+        account_id: int,
+        getter_name: str,
+    ) -> dict[str, Any]:
+        getter = getattr(adapter, getter_name, None)
+        if not callable(getter):
+            return {}
         try:
-            rows = self.adapter.list_telegram_accounts() or []
+            state = getter(account_id=account_id)
+        except (TypeError, ValueError, OverflowError):
+            return {}
         except Exception:
-            rows = []
-        for row in rows:
+            return {}
+        return dict(state or {}) if isinstance(state, dict) else {}
+
+    @staticmethod
+    def _pair_status_map(
+        pairs: list[dict[str, Any]],
+    ) -> dict[int, str]:
+        priority = {
+            "running": 5,
+            "paused": 4,
+            "failed": 3,
+            "completed": 2,
+            "archived": 1,
+        }
+        result: dict[int, str] = {}
+        for pair in pairs:
+            status = str(pair.get("status") or "").strip()
+            if not status:
+                continue
+            for key in ("account_a_id", "account_b_id"):
+                try:
+                    account_id = int(pair.get(key) or 0)
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if account_id <= 0:
+                    continue
+                previous = result.get(account_id, "")
+                if priority.get(status, 0) >= priority.get(previous, 0):
+                    result[account_id] = status
+        return result
+
+    def _workflow_accounts(self) -> list[dict[str, Any]]:
+        overview: dict[str, Any] = {}
+        try:
+            overview = dict(self.adapter.get_warmup_overview() or {})
+            rows = [
+                dict(item) for item in overview.get("accounts") or []
+            ]
+        except Exception:
             try:
-                row_id = int(row.get("telegram_account_id") or row.get("id") or 0)
+                rows = [
+                    dict(item)
+                    for item in self.adapter.list_telegram_accounts() or []
+                ]
+            except Exception:
+                rows = []
+
+        pair_status_by_account = self._pair_status_map(
+            [dict(item) for item in overview.get("pairs") or []]
+        )
+        authorized: list[dict[str, Any]] = []
+        relevant: list[dict[str, Any]] = []
+        active_campaign_statuses = {
+            "running",
+            "paused",
+            "network_wait",
+            "cycle_wait",
+        }
+        relevant_campaign_statuses = active_campaign_statuses | {
+            "stopped",
+            "failed",
+        }
+
+        for row in rows:
+            if not bool(row.get("authorized")):
+                continue
+            try:
+                account_id = int(
+                    row.get("telegram_account_id")
+                    or row.get("id")
+                    or 0
+                )
             except (TypeError, ValueError, OverflowError):
                 continue
-            if row_id != account_id:
+            if account_id <= 0:
                 continue
-            name = str(
-                row.get("display_name")
-                or row.get("account_name")
-                or row.get("username")
-                or row.get("phone")
-                or f"ID {account_id}"
-            ).strip()
-            username = str(row.get("username") or "").strip().lstrip("@")
-            return f"{name} · @{username}" if username and f"@{username}" not in name else name
-        return f"Telegram ID {account_id}"
 
-    def handle_account_changed(self) -> None:
+            comment = self._campaign_state_for(
+                self.adapter,
+                account_id,
+                "get_comment_campaign_state",
+            )
+            join = self._campaign_state_for(
+                self.adapter,
+                account_id,
+                "get_join_campaign_state",
+            )
+            candidates = [
+                (
+                    "комментарии",
+                    str(comment.get("status") or "").strip(),
+                ),
+                (
+                    "вступления",
+                    str(join.get("status") or "").strip(),
+                ),
+            ]
+            candidates = [
+                (kind, status)
+                for kind, status in candidates
+                if status
+            ]
+
+            chosen_kind = ""
+            chosen_status = ""
+            for kind, status in candidates:
+                if status in active_campaign_statuses:
+                    chosen_kind = kind
+                    chosen_status = status
+                    break
+            if not chosen_status:
+                for kind, status in candidates:
+                    if status in relevant_campaign_statuses:
+                        chosen_kind = kind
+                        chosen_status = status
+                        break
+
+            row["campaign_kind"] = chosen_kind
+            row["campaign_status"] = chosen_status
+            row["campaign_active"] = bool(
+                row.get("campaign_active")
+                or chosen_status in active_campaign_statuses
+            )
+
+            warmup_status = str(
+                row.get("warmup_status") or "available"
+            ).strip()
+            pair_status = pair_status_by_account.get(account_id, "")
+            if pair_status == "running":
+                warmup_status = "active"
+            elif pair_status == "paused":
+                warmup_status = "paused"
+            elif pair_status == "completed":
+                warmup_status = "completed"
+            elif pair_status == "failed":
+                warmup_status = "failed"
+            row["warmup_status"] = warmup_status
+
+            workflow_relevant = bool(
+                row.get("stopped")
+                or row["campaign_active"]
+                or chosen_status in relevant_campaign_statuses
+                or warmup_status not in {"", "available"}
+                or row.get("active_pair_id")
+            )
+            row["workflow_relevant"] = workflow_relevant
+            row["_account_id"] = account_id
+            authorized.append(row)
+            if workflow_relevant:
+                relevant.append(row)
+
+        selected = relevant or authorized
+        selected.sort(
+            key=lambda row: (
+                0
+                if (
+                    bool(row.get("campaign_active"))
+                    or str(row.get("warmup_status") or "") == "active"
+                )
+                else 1,
+                self._account_identity(
+                    row,
+                    int(row["_account_id"]),
+                ).casefold(),
+            )
+        )
+        return selected
+
+    def _workflow_status_text(self, row: dict[str, Any]) -> str:
+        if not row:
+            return "Telegram-аккаунт не выбран"
+
+        parts: list[str] = []
+        if bool(row.get("stopped")):
+            parts.append("Аккаунт: остановлен")
+        else:
+            runtime = str(
+                row.get("runtime_state") or "connected"
+            ).strip()
+            if runtime:
+                parts.append(f"Аккаунт: {runtime}")
+
+        warmup_status = str(
+            row.get("warmup_status") or "available"
+        )
+        if warmup_status not in {"", "available"}:
+            parts.append(
+                "Прогрев: "
+                + _WARMUP_STATUS_LABELS.get(
+                    warmup_status,
+                    warmup_status,
+                )
+            )
+        else:
+            parts.append("Прогрев: не активен")
+
+        campaign_status = str(row.get("campaign_status") or "")
+        if campaign_status:
+            label = _CAMPAIGN_STATUS_LABELS.get(
+                campaign_status,
+                campaign_status,
+            )
+            kind = str(row.get("campaign_kind") or "").strip()
+            parts.append(
+                f"Кампания ({kind}): {label}"
+                if kind
+                else f"Кампания: {label}"
+            )
+        elif bool(row.get("campaign_active")):
+            parts.append("Кампания: активна")
+        else:
+            parts.append("Кампания: не активна")
+
+        return " · ".join(parts)
+
+    def _combo_caption(self, row: dict[str, Any]) -> str:
+        account_id = int(row["_account_id"])
+        identity = self._account_identity(row, account_id)
+        tags: list[str] = []
+
+        warmup_status = str(
+            row.get("warmup_status") or "available"
+        )
+        if warmup_status not in {"", "available"}:
+            tags.append(
+                "прогрев: "
+                + _WARMUP_STATUS_LABELS.get(
+                    warmup_status,
+                    warmup_status,
+                )
+            )
+
+        campaign_status = str(row.get("campaign_status") or "")
+        if campaign_status:
+            tags.append(
+                "кампания: "
+                + _CAMPAIGN_STATUS_LABELS.get(
+                    campaign_status,
+                    campaign_status,
+                )
+            )
+        elif bool(row.get("campaign_active")):
+            tags.append("кампания: активна")
+
+        if bool(row.get("stopped")):
+            tags.append("аккаунт остановлен")
+
+        return identity + (
+            f" · {' · '.join(tags)}" if tags else ""
+        )
+
+    def _refresh_account_options(self) -> None:
+        rows = self._workflow_accounts()
+        previous = self._current_account_id()
+        global_selected = self._global_account_id()
+        self._account_rows = {
+            int(row["_account_id"]): row for row in rows
+        }
+
+        self.account_selector.blockSignals(True)
+        try:
+            self.account_selector.clear()
+            for row in rows:
+                account_id = int(row["_account_id"])
+                self.account_selector.addItem(
+                    self._combo_caption(row),
+                    account_id,
+                )
+
+            preferred = (
+                previous
+                if previous in self._account_rows
+                else (
+                    global_selected
+                    if global_selected in self._account_rows
+                    else (
+                        int(rows[0]["_account_id"])
+                        if rows
+                        else 0
+                    )
+                )
+            )
+            index = self.account_selector.findData(preferred)
+            if index >= 0:
+                self.account_selector.setCurrentIndex(index)
+            elif self.account_selector.count() > 0:
+                self.account_selector.setCurrentIndex(0)
+                preferred = int(
+                    self.account_selector.currentData() or 0
+                )
+            else:
+                preferred = 0
+        finally:
+            self.account_selector.blockSignals(False)
+
+        self._activate_parser_account(
+            preferred,
+            force=preferred != previous,
+        )
+
+    def _periodic_account_refresh(self) -> None:
+        if self._page_active and self.current_task_id is None:
+            self._refresh_account_options()
+
+    def _parser_account_selected(self, _index: int) -> None:
+        account_id = int(
+            self.account_selector.currentData() or 0
+        )
+        self._activate_parser_account(account_id)
+
+    def _activate_parser_account(
+        self,
+        account_id: int,
+        *,
+        force: bool = False,
+    ) -> None:
+        account_id = max(0, int(account_id or 0))
+        if account_id == self._account_id and not force:
+            row = self._account_rows.get(account_id, {})
+            self.account_label.setText(
+                self._workflow_status_text(row)
+            )
+            return
+
         self._account_generation += 1
-        self._account_id = self._current_account_id()
+        self._account_id = account_id
         self._load_generation += 1
         self._reload_requested = self._load_job is not None
         self.watcher.stop()
@@ -292,34 +659,74 @@ class AudienceParserView(QWidget):
         self.current_mode = ""
         self.output_path = None
         self.progress.setValue(0)
-        self.parser_stats.setText("Статистика появится после запуска")
+        self.parser_stats.setText(
+            "Статистика появится после запуска"
+        )
         self.stop_button.setEnabled(False)
         self.open_folder_button.setEnabled(False)
-        self.account_label.setText(self._account_caption(self._account_id))
         self.link_input.clear()
-        self._replace_groups([], loaded=False, syncing=False)
-        self.summary.setText(
-            "Парсинг не запущен"
-            if self._account_id > 0
-            else "Сначала выберите аккаунт на странице «Аккаунт»"
+        self._replace_groups(
+            [],
+            loaded=False,
+            syncing=False,
         )
-        self._set_work_enabled(self._account_id > 0)
-        if self._page_active and self._account_id > 0:
+
+        row = self._account_rows.get(account_id, {})
+        self.account_label.setText(
+            self._workflow_status_text(row)
+        )
+        stopped = bool(row.get("stopped"))
+
+        if account_id <= 0:
+            self.summary.setText(
+                "Нет подключённых аккаунтов в кампании или прогреве"
+            )
+        elif stopped:
+            self.summary.setText(
+                "Аккаунт отображается, но его работа остановлена. "
+                "Возобновите аккаунт во вкладке «Аккаунт»."
+            )
+        else:
+            self.summary.setText("Парсинг не запущен")
+
+        self._set_work_enabled(
+            account_id > 0 and not stopped
+        )
+        if (
+            self._page_active
+            and account_id > 0
+            and not stopped
+        ):
             self.load_cached_groups()
         self.refresh_recovery()
+
+    def handle_account_changed(self) -> None:
+        self._refresh_account_options()
 
     def set_page_active(self, active: bool) -> None:
         self._page_active = bool(active)
         self.watcher.set_active(self._page_active)
-        if self._account_id != self._current_account_id():
-            self.handle_account_changed()
-        elif self._page_active and self._account_id > 0:
-            self.load_cached_groups()
         if self._page_active:
+            self.account_refresh_timer.start()
+            self._refresh_account_options()
+            if self._account_id > 0:
+                row = self._account_rows.get(
+                    self._account_id,
+                    {},
+                )
+                if not bool(row.get("stopped")):
+                    self.load_cached_groups()
             self.refresh_recovery()
+        else:
+            self.account_refresh_timer.stop()
 
     def _set_work_enabled(self, enabled: bool) -> None:
-        idle = bool(enabled and self.current_task_id is None)
+        idle = bool(
+            enabled and self.current_task_id is None
+        )
+        self.account_selector.setEnabled(
+            self.current_task_id is None
+        )
         self.group_combo.setEnabled(idle)
         self.link_input.setEnabled(idle)
         self.start_button.setEnabled(idle)
@@ -551,7 +958,9 @@ class AudienceParserView(QWidget):
             return
         if self._current_account_id() <= 0:
             QMessageBox.information(
-                self, APP_NAME, "Сначала выберите аккаунт на странице «Аккаунт»."
+                self,
+                APP_NAME,
+                "Выберите аккаунт в блоке «Аккаунт для парсинга».",
             )
             return
         source, title = self._selected_source()
@@ -595,6 +1004,8 @@ class AudienceParserView(QWidget):
         )
 
     def _start_task(self, task_type: str, payload: dict[str, Any], *, mode: str) -> None:
+        payload = dict(payload)
+        payload["account_id"] = self._current_account_id()
         try:
             task = self.adapter.create_task(task_type, payload)
         except Exception as exc:

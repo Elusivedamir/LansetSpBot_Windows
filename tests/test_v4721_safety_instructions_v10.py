@@ -127,7 +127,7 @@ def test_instruction_view_is_a_real_multi_step_slideshow() -> None:
     view.deleteLater()
 
 
-def test_activity_panel_has_spambot_button_without_requiring_new_adapter_api() -> None:
+def test_activity_panel_has_no_spambot_button_without_requiring_new_adapter_api() -> None:
     class Adapter:
         def get_logs(self, level=None, limit=100):
             return []
@@ -144,11 +144,11 @@ def test_activity_panel_has_spambot_button_without_requiring_new_adapter_api() -
     _app()
     panel = ActivityPanel(Adapter())
     panel.timer.stop()
-    assert "@SpamBot" in panel.spambot_button.text()
+    assert not hasattr(panel, "spambot_button")
     panel.deleteLater()
 
 
-def test_activity_panel_enables_spambot_after_persistent_restriction() -> None:
+def test_activity_panel_keeps_restricted_state_without_spambot_button() -> None:
     class Adapter:
         def get_logs(self, level=None, limit=100):
             return []
@@ -169,7 +169,7 @@ def test_activity_panel_enables_spambot_after_persistent_restriction() -> None:
     panel = ActivityPanel(Adapter())
     panel.timer.stop()
     panel.refresh()
-    assert panel.spambot_button.isEnabled()
+    assert not hasattr(panel, "spambot_button")
     assert "RESTRICTED" in panel.state_label.text()
     assert "оставшиеся вступления остановлены" in panel.feed.toPlainText()
     panel.deleteLater()
