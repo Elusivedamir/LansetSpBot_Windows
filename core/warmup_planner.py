@@ -316,7 +316,7 @@ def build_week_plan(
     )
     result: list[PlannedWarmupStep] = []
     for index, (moment, values) in enumerate(pending, start=1):
-        target = values.get("target_account_id")
+        target_value = values.get("target_account_id")
         result.append(
             PlannedWarmupStep(
                 sequence_no=index,
@@ -324,7 +324,9 @@ def build_week_plan(
                 scenario_key=str(values["scenario_key"]),
                 action=str(values["action"]),
                 actor_account_id=int(values["actor_account_id"]),
-                target_account_id=int(target) if target is not None else None,
+                target_account_id=(
+                    int(target_value) if target_value is not None else None
+                ),
                 message_text=(
                     str(values["message_text"])
                     if values.get("message_text") is not None
