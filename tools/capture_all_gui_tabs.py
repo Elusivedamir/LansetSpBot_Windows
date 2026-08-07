@@ -30,6 +30,8 @@ def main() -> int:
     args = parser.parse_args()
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.name == "nt":
+        os.environ.setdefault("QT_QPA_FONTDIR", r"C:\\Windows\\Fonts")
     profile = Path(tempfile.mkdtemp(prefix="real-gui-capture-"))
     os.environ["LANSETSPBOT_DATA_DIR"] = str(profile)
     os.environ["MARLEN_DATA_DIR"] = str(profile)
@@ -37,16 +39,41 @@ def main() -> int:
     destination = (PROJECT_ROOT / args.destination).resolve()
     destination.mkdir(parents=True, exist_ok=True)
 
-    from PySide6.QtGui import QFont
+    from PySide6.QtGui import QFont, QFontDatabase
     from PySide6.QtWidgets import QApplication
     from core.composition import ApplicationContainer
     from core.config import Config
     from gui.app import LansetSpBotApp
 
     application = QApplication.instance() or QApplication(sys.argv)
-    # GitHub's offscreen Windows session can miss Qt's Cyrillic fallback.
-    # Segoe UI is the ordinary Windows UI font; this affects only the capture.
-    application.setFont(QFont("Segoe UI", 10))
+
+    capture_font_family = "Segoe UI"
+    if os.name == "nt":
+        windows_fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+        candidates = (
+            windows_fonts / "segoeui.ttf",
+            windows_fonts / "arial.ttf",
+        )
+        loaded_family = None
+        for candidate in candidates:
+            if not candidate.is_file():
+                continue
+            font_id = QFontDatabase.addApplicationFont(str(candidate))
+            if font_id < 0:
+                continue
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            if families:
+                loaded_family = families[0]
+                print(f"Loaded capture font: {loaded_family} <- {candidate}")
+                break
+        if loaded_family:
+            capture_font_family = loaded_family
+        else:
+            raise RuntimeError(
+                "Could not load a Cyrillic Windows UI font from C:\\Windows\\Fonts"
+            )
+
+    application.setFont(QFont(capture_font_family, 10))
 
     config = Config()
     container = ApplicationContainer(config)
@@ -69,6 +96,19 @@ def main() -> int:
     container.database.select_telegram_account(910001)
 
     window = LansetSpBotApp(container.adapter, container.queue_worker, config)
+
+    # Override only the font family for this screenshot process. The normal GUI
+    # theme remains untouched; this prevents headless Qt from rendering Cyrillic
+    # as tofu squares when Inter/fallback discovery is unavailable.
+    window.setStyleSheet(
+        window.styleSheet()
+        + (
+            '\nQWidget { font-family: "%s"; }\n'
+            'QPlainTextEdit#activityLog { font-family: "Consolas"; }\n'
+            % capture_font_family
+        )
+    )
+
     window.resize(args.width, args.height)
     window.show()
     application.processEvents()
