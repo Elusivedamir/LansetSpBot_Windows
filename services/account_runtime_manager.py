@@ -145,6 +145,27 @@ class TelegramAccountRuntimeManager:
     def _release_runtime(runtime: TelegramAccountRuntime) -> None:
         runtime.reservations = max(0, int(runtime.reservations) - 1)
 
+    def _runtime_rpc_cooldown_remaining(self, account_id: int) -> int:
+        """Return the account embargo enforced by the queue's boot-safe clock."""
+
+        queue_worker = getattr(self.container, "queue_worker", None)
+        checker = getattr(queue_worker, "_account_rpc_cooldown_remaining", None)
+        if not callable(checker):
+            return 0
+        reader = getattr(self.worker_database, "get_account_rpc_cooldown", None)
+        cooldown: dict[str, Any] = {}
+        if callable(reader):
+            try:
+                cooldown = dict(reader(account_id=int(account_id)) or {})
+            except Exception:
+                # The queue installs the process-local deadline before the
+                # fallible SQLite write. Preserve that local embargo if the
+                # persisted row is temporarily unreadable.
+                log.exception(
+                    "Could not read account FloodWait for runtime health check"
+                )
+        return max(0, int(checker(int(account_id), cooldown) or 0))
+
     async def _cleanup_runtime(self, runtime: TelegramAccountRuntime) -> None:
         if runtime.cleanup is None:
             return
@@ -413,6 +434,13 @@ class TelegramAccountRuntimeManager:
                         code="account_stopped",
                         details={"account_id": owner},
                     )
+                remaining = self._runtime_rpc_cooldown_remaining(owner)
+                if remaining > 0:
+                    raise DeferredTelegramError(
+                        "Telegram health check is blocked by the account FloodWait",
+                        code="account_flood_wait",
+                        retry_after=remaining,
+                    )
                 try:
                     result = await handler(
                         {
@@ -479,6 +507,7 @@ def create_multiaccount_handlers(
         "join_saved_slot",
         "openai_test",
         "parse_audience",
+        "warmup_step",
     }
 
     handlers: dict[str, Callable[[dict[str, Any]], Awaitable[Any]]] = {}
