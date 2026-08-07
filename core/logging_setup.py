@@ -14,12 +14,14 @@ from core.local_security import (
 from core.paths import APP_PATHS
 from core.redaction import sanitize_log_text
 
-# Dedicated text log budget: marlen.log (1 MiB) + marlen.log.1 (1 MiB).
-# The persistent user-facing SQLite journal has its own 5 MiB budget, keeping
-# total retained log content at approximately 7 MiB.
-FILE_LOG_SEGMENT_BYTES = 1 * 1024 * 1024
-FILE_LOG_BACKUP_COUNT = 1
-FILE_LOG_TOTAL_BYTES = FILE_LOG_SEGMENT_BYTES * (FILE_LOG_BACKUP_COUNT + 1)
+# One shareable technical log. It stays as one physical file so an
+# operator can attach it after a Windows test without hunting down rotations.
+# When the cap is reached the oldest bytes are discarded in-place; no .1 file
+# is created.
+FILE_LOG_SEGMENT_BYTES = 16 * 1024 * 1024
+FILE_LOG_RETAIN_BYTES = 12 * 1024 * 1024
+FILE_LOG_BACKUP_COUNT = 0
+FILE_LOG_TOTAL_BYTES = FILE_LOG_SEGMENT_BYTES
 FILE_LOG_RECORD_BYTES = 64 * 1024
 
 
@@ -62,6 +64,17 @@ class _Utf8RotatingFileHandler(RotatingFileHandler):
         )
         self.stream.seek(0, 2)
         return self.stream.tell() + len(rendered) > self.maxBytes
+
+    def doRollover(self) -> None:  # noqa: N802 - logging API
+        # RotatingFileHandler with backupCount=0 only reopens in append mode.
+        # Truncate oldest bytes in-place so marlen.log remains a single file.
+        if self.stream is not None:
+            self.stream.flush()
+            self.stream.close()
+            self.stream = None
+        _truncate_to_tail(Path(self.baseFilename), FILE_LOG_RETAIN_BYTES)
+        if not self.delay:
+            self.stream = self._open()
 
 
 def _truncate_to_tail(path: Path, max_bytes: int) -> None:
@@ -114,7 +127,7 @@ def _enforce_existing_file_budget(log_file: Path) -> None:
             except FileNotFoundError:
                 pass
 
-    _truncate_to_tail(log_file, FILE_LOG_SEGMENT_BYTES)
+    _truncate_to_tail(log_file, FILE_LOG_RETAIN_BYTES)
     for index in range(1, FILE_LOG_BACKUP_COUNT + 1):
         _truncate_to_tail(
             log_file.with_name(f"{log_file.name}.{index}"),
@@ -160,4 +173,30 @@ def setup_logging() -> logging.Logger:
     file_handler.setFormatter(
         _BoundedFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     )
-    return logging.getLogger("marlen")
+    session_logger = logging.getLogger("marlen")
+    session_logger.info("===== LansetSpBot logging session started =====")
+    return session_logger
+
+
+def mirror_activity_log(level: object, message: object, *, account_id: int = 0) -> None:
+    """Mirror the persistent GUI journal into the same shareable text log."""
+
+    root = logging.getLogger()
+    active = any(
+        isinstance(handler, _Utf8RotatingFileHandler)
+        and Path(str(getattr(handler, "baseFilename", ""))).name == "marlen.log"
+        for handler in tuple(root.handlers)
+    )
+    if not active:
+        # Database-only tests intentionally do not configure file logging.
+        return
+    normalized = str(level or "INFO").strip().upper()
+    level_number = getattr(logging, normalized, logging.INFO)
+    if not isinstance(level_number, int):
+        level_number = logging.INFO
+    logging.getLogger("marlen.activity").log(
+        level_number,
+        "[Живой журнал][account=%s] %s",
+        int(account_id or 0),
+        message,
+    )

@@ -71,7 +71,9 @@ def test_single_persistent_log_entry_is_utf8_bounded(tmp_path):
     assert row["message"].endswith("… [обрезано]")
 
 
-def test_file_logs_use_two_mib_total_and_cleanup_old_rotations(monkeypatch, tmp_path):
+def test_file_logs_use_one_bounded_shareable_file_and_cleanup_old_rotations(
+    monkeypatch, tmp_path
+):
     paths = AppPaths(
         root=tmp_path,
         database=tmp_path / "marlen.db",
@@ -81,10 +83,12 @@ def test_file_logs_use_two_mib_total_and_cleanup_old_rotations(monkeypatch, tmp_
     )
     paths.ensure()
     log_file = paths.logs / "marlen.log"
-    for name in ("marlen.log", "marlen.log.1", "marlen.log.2", "marlen.log.5"):
-        (paths.logs / name).write_bytes(
-            b"x" * (logging_setup.FILE_LOG_SEGMENT_BYTES + 257)
-        )
+    # Tiny cap proves rollover without allocating the production 16 MiB file.
+    monkeypatch.setattr(logging_setup, "FILE_LOG_SEGMENT_BYTES", 4096)
+    monkeypatch.setattr(logging_setup, "FILE_LOG_RETAIN_BYTES", 3072)
+    log_file.write_bytes(b"x" * 5000)
+    for name in ("marlen.log.1", "marlen.log.2", "marlen.log.5"):
+        (paths.logs / name).write_bytes(b"legacy")
 
     monkeypatch.setattr(logging_setup, "APP_PATHS", paths)
     root = logging.getLogger()
@@ -97,12 +101,52 @@ def test_file_logs_use_two_mib_total_and_cleanup_old_rotations(monkeypatch, tmp_
             if isinstance(item, RotatingFileHandler)
             and item.baseFilename == str(log_file)
         )
-        assert handler.maxBytes == logging_setup.FILE_LOG_SEGMENT_BYTES
-        assert handler.backupCount == logging_setup.FILE_LOG_BACKUP_COUNT
-        assert not (paths.logs / "marlen.log.2").exists()
-        assert not (paths.logs / "marlen.log.5").exists()
-        retained = sum(item.stat().st_size for item in paths.logs.glob("marlen.log*"))
-        assert retained <= logging_setup.FILE_LOG_TOTAL_BYTES
+        assert handler.maxBytes == 4096
+        assert handler.backupCount == 0
+        assert logging_setup.FILE_LOG_BACKUP_COUNT == 0
+        assert log_file.stat().st_size <= 4096
+        assert list(paths.logs.glob("marlen.log.*")) == []
+
+        logging.getLogger("single-file-test").warning("ONE_FILE_MARKER")
+        handler.flush()
+        assert "ONE_FILE_MARKER" in log_file.read_text(
+            encoding="utf-8", errors="replace"
+        )
+    finally:
+        if handler is not None:
+            root.removeHandler(handler)
+            handler.close()
+
+
+def test_persistent_activity_is_mirrored_into_same_shareable_log(
+    monkeypatch, tmp_path
+):
+    paths = AppPaths(
+        root=tmp_path,
+        database=tmp_path / "marlen.db",
+        logs=tmp_path / "logs",
+        sessions=tmp_path / "sessions",
+        backups=tmp_path / "backups",
+    )
+    paths.ensure()
+    monkeypatch.setattr(logging_setup, "APP_PATHS", paths)
+    root = logging.getLogger()
+    handler = None
+    try:
+        logging_setup.setup_logging()
+        handler = next(
+            item
+            for item in root.handlers
+            if isinstance(item, RotatingFileHandler)
+            and item.baseFilename == str(paths.logs / "marlen.log")
+        )
+        db = Database(paths.database)
+        db.insert_log("WARNING", "Проверка единого журнала", account_id=0)
+        handler.flush()
+        text = (paths.logs / "marlen.log").read_text(
+            encoding="utf-8", errors="replace"
+        )
+        assert "[Живой журнал][account=0] Проверка единого журнала" in text
     finally:
         if handler is not None:
             root.removeHandler(handler)

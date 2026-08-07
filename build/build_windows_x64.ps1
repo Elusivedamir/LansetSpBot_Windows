@@ -592,6 +592,37 @@ $MigrationLauncher = @(
 ) -join "`r`n"
 Set-Content -LiteralPath (Join-Path $ReleaseRoot "2_MIGRATE_OLD_PROFILE.bat") -Encoding Ascii -Value ($MigrationLauncher + "`r`n")
 
+$TestLogExporter = @(
+    "@echo off"
+    "setlocal"
+    "cd /d `"%~dp0`""
+    "set `"PROFILE=%APPDATA%\LansetSpBot`""
+    "if defined LANSETSPBOT_DATA_DIR set `"PROFILE=%LANSETSPBOT_DATA_DIR%`""
+    "if not defined LANSETSPBOT_DATA_DIR if defined MARLEN_DATA_DIR set `"PROFILE=%MARLEN_DATA_DIR%`""
+    "if not defined LANSETSPBOT_DATA_DIR if not defined MARLEN_DATA_DIR if exist `"%APPDATA%\Marlen`" if not exist `"%APPDATA%\LansetSpBot`" set `"PROFILE=%APPDATA%\Marlen`""
+    "set `"SOURCE=%PROFILE%\logs\marlen.log`""
+    "set `"TARGET=%~dp0LansetSpBot_TEST_LOG.txt`""
+    "echo LansetSpBot test log exporter"
+    "echo."
+    "if not exist `"%SOURCE%`" ("
+    "  echo ERROR: log not found: %SOURCE%"
+    "  echo Start LansetSpBot and perform the test first."
+    "  pause"
+    "  exit /b 2"
+    ")"
+    "copy /Y `"%SOURCE%`" `"%TARGET%`" >nul"
+    "if errorlevel 1 ("
+    "  echo ERROR: could not copy the log. Close LansetSpBot and retry."
+    "  pause"
+    "  exit /b 3"
+    ")"
+    "echo DONE: %TARGET%"
+    "echo Send LansetSpBot_TEST_LOG.txt to support."
+    "start `"`" explorer.exe /select,`"%TARGET%`""
+    "pause"
+) -join "`r`n"
+Set-Content -LiteralPath (Join-Path $ReleaseRoot "3_EXPORT_TEST_LOG.bat") -Encoding Ascii -Value ($TestLogExporter + "`r`n")
+
 & $BuildPython build\generate_sbom.py --version $AppVersion --requirements requirements-runtime.lock --requirements requirements-openai.lock --name $AppName --output $SbomPath
 if ($LASTEXITCODE -ne 0) { throw "SBOM generation failed." }
 Copy-Item -LiteralPath $SbomPath -Destination $ReleaseRoot

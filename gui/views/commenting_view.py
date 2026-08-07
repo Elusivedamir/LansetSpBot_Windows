@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QRadioButton,
-    QScrollArea,
     QSlider,
     QSpinBox,
     QTableWidget,
@@ -99,12 +98,12 @@ class CommentingView(QWidget):
         self.comments_section_button = QPushButton("Комментарии")
         self.comments_section_button.setObjectName("primaryButton")
         self.comments_section_button.clicked.connect(
-            lambda _checked=False: self._jump_to_section("comments")
+            lambda _checked=False: self._show_section("comments")
         )
         self.campaign_section_button = QPushButton("Запуск кампании")
         self.campaign_section_button.setObjectName("secondaryButton")
         self.campaign_section_button.clicked.connect(
-            lambda _checked=False: self._jump_to_section("campaign")
+            lambda _checked=False: self._show_section("campaign")
         )
         section_nav_layout.addWidget(self.comments_section_button)
         section_nav_layout.addWidget(self.campaign_section_button)
@@ -407,7 +406,16 @@ class CommentingView(QWidget):
         )
         self.history_filter.currentIndexChanged.connect(self._rerender_history)
 
-        self.comments_section_target = source_card
+        self.comments_section = QWidget()
+        self.comments_section.setObjectName("commentingCommentsSection")
+        comments_section_layout = QVBoxLayout(self.comments_section)
+        comments_section_layout.setContentsMargins(0, 0, 0, 0)
+        comments_section_layout.setSpacing(14)
+        comments_section_layout.addWidget(source_card)
+        comments_section_layout.addWidget(comments_card)
+        comments_section_layout.addWidget(self.openai_card)
+        comments_section_layout.addStretch(1)
+
         self.campaign_section = QFrame()
         self.campaign_section.setObjectName("card")
         campaign_section_layout = QVBoxLayout(self.campaign_section)
@@ -422,7 +430,6 @@ class CommentingView(QWidget):
         campaign_section_layout.addWidget(history_title)
         self.table.setMinimumHeight(320)
         campaign_section_layout.addWidget(self.table)
-        self.campaign_section_target = self.campaign_section
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(34, 28, 34, 28)
@@ -430,10 +437,10 @@ class CommentingView(QWidget):
         self.main_layout.addWidget(title)
         self.main_layout.addWidget(subtitle)
         self.main_layout.addWidget(self.section_nav)
-        self.main_layout.addWidget(source_card)
-        self.main_layout.addWidget(comments_card)
-        self.main_layout.addWidget(self.openai_card)
+        self.main_layout.addWidget(self.comments_section)
         self.main_layout.addWidget(self.campaign_section)
+        self.campaign_section.hide()
+        self._active_section = "comments"
         self._compact = False
 
         self.refresh_timer = QTimer(self)
@@ -454,14 +461,6 @@ class CommentingView(QWidget):
         self.load_openai_configuration()
         self.request_campaign_refresh()
 
-    def _containing_scroll_area(self) -> QScrollArea | None:
-        parent = self.parentWidget()
-        while parent is not None:
-            if isinstance(parent, QScrollArea):
-                return parent
-            parent = parent.parentWidget()
-        return None
-
     def _set_section_navigation(self, section: str) -> None:
         for name, button in (
             ("comments", self.comments_section_button),
@@ -474,17 +473,14 @@ class CommentingView(QWidget):
             button.style().polish(button)
             button.update()
 
-    def _jump_to_section(self, section: str) -> None:
+    def _show_section(self, section: str) -> None:
         normalized = "campaign" if section == "campaign" else "comments"
+        show_comments = normalized == "comments"
+        self._active_section = normalized
+        self.comments_section.setVisible(show_comments)
+        self.campaign_section.setVisible(not show_comments)
         self._set_section_navigation(normalized)
-        target = (
-            self.campaign_section_target
-            if normalized == "campaign"
-            else self.comments_section_target
-        )
-        scroll = self._containing_scroll_area()
-        if scroll is not None:
-            scroll.ensureWidgetVisible(target, 28, 28)
+        self.updateGeometry()
 
     def _current_comment_source(self) -> str:
         value = self.comment_source_combo.currentData()

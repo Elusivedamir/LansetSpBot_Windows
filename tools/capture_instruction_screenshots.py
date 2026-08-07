@@ -40,13 +40,99 @@ from gui.resources import INSTRUCTION_ASSET_OVERRIDE_ENV  # noqa: E402
 DESTINATION = PROJECT_ROOT / "dist" / "instruction-assets"
 
 # Page index in LansetSpBotApp.stack -> screenshot name used by InstructionsView.
+# Current MainWindow order:
+# 0 Account, 1 Warmup, 2 Channels, 3 Links, 4 Commenting,
+# 5 Target audience, 6 Audience parser, 7 Instructions.
 PAGES = (
     (0, "01_account.png"),
-    (1, "02_channels.png"),
-    (2, "03_links.png"),
-    (3, "04_comments.png"),
-    (4, "05_instructions.png"),
+    (2, "02_channels.png"),
+    (3, "03_links.png"),
+    (4, "04_comments.png"),
+    (7, "05_instructions.png"),
 )
+
+
+def _prepare_windows_font_environment() -> Path | None:
+    """Point Qt offscreen at real Windows fonts before QApplication exists."""
+
+    if os.name != "nt":
+        return None
+    windows_root = Path(os.environ.get("WINDIR") or r"C:\Windows")
+    font_dir = windows_root / "Fonts"
+    if font_dir.is_dir():
+        os.environ["QT_QPA_FONTDIR"] = str(font_dir)
+        return font_dir
+    return None
+
+
+def _install_capture_font(application, font_dir: Path | None) -> str:
+    """Load a Cyrillic-capable font explicitly for Qt's offscreen plugin."""
+
+    from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics
+
+    loaded_families: list[str] = []
+    if font_dir is not None:
+        for name in ("segoeui.ttf", "arial.ttf"):
+            candidate = font_dir / name
+            if not candidate.is_file():
+                continue
+            font_id = QFontDatabase.addApplicationFont(str(candidate))
+            if font_id >= 0:
+                loaded_families.extend(
+                    QFontDatabase.applicationFontFamilies(font_id)
+                )
+
+    available = set(QFontDatabase.families())
+    family = next(
+        (
+            candidate
+            for candidate in ("Segoe UI", "Arial", "DejaVu Sans")
+            if candidate in available or candidate in loaded_families
+        ),
+        "",
+    )
+    if not family:
+        raise RuntimeError(
+            "Instruction capture could not find a Cyrillic-capable GUI font"
+        )
+
+    font = QFont(family, 10)
+    metrics = QFontMetrics(font)
+    required = "ПрогревАккаунтКомментарииЯё"
+    missing = [char for char in required if not metrics.inFontUcs4(ord(char))]
+    if missing:
+        raise RuntimeError(
+            f"Instruction capture font {family!r} lacks Cyrillic glyphs: "
+            + "".join(sorted(set(missing)))
+        )
+    application.setFont(font)
+    return family
+
+
+def _force_capture_font(window, family: str) -> None:
+    """Override theme font lists only for build-time raster screenshots."""
+
+    safe_family = family.replace('"', "")
+    selectors = (
+        "QWidget, QLabel, QPushButton, QLineEdit, QPlainTextEdit, QComboBox, "
+        "QListWidget, QTableWidget, QCheckBox, QRadioButton, QAbstractSpinBox"
+    )
+    window.setStyleSheet(
+        window.styleSheet()
+        + f'\n{selectors} {{ font-family: "{safe_family}"; }}\n'
+    )
+
+
+def _assert_live_cyrillic_fonts(window) -> None:
+    for label, widget in (
+        ("account status", window.account_view.status_label),
+        ("comment title", window.commenting_view.comments_title),
+    ):
+        metrics = widget.fontMetrics()
+        if not all(metrics.inFontUcs4(ord(char)) for char in "ПриветЯё"):
+            raise RuntimeError(
+                f"Instruction capture widget {label} resolved to a font without Cyrillic"
+            )
 
 
 def main() -> int:
@@ -57,6 +143,7 @@ def main() -> int:
     arguments = parser.parse_args()
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    font_dir = _prepare_windows_font_environment()
     profile = Path(tempfile.mkdtemp(prefix="instruction-capture-"))
     os.environ["LANSETSPBOT_DATA_DIR"] = str(profile)
     os.environ["MARLEN_DATA_DIR"] = str(profile)
@@ -74,6 +161,7 @@ def main() -> int:
     from gui.app import LansetSpBotApp
 
     application = QApplication.instance() or QApplication(sys.argv)
+    capture_font_family = _install_capture_font(application, font_dir)
     config = Config()
     container = ApplicationContainer(config)
     container.database.reset_running_tasks()
@@ -95,9 +183,11 @@ def main() -> int:
     container.database.select_telegram_account(910001)
     container.database.select_telegram_account(910002)
     window = LansetSpBotApp(container.adapter, container.queue_worker, config)
+    _force_capture_font(window, capture_font_family)
     window.resize(arguments.width, arguments.height)
     window.show()
     application.processEvents()
+    _assert_live_cyrillic_fonts(window)
 
     # An empty activity log photographs as a broken panel. These lines are the
     # ones a first run actually produces, so the screenshot shows the panel
@@ -131,7 +221,7 @@ def main() -> int:
             account.proxy_port.setText("1080")
             account.schedule_enabled.setChecked(True)
             account.timezone_name.setText("Europe/Berlin")
-        elif index == 3:
+        elif index == 4:
             comments = window.commenting_view
             comments.comment_source_combo.setCurrentIndex(1)
             comments.continuous.setChecked(True)

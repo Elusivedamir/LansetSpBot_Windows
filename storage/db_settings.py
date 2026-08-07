@@ -226,6 +226,17 @@ class SettingsRepositoryMixin:
                     retained_before=retained_before,
                 )
                 self._prune_persistent_logs_to_budget(conn)
+            try:
+                from core.logging_setup import mirror_activity_log
+
+                mirror_activity_log(
+                    normalized_level,
+                    normalized_message,
+                    account_id=owner_account_id,
+                )
+            except Exception:
+                # SQLite is authoritative; diagnostic mirroring is best-effort.
+                log.exception("Could not mirror activity journal into marlen.log")
         except DatabaseError:
             raise
         except Exception as exc:
