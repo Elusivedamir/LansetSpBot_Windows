@@ -41,6 +41,7 @@ class AccountManagerPanel(QFrame):
     stop_requested = Signal(int)
     resume_requested = Signal(int)
     reauthorize_requested = Signal(int)
+    disconnect_requested = Signal(int)
     delete_requested = Signal(int)
     import_comments_requested = Signal()
     import_channels_requested = Signal()
@@ -103,6 +104,13 @@ class AccountManagerPanel(QFrame):
         self.reauthorize_button.setObjectName("secondaryButton")
         self.reauthorize_button.clicked.connect(self._reauthorize_clicked)
 
+        self.disconnect_button = QPushButton("Выйти из аккаунта")
+        self.disconnect_button.setObjectName("dangerButton")
+        self.disconnect_button.setToolTip(
+            "Удалить локальную Telegram-сессию, сохранив настройки и данные аккаунта"
+        )
+        self.disconnect_button.clicked.connect(self._disconnect_clicked)
+
         self.delete_button = QPushButton()
         self.delete_button.setObjectName("accountDeleteButton")
         self.delete_button.setToolTip("Удалить выбранный аккаунт")
@@ -140,6 +148,7 @@ class AccountManagerPanel(QFrame):
         actions.addWidget(self.stop_button, 0, 1)
         actions.addWidget(self.resume_button, 0, 2)
         actions.addWidget(self.reauthorize_button, 1, 0)
+        actions.addWidget(self.disconnect_button, 1, 1)
         actions.setColumnStretch(3, 1)
 
         imports = QVBoxLayout()
@@ -269,6 +278,7 @@ class AccountManagerPanel(QFrame):
             self.stop_button.setEnabled(False)
             self.resume_button.setEnabled(False)
             self.reauthorize_button.setEnabled(False)
+            self.disconnect_button.setEnabled(False)
             self.delete_button.setEnabled(False)
             return
         state = str(account.get("runtime_state") or "disconnected")
@@ -291,10 +301,15 @@ class AccountManagerPanel(QFrame):
         )
         self.state_dot.style().unpolish(self.state_dot)
         self.state_dot.style().polish(self.state_dot)
+        authorized = bool(account.get("authorized"))
         stopped = bool(account.get("stopped")) or state == "stopped"
-        self.stop_button.setEnabled(not stopped)
-        self.resume_button.setEnabled(stopped)
+        self.stop_button.setEnabled(authorized and not stopped)
+        self.resume_button.setEnabled(authorized and stopped)
         self.reauthorize_button.setEnabled(True)
+        self.reauthorize_button.setText(
+            "Переподключить" if authorized else "Войти заново"
+        )
+        self.disconnect_button.setEnabled(authorized)
         self.delete_button.setEnabled(True)
 
     def _stop_clicked(self) -> None:
@@ -308,6 +323,10 @@ class AccountManagerPanel(QFrame):
     def _reauthorize_clicked(self) -> None:
         if self._selected_account_id > 0:
             self.reauthorize_requested.emit(self._selected_account_id)
+
+    def _disconnect_clicked(self) -> None:
+        if self._selected_account_id > 0:
+            self.disconnect_requested.emit(self._selected_account_id)
 
     def _delete_clicked(self) -> None:
         if self._selected_account_id > 0:

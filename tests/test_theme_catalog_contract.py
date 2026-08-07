@@ -50,3 +50,14 @@ def test_unknown_or_empty_theme_fails_closed_to_velvet_night() -> None:
     assert normalize_theme_key("") == DEFAULT_THEME_KEY
     assert normalize_theme_key("not-a-theme") == DEFAULT_THEME_KEY
     assert normalize_theme_key(" CYBER-AZURE ") == "cyber-azure"
+
+
+def test_every_theme_finishes_with_red_off_green_on_toggle_contract() -> None:
+    for key, _label in EXPECTED_THEMES:
+        stylesheet = theme_stylesheet(key)
+        unchecked = stylesheet.rfind("QCheckBox::indicator:unchecked {")
+        checked = stylesheet.rfind("QCheckBox::indicator:checked {")
+        assert unchecked >= 0
+        assert checked >= 0
+        assert "#9C3542" in stylesheet[unchecked : unchecked + 180]
+        assert "#238B57" in stylesheet[checked : checked + 180]

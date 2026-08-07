@@ -1302,6 +1302,31 @@ QToolTip { background: #FFFFFF; border: 1px solid #C9CFDC; color: #20243A; }
 """
 
 
+SEMANTIC_TOGGLE_STATE_QSS = r"""
+/* Functional state always wins over a skin accent: red = off, green = on. */
+QCheckBox::indicator:unchecked {
+    background: #9C3542;
+    border: 1px solid #E96674;
+}
+QCheckBox::indicator:unchecked:hover {
+    background: #B23E4C;
+    border: 1px solid #FF7B87;
+}
+QCheckBox::indicator:checked {
+    background: #238B57;
+    border: 1px solid #65D69A;
+}
+QCheckBox::indicator:checked:hover {
+    background: #2AA868;
+    border: 1px solid #78E8AF;
+}
+QCheckBox::indicator:disabled {
+    background: #4A4E55;
+    border: 1px solid #676C75;
+}
+"""
+
+
 DEFAULT_THEME_KEY = "velvet-night"
 THEME_OPTIONS = (
     ("velvet-night", "Velvet Night"),
@@ -1328,7 +1353,7 @@ def normalize_theme_key(value: object) -> str:
 
 
 def theme_stylesheet(value: object) -> str:
-    return THEME_STYLESHEETS[normalize_theme_key(value)]
+    return THEME_STYLESHEETS[normalize_theme_key(value)] + SEMANTIC_TOGGLE_STATE_QSS
 
 
 # Backwards-compatible public name used by existing windows and tests.

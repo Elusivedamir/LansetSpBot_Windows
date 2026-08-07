@@ -66,16 +66,31 @@ class WarmupView(QWidget):
         onboarding_layout = QVBoxLayout(onboarding_card)
         onboarding_layout.setContentsMargins(20, 18, 20, 18)
         onboarding_layout.setSpacing(12)
-        self.onboarding_toggle = QPushButton("Добавить аккаунт для прогрева ▸")
+        existing_title = QLabel("Уже подключённый аккаунт")
+        existing_title.setObjectName("cardTitle")
+        self.existing_account_selector = QComboBox()
+        self.existing_account_selector.setMinimumContentsLength(24)
+        self.existing_account_selector.currentIndexChanged.connect(
+            self._existing_account_selected
+        )
+        self.existing_account_hint = QLabel(
+            "Выберите аккаунт из вкладки «Аккаунт» — он будет подставлен как «Аккаунт A»."
+        )
+        self.existing_account_hint.setObjectName("mutedText")
+        self.existing_account_hint.setWordWrap(True)
+        onboarding_layout.addWidget(existing_title)
+        onboarding_layout.addWidget(self.existing_account_selector)
+        onboarding_layout.addWidget(self.existing_account_hint)
+
+        self.onboarding_toggle = QPushButton("Добавить новый аккаунт для прогрева ▸")
         self.onboarding_toggle.setObjectName("secondaryButton")
         self.onboarding_toggle.setCheckable(True)
         self.onboarding_toggle.toggled.connect(self._toggle_onboarding)
         onboarding_layout.addWidget(self.onboarding_toggle)
 
         onboarding_hint = QLabel(
-            "API ID, API Hash, телефон, Telegram-код/2FA и отдельный proxy "
-            "используют тот же защищённый flow, что и вкладка «Аккаунт». "
-            "Настройки proxy можно свернуть, не отключая сам proxy."
+            "Если нужного аккаунта ещё нет, добавьте его здесь через тот же защищённый "
+            "API ID / API Hash / телефон / Telegram-код / 2FA / proxy flow."
         )
         onboarding_hint.setObjectName("mutedText")
         onboarding_hint.setWordWrap(True)
@@ -111,12 +126,22 @@ class WarmupView(QWidget):
         self.account_a.setMinimumWidth(220)
         self.account_b = QComboBox()
         self.account_b.setMinimumWidth(220)
+        account_a_box = QVBoxLayout()
+        account_a_label = QLabel("Аккаунт A")
+        account_a_label.setObjectName("mutedText")
+        account_a_box.addWidget(account_a_label)
+        account_a_box.addWidget(self.account_a)
+        account_b_box = QVBoxLayout()
+        account_b_label = QLabel("Аккаунт B")
+        account_b_label.setObjectName("mutedText")
+        account_b_box.addWidget(account_b_label)
+        account_b_box.addWidget(self.account_b)
         self.create_button = QPushButton("Создать связку")
         self.create_button.setObjectName("primaryButton")
         self.create_button.clicked.connect(self._create_pair)
-        selectors.addWidget(self.account_a, 1)
+        selectors.addLayout(account_a_box, 1)
         selectors.addWidget(QLabel("↔"))
-        selectors.addWidget(self.account_b, 1)
+        selectors.addLayout(account_b_box, 1)
         selectors.addWidget(self.create_button)
         create_layout.addLayout(selectors)
         root.addWidget(create_card)
@@ -164,9 +189,9 @@ class WarmupView(QWidget):
     def _toggle_onboarding(self, expanded: bool) -> None:
         self.account_onboarding.setVisible(bool(expanded))
         self.onboarding_toggle.setText(
-            "Добавить аккаунт для прогрева ▾"
+            "Добавить новый аккаунт для прогрева ▾"
             if expanded
-            else "Добавить аккаунт для прогрева ▸"
+            else "Добавить новый аккаунт для прогрева ▸"
         )
         if expanded:
             self.account_onboarding.begin_onboarding()
@@ -174,6 +199,22 @@ class WarmupView(QWidget):
     def _onboarding_completed(self) -> None:
         self.account_added.emit()
         self.refresh(force=True)
+
+    def _existing_account_selected(self, _index: int = -1) -> None:
+        account_id = int(self.existing_account_selector.currentData() or 0)
+        if account_id <= 0:
+            return
+        target = self.account_a.findData(account_id)
+        if target >= 0:
+            self.account_a.setCurrentIndex(target)
+            self.existing_account_hint.setText(
+                "Выбранный подключённый аккаунт подставлен как «Аккаунт A»."
+            )
+        else:
+            self.existing_account_hint.setText(
+                "Аккаунт подключён, но сейчас не готов к прогреву: проверьте proxy "
+                "и отсутствие другой активной кампании."
+            )
 
     @staticmethod
     def _clear_layout(layout) -> None:
@@ -270,6 +311,29 @@ class WarmupView(QWidget):
         state_map = {
             int(item["telegram_account_id"]): item for item in accounts
         }
+        previous_existing = self.existing_account_selector.currentData()
+        self.existing_account_selector.blockSignals(True)
+        self.existing_account_selector.clear()
+        connected = [item for item in accounts if item.get("authorized")]
+        for account in connected:
+            self.existing_account_selector.addItem(
+                self._account_label(account),
+                int(account["telegram_account_id"]),
+            )
+        preferred_existing = previous_existing
+        if preferred_existing is None:
+            try:
+                preferred_existing = int(self.adapter.get_selected_account_id() or 0)
+            except (TypeError, ValueError, OverflowError):
+                preferred_existing = 0
+        existing_index = self.existing_account_selector.findData(preferred_existing)
+        self.existing_account_selector.setCurrentIndex(
+            existing_index
+            if existing_index >= 0
+            else (0 if self.existing_account_selector.count() else -1)
+        )
+        self.existing_account_selector.blockSignals(False)
+
         selected_a = self.account_a.currentData()
         selected_b = self.account_b.currentData()
         self.account_a.clear()
@@ -284,8 +348,12 @@ class WarmupView(QWidget):
             index = combo.findData(previous)
             if index >= 0:
                 combo.setCurrentIndex(index)
-        if self.account_b.count() > 1 and self.account_b.currentData() == self.account_a.currentData():
+        if (
+            self.account_b.count() > 1
+            and self.account_b.currentData() == self.account_a.currentData()
+        ):
             self.account_b.setCurrentIndex(1)
+        self._existing_account_selected()
         active_count = int(overview.get("active_account_count") or 0)
         limit = int(overview.get("account_limit") or 40)
         self.limit_label.setText(f"Аккаунтов в прогреве: {active_count} из {limit}")

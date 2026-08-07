@@ -29,15 +29,15 @@ async def test_link_handler_mirrors_major_steps_to_persistent_activity(monkeypat
         database,
         _Telegram(),
         linked=linked,
-        link_check_delay_min=3,
-        link_check_delay_max=3,
+        link_check_delay_min=7,
+        link_check_delay_max=7,
     )
 
     await handlers["link_channels"]({"id": 71, "payload": {"account_id": 77}})
 
     messages = [str(call.args[1]) for call in database.insert_log.call_args_list]
     assert any("[Связки] Связки запущены" in message for message in messages)
-    assert any("Пауза между проверками: 3 сек" in message for message in messages)
+    assert any("Пауза между проверками: 7 сек" in message for message in messages)
     assert any("Связка 1 из 2: One" in message for message in messages)
     assert any("One · нет чата обсуждения" in message for message in messages)
     assert any("Связки подготовлены" in message for message in messages)

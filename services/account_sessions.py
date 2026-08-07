@@ -25,7 +25,9 @@ LEGACY_ACCOUNT_SECRET_KEYS = (
 )
 
 ACCOUNT_LIFECYCLE_JOURNAL_PREFIX = "internal.account_lifecycle."
-LIFECYCLE_OPERATIONS = frozenset({"register", "reauthorize", "delete"})
+LIFECYCLE_OPERATIONS = frozenset(
+    {"register", "reauthorize", "disconnect", "delete"}
+)
 LIFECYCLE_PHASES = frozenset(
     {"prepared", "session_moved", "session_swapped", "session_staged", "committed"}
 )
@@ -817,6 +819,25 @@ def recover_account_lifecycle(
                     )
                 _restore_account_snapshot(database, secret_store, payload)
 
+        elif operation == "disconnect":
+            tombstone = _hidden_session_base(root, payload.get("tombstone_name"))
+            # If the database already says authorization is revoked, the
+            # tombstoned session must not be resurrected after a crash.
+            if (
+                phase == "committed"
+                or account is None
+                or not bool(account.get("authorized"))
+            ):
+                _purge_session_family(tombstone)
+                _purge_session_family(final_base)
+            else:
+                if (
+                    not final_base.with_suffix(".session").exists()
+                    and tombstone.with_suffix(".session").exists()
+                ):
+                    _move_session_family(tombstone, final_base)
+                _restore_account_snapshot(database, secret_store, payload)
+
         elif operation == "delete":
             tombstone = _hidden_session_base(root, payload.get("tombstone_name"))
             if phase == "committed" or account is None:
@@ -848,6 +869,7 @@ def recover_session_residues(database, session_dir: Path) -> dict[str, object]:
     live_names = {
         validate_session_name(account.get("session_name") or "")
         for account in accounts
+        if bool(account.get("authorized"))
     }
     restored = 0
     purged = 0

@@ -327,6 +327,9 @@ class AccountView(QWidget):
         self.account_manager.reauthorize_requested.connect(
             self._reauthorize_account
         )
+        self.account_manager.disconnect_requested.connect(
+            self._disconnect_account
+        )
         self.account_manager.delete_requested.connect(self._delete_account)
         self.account_manager.import_comments_requested.connect(
             self._import_comments_from_previous
@@ -594,7 +597,9 @@ class AccountView(QWidget):
             "Заполните API ID, API Hash, телефон и отдельный proxy при необходимости"
         )
         self.connect_button.setText("Отправить код Telegram")
+        self._set_auth_identity_fields_enabled(True)
         self.api_id.setFocus()
+        self._refresh_dynamic_layout(self.api_id)
 
     def _stop_account(self, account_id: int) -> None:
         answer = QMessageBox.question(
@@ -685,13 +690,65 @@ class AccountView(QWidget):
                 "Проверьте API, телефон и proxy, затем запросите новый код Telegram"
             )
             self.connect_button.setText("Отправить код Telegram")
+            self._set_auth_identity_fields_enabled(True)
             self.api_id.setFocus()
+            self._refresh_dynamic_layout(self.api_id)
 
         self._run_background(
             lambda: self.adapter.stop_telegram_account(owner),
             on_success=stopped,
             on_error=lambda message: QMessageBox.warning(
                 self, "Переподключение", message
+            ),
+            blocks_account_change=True,
+        )
+
+    def _disconnect_account(self, account_id: int) -> None:
+        owner = int(account_id or 0)
+        if owner <= 0:
+            return
+        if self.auth_worker is not None and self.auth_worker.isRunning():
+            QMessageBox.warning(self, APP_NAME, "Авторизация уже выполняется")
+            return
+        if self._account_blocking_jobs:
+            QMessageBox.warning(
+                self,
+                APP_NAME,
+                "Дождитесь завершения операции с Telegram-аккаунтом",
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "Выйти из Telegram-аккаунта?",
+            "Работа выбранного аккаунта будет остановлена, а его локальная "
+            "Telegram-сессия удалена. Каналы, комментарии, история и настройки "
+            "останутся. После выхода можно изменить proxy и войти заново.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.status_label.setText("Выход из Telegram-аккаунта…")
+
+        def disconnected(result) -> None:
+            self._adding_account = True
+            self._reauthorizing_account_id = owner
+            self._pending_session_name = f"pending_{secrets.token_hex(16)}"
+            self._auth_settings_snapshot = {}
+            self._set_code_card_visible(False)
+            self.load_settings()
+            self.account_changed.emit()
+            QMessageBox.information(
+                self,
+                "Выход выполнен",
+                str(result.get("message") or "Локальная Telegram-сессия удалена."),
+            )
+
+        self._run_background(
+            lambda: self.adapter.disconnect_telegram_account(owner),
+            on_success=disconnected,
+            on_error=lambda message: QMessageBox.warning(
+                self, "Выход из аккаунта", message
             ),
             blocks_account_change=True,
         )
@@ -844,6 +901,11 @@ class AccountView(QWidget):
 
     def _toggle_schedule(self, enabled: bool) -> None:
         active = bool(enabled)
+        self.schedule_enabled.setText(
+            "Режим тишины · включён"
+            if active
+            else "Режим тишины · выключен"
+        )
         self.timezone_name.setEnabled(active)
         self.quiet_start.setEnabled(active)
         self.quiet_end.setEnabled(active)
@@ -863,19 +925,22 @@ class AccountView(QWidget):
             self._refresh_dynamic_layout()
 
     def _set_auth_identity_fields_enabled(self, enabled: bool) -> None:
+        active = bool(enabled)
         for widget in (
             self.api_id,
             self.api_hash,
             self.phone,
             self.proxy_enabled,
-            self.proxy_details_button,
             self.proxy_type,
             self.proxy_host,
             self.proxy_port,
             self.proxy_login,
             self.proxy_password,
         ):
-            widget.setEnabled(bool(enabled))
+            widget.setEnabled(active)
+        self.proxy_details_button.setEnabled(
+            active and self.proxy_enabled.isChecked()
+        )
 
     def _set_account_controls_busy(self, busy: bool) -> None:
         enabled = not busy
@@ -916,6 +981,14 @@ class AccountView(QWidget):
                 self.connect_button.setEnabled(False)
                 self.logout_button.setEnabled(False)
                 self.confirm_button.setEnabled(True)
+            else:
+                authorized = str(
+                    self._cached_account_values.get("telegram.authorized") or "0"
+                ).strip().lower() in {"1", "true", "yes", "on"}
+                if authorized and not self._adding_account:
+                    self._set_auth_identity_fields_enabled(False)
+                else:
+                    self._set_auth_identity_fields_enabled(True)
 
     def _run_background(
         self,
@@ -1054,15 +1127,29 @@ class AccountView(QWidget):
             self._toggle_schedule(schedule_enabled)
         finally:
             self._applying_settings = False
-        if values.get("telegram.account_name"):
+        account_name = values.get("telegram.account_name")
+        authorized = str(values.get("telegram.authorized") or "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if account_name and authorized:
             self._cached_account_values = dict(values)
             self._set_authorized_ui(values)
+        elif account_name:
+            self._cached_account_values = dict(values)
+            self._set_authorization_required_ui(values)
         else:
+            self._adding_account = False
+            self._reauthorizing_account_id = 0
+            self._pending_session_name = ""
             self._cached_account_values = {}
             self._set_status_dot(False)
             self.status_label.setText("Аккаунт не подключён")
             self.account_label.setText("Введите данные нового Telegram-аккаунта")
             self.connect_button.setText("Подключить аккаунт")
+            self._set_auth_identity_fields_enabled(True)
             self._set_code_card_visible(False)
         self.connect_button.setEnabled(True)
 
@@ -1231,21 +1318,10 @@ class AccountView(QWidget):
         self.factory_reset_requested.emit()
 
     def logout_account(self):
-        if not self._ensure_account_change_allowed():
-            return
-        try:
-            settings = self._settings(require_phone=False)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Проверьте данные", str(exc))
-            return
-        answer = QMessageBox.question(
-            self,
-            "Сменить аккаунт",
-            "Текущая Telegram-сессия будет завершена. Сохранённый список каналов и групп останется в программе. Продолжить?",
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        self._start_worker("logout", settings)
+        """Backward-compatible action used by older UI bindings."""
+        owner = int(self.adapter.get_selected_account_id() or 0)
+        if owner > 0:
+            self._disconnect_account(owner)
 
     def _show_pending_code_request(self) -> None:
         """Show the challenge immediately instead of waiting on the network."""
@@ -1451,11 +1527,15 @@ class AccountView(QWidget):
         self.status_dot.style().polish(self.status_dot)
 
     def _apply_disconnected_account(self, _values=None) -> None:
+        self._adding_account = False
+        self._reauthorizing_account_id = 0
+        self._pending_session_name = ""
         self._cached_account_values = {}
         self._set_status_dot(False)
         self.status_label.setText("Аккаунт отключён")
         self.account_label.setText("Введите данные нового Telegram-аккаунта")
         self.connect_button.setText("Подключить аккаунт")
+        self._set_auth_identity_fields_enabled(True)
         self._set_code_card_visible(False)
         self.account_changed.emit()
 
@@ -1465,15 +1545,39 @@ class AccountView(QWidget):
         self._set_code_card_visible(False)
         self.account_changed.emit()
 
+    def _set_authorization_required_ui(self, values) -> None:
+        name = values.get("telegram.account_name") or "Telegram Account"
+        username = values.get("telegram.account_username") or ""
+        owner = int(values.get("telegram.account_id") or 0)
+        self._adding_account = True
+        self._reauthorizing_account_id = owner
+        if not self._pending_session_name:
+            self._pending_session_name = f"pending_{secrets.token_hex(16)}"
+        self._auth_settings_snapshot = {}
+        self._set_status_dot(False)
+        self.status_label.setText("Требуется вход в Telegram")
+        identity = f"{name}" + (f"  ·  @{username}" if username else "")
+        self.account_label.setText(
+            identity + "  ·  измените proxy при необходимости и запросите новый код"
+        )
+        self.connect_button.setText("Отправить код Telegram")
+        self._set_auth_identity_fields_enabled(True)
+        self._set_code_card_visible(False)
+        self._load_account_catalog()
+
     def _set_authorized_ui(self, values):
         name = values.get("telegram.account_name") or "Telegram Account"
         username = values.get("telegram.account_username") or ""
+        self._adding_account = False
+        self._reauthorizing_account_id = 0
+        self._pending_session_name = ""
         self._set_status_dot(True)
         self.status_label.setText("Аккаунт подключён")
         self.account_label.setText(
             f"{name}" + (f"  ·  @{username}" if username else "")
         )
         self.connect_button.setText("Проверить подключение")
+        self._set_auth_identity_fields_enabled(False)
         self._load_account_catalog()
 
     def _temporary_failed(self, message: str) -> None:

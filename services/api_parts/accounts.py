@@ -62,7 +62,11 @@ class AccountsAPIMixin(_MixinHost):
 
     def select_telegram_account(self, account_id: int) -> dict[str, Any]:
         result = cast(
-            dict[str, Any], self.database.select_telegram_account(account_id)
+            dict[str, Any],
+            self.database.select_telegram_account(
+                account_id,
+                allow_unauthorized=True,
+            ),
         )
         # TelegramAccountRuntimeManager owns one isolated Telethon runtime per
         # task account. Changing the GUI-selected account only changes the
@@ -338,6 +342,9 @@ class AccountsAPIMixin(_MixinHost):
             ) from rollback_error
 
         clear_account_lifecycle_journal(self.secret_store, telegram_id)
+        # stop_telegram_account() installs an account cancellation barrier.
+        # A successful re-login must release it.
+        self._clear_account_cancellation(telegram_id, self.queue_worker)
         selected["created"] = False
         selected["duplicate"] = True
         selected["reauthorized"] = True
@@ -569,6 +576,78 @@ class AccountsAPIMixin(_MixinHost):
         worker = self.queue_worker
         self._clear_account_cancellation(owner, worker)
         return self.database.get_telegram_account(owner) or {}
+
+    def disconnect_telegram_account(
+        self,
+        account_id: int,
+        *,
+        timeout_seconds: float = 20.0,
+    ) -> dict[str, Any]:
+        """Delete only the local Telegram session and retain account data."""
+
+        owner = int(account_id)
+        if owner <= 0:
+            raise ValueError("Некорректный Telegram-аккаунт")
+        account = self.database.get_telegram_account(owner)
+        if not account:
+            raise ValueError("Telegram-аккаунт не найден")
+
+        self.stop_telegram_account(owner, timeout_seconds=timeout_seconds)
+        account = self.database.get_telegram_account(owner) or account
+        session_name = validate_session_name(
+            account.get("session_name") or f"account_{owner}"
+        )
+        old_public = self.database.get_account_settings(owner)
+        tombstone_name = f".delete_{session_name}_{secrets.token_hex(12)}"
+        journal = write_account_lifecycle_journal(
+            self.secret_store,
+            account_id=owner,
+            operation="disconnect",
+            final_session_name=session_name,
+            tombstone_name=tombstone_name,
+            old_account=dict(account),
+            old_public=dict(old_public),
+            selected_before=self.get_selected_account_id(),
+            secret_keys=[],
+        )
+
+        cleanup_state: dict[str, object]
+        try:
+            with stage_account_session_removal(
+                self.config.telegram.session_dir,
+                session_name=session_name,
+                tombstone_name=tombstone_name,
+            ) as cleanup_state:
+                journal = update_account_lifecycle_journal(
+                    self.secret_store,
+                    journal,
+                    phase="session_staged",
+                )
+                self.database.mark_account_authorization_required(owner)
+                journal = update_account_lifecycle_journal(
+                    self.secret_store,
+                    journal,
+                    phase="committed",
+                )
+        except BaseException:
+            clear_account_lifecycle_journal(self.secret_store, owner)
+            raise
+
+        clear_account_lifecycle_journal(self.secret_store, owner)
+        result = dict(self.database.get_telegram_account(owner) or {})
+        warning = str(cleanup_state.get("warning") or "")
+        result["session_cleanup_warning"] = warning
+        result["message"] = (
+            "Выход выполнен. Локальная Telegram-сессия удалена; "
+            "настройки, каналы, история и данные аккаунта сохранены. "
+            "Теперь можно изменить proxy и войти заново."
+            + (
+                " Остаточный скрытый session-файл будет очищен при следующем запуске."
+                if warning
+                else ""
+            )
+        )
+        return result
 
     def _prepare_account_deletion(
         self, owner: int, account: dict[str, Any]

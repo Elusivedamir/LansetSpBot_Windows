@@ -174,3 +174,67 @@ def test_sqlite_security_marker_detects_recreated_sidecar(tmp_path):
     second_marker = db._artifact_security_markers.get(wal)
     assert second_marker is not None
     assert second_marker != first_marker
+
+
+def test_disconnected_registered_account_can_be_selected_for_relogin(tmp_path):
+    from storage.db_common import DatabaseError
+
+    db = Database(tmp_path / "disconnect-state.db")
+    row, created = db.register_telegram_account(
+        telegram_account_id=101,
+        session_name="account_101",
+        display_name="Example",
+        username="example",
+        authorized=True,
+    )
+    assert created is True
+    assert int(row["telegram_account_id"]) == 101
+    db.select_telegram_account(101)
+
+    state = db.mark_account_authorization_required(101)
+    assert state["authorized"] is False
+    assert state["stopped"] is True
+    assert state["runtime_state"] == "authorization_required"
+    assert db.get_selected_account_id() == 101
+    assert str(db.get_setting("telegram.authorized", "")) == "0"
+
+    import pytest
+    with pytest.raises(DatabaseError):
+        db.select_telegram_account(101)
+
+    selected = db.select_telegram_account(101, allow_unauthorized=True)
+    assert int(selected["telegram_account_id"]) == 101
+
+
+def test_operator_requested_ui_ux_contracts_are_wired():
+    from core.config import (
+        DEFAULT_LINK_CHECK_DELAY_MAX_SECONDS,
+        DEFAULT_LINK_CHECK_DELAY_MIN_SECONDS,
+    )
+
+    assert DEFAULT_LINK_CHECK_DELAY_MIN_SECONDS == 7
+    assert DEFAULT_LINK_CHECK_DELAY_MAX_SECONDS == 12
+
+    account = (ROOT / "gui" / "views" / "account_view.py").read_text(encoding="utf-8")
+    manager = (ROOT / "gui" / "account_manager_panel.py").read_text(encoding="utf-8")
+    warmup = (ROOT / "gui" / "views" / "warmup_view.py").read_text(encoding="utf-8")
+    commenting = (ROOT / "gui" / "views" / "commenting_view.py").read_text(encoding="utf-8")
+    instructions = (ROOT / "gui" / "views" / "instructions_view.py").read_text(encoding="utf-8")
+    main = (ROOT / "gui" / "main_window.py").read_text(encoding="utf-8")
+
+    assert 'QPushButton("Выйти из аккаунта")' in manager
+    assert "disconnect_requested = Signal(int)" in manager
+    assert "def _set_authorization_required_ui" in account
+    assert "self._refresh_dynamic_layout(self.api_id)" in account
+    assert '"Режим тишины · включён"' in account
+    assert '"Режим тишины · выключен"' in account
+    assert "self.existing_account_selector = QComboBox()" in warmup
+    assert 'QLabel("Аккаунт A")' in warmup
+    assert 'QLabel("Аккаунт B")' in warmup
+    assert 'QPushButton("Комментарии")' in commenting
+    assert 'QPushButton("Запуск кампании")' in commenting
+    assert "scroll.ensureWidgetVisible(target, 28, 28)" in commenting
+    assert "IMAGE_SHARE_OF_SLIDE = 0.78" in instructions
+    assert "image.setMinimumHeight(300)" in instructions
+    assert "self._theme_apply_timer.start(25)" in main
+    assert "def _apply_pending_theme" in main

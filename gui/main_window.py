@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QSignalBlocker, QSize, Qt, QUrl
+from PySide6.QtCore import QSignalBlocker, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QDialog,
@@ -83,6 +83,10 @@ class MainWindow(QMainWindow):
             saved_ui_settings.get("ui.theme", DEFAULT_THEME_KEY)
         )
         self.setStyleSheet(theme_stylesheet(self._theme_key))
+        self._pending_theme_key = self._theme_key
+        self._theme_apply_timer = QTimer(self)
+        self._theme_apply_timer.setSingleShot(True)
+        self._theme_apply_timer.timeout.connect(self._apply_pending_theme)
         self.setWindowIcon(QIcon(str(asset_path("lansetspbot.png"))))
 
         root = QWidget()
@@ -263,6 +267,16 @@ class MainWindow(QMainWindow):
 
     def _theme_selection_changed(self, _index: int) -> None:
         key = normalize_theme_key(self.account_view.theme_selector.currentData())
+        if key == self._theme_key:
+            return
+        # Windows can still be dispatching the native QComboBox popup event here.
+        # Applying a top-level stylesheet synchronously may invalidate popup/style
+        # objects mid-dispatch, so apply it on an owned single-shot timer.
+        self._pending_theme_key = key
+        self._theme_apply_timer.start(25)
+
+    def _apply_pending_theme(self) -> None:
+        key = normalize_theme_key(self._pending_theme_key)
         if key == self._theme_key:
             return
         self._theme_key = key

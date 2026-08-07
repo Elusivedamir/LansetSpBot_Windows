@@ -113,11 +113,11 @@ class LinkChannelsRunner:
             float(getattr(config, "link_join_delay_max_seconds", 25)),
         )
         self.check_delay_min = max(
-            0.0, float(getattr(config, "link_check_delay_min_seconds", 3))
+            0.0, float(getattr(config, "link_check_delay_min_seconds", 7))
         )
         self.check_delay_max = max(
             self.check_delay_min,
-            float(getattr(config, "link_check_delay_max_seconds", 7)),
+            float(getattr(config, "link_check_delay_max_seconds", 12)),
         )
 
     def require_account_binding(self) -> None:

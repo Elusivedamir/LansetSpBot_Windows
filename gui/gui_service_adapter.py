@@ -262,6 +262,9 @@ class GUIServiceAdapter:
     def resume_telegram_account(self, account_id):
         return self.api.resume_telegram_account(account_id)
 
+    def disconnect_telegram_account(self, account_id):
+        return self.api.disconnect_telegram_account(account_id)
+
     def delete_telegram_account(self, account_id):
         return self.api.delete_telegram_account(account_id)
 

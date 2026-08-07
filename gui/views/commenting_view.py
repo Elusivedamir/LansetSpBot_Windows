@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSlider,
     QSpinBox,
     QTableWidget,
@@ -89,6 +90,25 @@ class CommentingView(QWidget):
         )
         subtitle.setObjectName("pageSubtitle")
         subtitle.setWordWrap(True)
+
+        self.section_nav = QFrame()
+        self.section_nav.setObjectName("infoCard")
+        section_nav_layout = QHBoxLayout(self.section_nav)
+        section_nav_layout.setContentsMargins(12, 10, 12, 10)
+        section_nav_layout.setSpacing(10)
+        self.comments_section_button = QPushButton("Комментарии")
+        self.comments_section_button.setObjectName("primaryButton")
+        self.comments_section_button.clicked.connect(
+            lambda _checked=False: self._jump_to_section("comments")
+        )
+        self.campaign_section_button = QPushButton("Запуск кампании")
+        self.campaign_section_button.setObjectName("secondaryButton")
+        self.campaign_section_button.clicked.connect(
+            lambda _checked=False: self._jump_to_section("campaign")
+        )
+        section_nav_layout.addWidget(self.comments_section_button)
+        section_nav_layout.addWidget(self.campaign_section_button)
+        section_nav_layout.addStretch(1)
 
         source_card = QFrame()
         source_card.setObjectName("card")
@@ -387,19 +407,33 @@ class CommentingView(QWidget):
         )
         self.history_filter.currentIndexChanged.connect(self._rerender_history)
 
+        self.comments_section_target = source_card
+        self.campaign_section = QFrame()
+        self.campaign_section.setObjectName("card")
+        campaign_section_layout = QVBoxLayout(self.campaign_section)
+        campaign_section_layout.setContentsMargins(18, 18, 18, 18)
+        campaign_section_layout.setSpacing(12)
+        campaign_heading = QLabel("Запуск и состояние кампании")
+        campaign_heading.setObjectName("cardTitle")
+        campaign_section_layout.addWidget(campaign_heading)
+        campaign_section_layout.addLayout(self.controls_grid)
+        campaign_section_layout.addWidget(campaign_card)
+        campaign_section_layout.addWidget(self.progress)
+        campaign_section_layout.addWidget(history_title)
+        self.table.setMinimumHeight(320)
+        campaign_section_layout.addWidget(self.table)
+        self.campaign_section_target = self.campaign_section
+
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(34, 28, 34, 28)
         self.main_layout.setSpacing(14)
         self.main_layout.addWidget(title)
         self.main_layout.addWidget(subtitle)
+        self.main_layout.addWidget(self.section_nav)
         self.main_layout.addWidget(source_card)
         self.main_layout.addWidget(comments_card)
         self.main_layout.addWidget(self.openai_card)
-        self.main_layout.addLayout(self.controls_grid)
-        self.main_layout.addWidget(campaign_card)
-        self.main_layout.addWidget(self.progress)
-        self.main_layout.addWidget(history_title)
-        self.main_layout.addWidget(self.table, 1)
+        self.main_layout.addWidget(self.campaign_section)
         self._compact = False
 
         self.refresh_timer = QTimer(self)
@@ -419,6 +453,38 @@ class CommentingView(QWidget):
         self.load_comments()
         self.load_openai_configuration()
         self.request_campaign_refresh()
+
+    def _containing_scroll_area(self) -> QScrollArea | None:
+        parent = self.parentWidget()
+        while parent is not None:
+            if isinstance(parent, QScrollArea):
+                return parent
+            parent = parent.parentWidget()
+        return None
+
+    def _set_section_navigation(self, section: str) -> None:
+        for name, button in (
+            ("comments", self.comments_section_button),
+            ("campaign", self.campaign_section_button),
+        ):
+            button.setObjectName(
+                "primaryButton" if name == section else "secondaryButton"
+            )
+            button.style().unpolish(button)
+            button.style().polish(button)
+            button.update()
+
+    def _jump_to_section(self, section: str) -> None:
+        normalized = "campaign" if section == "campaign" else "comments"
+        self._set_section_navigation(normalized)
+        target = (
+            self.campaign_section_target
+            if normalized == "campaign"
+            else self.comments_section_target
+        )
+        scroll = self._containing_scroll_area()
+        if scroll is not None:
+            scroll.ensureWidgetVisible(target, 28, 28)
 
     def _current_comment_source(self) -> str:
         value = self.comment_source_combo.currentData()

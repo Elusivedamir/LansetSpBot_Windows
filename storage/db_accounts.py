@@ -369,7 +369,68 @@ class AccountRepositoryMixin(_MixinHost):
         except Exception as exc:
             raise DatabaseError(f"Failed to update account state: {exc}") from exc
 
-    def select_telegram_account(self, account_id: object) -> dict[str, Any]:
+    def mark_account_authorization_required(
+        self,
+        account_id: object,
+        *,
+        error: str | None = None,
+    ) -> dict[str, Any]:
+        """Keep the account registry while revoking local Telegram authorization."""
+
+        owner = _positive_account_id(account_id)
+        try:
+            with self.get_connection() as conn:
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
+                cursor = conn.execute(
+                    """UPDATE telegram_accounts
+                       SET authorized=0,
+                           runtime_state='authorization_required',
+                           stopped=1,
+                           last_error=?,
+                           last_activity_at=CURRENT_TIMESTAMP,
+                           updated_at=CURRENT_TIMESTAMP
+                       WHERE telegram_account_id=?""",
+                    (str(error or "") or None, owner),
+                )
+                if cursor.rowcount != 1:
+                    raise DatabaseError("Telegram account does not exist")
+
+                selected_row = conn.execute(
+                    "SELECT value FROM settings WHERE key='ui.selected_account_id'"
+                ).fetchone()
+                try:
+                    selected = int(selected_row[0] or 0) if selected_row else 0
+                except (TypeError, ValueError, OverflowError):
+                    selected = 0
+                if selected == owner:
+                    conn.execute(
+                        """INSERT INTO settings(key, value, updated_at)
+                           VALUES('telegram.authorized', '0', CURRENT_TIMESTAMP)
+                           ON CONFLICT(key) DO UPDATE SET
+                               value='0', updated_at=CURRENT_TIMESTAMP"""
+                    )
+
+                row = self._account_row(conn, owner)
+                if row is None:
+                    raise DatabaseError("Telegram account does not exist")
+                result = dict(row)
+                result["authorized"] = False
+                result["stopped"] = True
+                return result
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError(
+                f"Failed to revoke Telegram account authorization: {exc}"
+            ) from exc
+
+    def select_telegram_account(
+        self,
+        account_id: object,
+        *,
+        allow_unauthorized: bool = False,
+    ) -> dict[str, Any]:
         owner = _positive_account_id(account_id)
         try:
             with self.get_connection() as conn:
@@ -378,7 +439,7 @@ class AccountRepositoryMixin(_MixinHost):
                 row = self._account_row(conn, owner)
                 if row is None:
                     raise DatabaseError("Telegram account does not exist")
-                if not bool(row["authorized"]):
+                if not bool(row["authorized"]) and not allow_unauthorized:
                     raise DatabaseError("Telegram account requires authorization")
                 current_raw = conn.execute(
                     "SELECT value FROM settings WHERE key='ui.selected_account_id'"

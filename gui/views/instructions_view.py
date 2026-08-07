@@ -160,7 +160,7 @@ class InstructionsView(QWidget):
     """Сохранённый список каналов изолирован по Telegram-аккаунтам. Данные одного аккаунта нельзя автоматически подтянуть в новый аккаунт."""
     """Scrollable slide-by-slide operator guide with annotated UI diagrams."""
 
-    IMAGE_SHARE_OF_SLIDE = 0.58
+    IMAGE_SHARE_OF_SLIDE = 0.78
 
     STEPS = (
         (
@@ -170,6 +170,8 @@ class InstructionsView(QWidget):
             "Код Telegram и пароль 2FA появятся в этой же карточке. Переключатель "
             "«Подключить прокси» раскрывает настройки SOCKS5, SOCKS4 и HTTP. "
             "Рабочая сессия хранится локально и сохраняет вход после закрытия программы. "
+            "После успешного входа API и proxy блокируются от случайного редактирования. "
+            "Чтобы сменить proxy, нажмите «Выйти из аккаунта», измените настройки и войдите заново. "
             "Дополнительные резервные копии сессии не создаются.",
         ),
         (
@@ -182,9 +184,11 @@ class InstructionsView(QWidget):
         (
             "Остановка и ручной импорт",
             "01_account.png",
-            "Корзина справа в строке выбранного аккаунта удаляет только его локальные данные. "
-            "«Остановить работу» завершает кампании только выбранного аккаунта и сохраняет "
-            "его Telegram-сессию. Комментарии и каналы можно вручную скопировать только из "
+            "Корзина справа удаляет аккаунт вместе с его локальными данными. "
+            "«Выйти из аккаунта» удаляет только локальную Telegram-сессию и оставляет настройки, "
+            "каналы и историю для повторного входа. «Остановить работу» завершает кампании "
+            "выбранного аккаунта, но сохраняет его Telegram-сессию. Комментарии и каналы можно "
+            "вручную скопировать только из "
             "непосредственно предыдущего выбранного аккаунта; proxy, история, ledger, "
             "ограничения и секреты никогда не импортируются.",
         ),
@@ -266,7 +270,9 @@ class InstructionsView(QWidget):
         (
             "Запуск кампании и маршруты",
             "04_comments.png",
-            "Нажмите «Запустить на 24 часа» один раз. Повторное нажатие при активной кампании "
+            "Вверху раздела «Комментирование» используйте кнопку «Запуск кампании», чтобы "
+            "сразу перейти к управлению и истории. Нажмите «Запустить на 24 часа» один раз. "
+            "Повторное нажатие при активной кампании "
             "не создаёт вторую кампанию. Для канала программа берёт самый последний доступный "
             "пост и отправляет комментарий через связанное обсуждение, если такой результат "
             "ещё не зафиксирован. В обычную доступную группу уходит отдельное сообщение без "
@@ -406,7 +412,7 @@ class InstructionsView(QWidget):
         image = ClickableScreenshot()
         image.setObjectName("instructionImage")
         image.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        image.setMinimumHeight(220)
+        image.setMinimumHeight(300)
         image.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         pixmap = (
             QPixmap(str(self._asset_path(image_name)))
@@ -485,10 +491,10 @@ class InstructionsView(QWidget):
         source = image.property("sourcePixmap")
         if not isinstance(source, QPixmap) or source.isNull():
             return
-        available_width = self.stack.width() - 100
+        available_width = self.stack.width() - 48
         available_height = int(self.stack.height() * self.IMAGE_SHARE_OF_SLIDE)
-        target_width = max(320, available_width)
-        target_height = max(200, available_height)
+        target_width = max(420, available_width)
+        target_height = max(300, available_height)
         image.setMaximumHeight(target_height)
         image.setPixmap(
             source.scaled(
