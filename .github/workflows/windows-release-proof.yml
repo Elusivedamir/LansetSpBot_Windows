@@ -265,37 +265,13 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          New-Item -ItemType Directory -Path "dist\ci-proof-314" -Force | Out-Null
-          python tools/generate_manifest.py --check 2>&1 |
-            Tee-Object -FilePath "dist\ci-proof-314\manifest.txt"
-          if ($LASTEXITCODE -ne 0) { throw "Python 3.14 manifest check failed." }
-          python tools/generate_openai_lock.py --output requirements-openai.lock --check 2>&1 |
-            Tee-Object -FilePath "dist\ci-proof-314\openai-lock.txt"
-          if ($LASTEXITCODE -ne 0) { throw "Python 3.14 OpenAI lock check failed." }
-          python -m compileall -q .
-          if ($LASTEXITCODE -ne 0) { throw "Python 3.14 compileall failed." }
-          python -m ruff check . 2>&1 |
-            Tee-Object -FilePath "dist\ci-proof-314\ruff.txt"
-          if ($LASTEXITCODE -ne 0) { throw "Python 3.14 Ruff failed." }
-          python -m mypy --config-file mypy.ini . 2>&1 |
-            Tee-Object -FilePath "dist\ci-proof-314\mypy.txt"
-          if ($LASTEXITCODE -ne 0) { throw "Python 3.14 Mypy failed." }
-          python -m coverage erase
-          if ($LASTEXITCODE -ne 0) { throw "Python 3.14 coverage reset failed." }
-          python -m coverage run -m pytest -x -vv -ra 2>&1 |
-            Tee-Object -FilePath "dist\ci-proof-314\pytest.txt"
-          if ($LASTEXITCODE -ne 0) { throw "Python 3.14 pytest failed." }
-          python -m coverage report --fail-under=60 2>&1 |
-            Tee-Object -FilePath "dist\ci-proof-314\coverage.txt"
-          if ($LASTEXITCODE -ne 0) { throw "Python 3.14 coverage gate failed." }
-          python main.py --self-test 2>&1 |
-            Tee-Object -FilePath "dist\ci-proof-314\self-test.txt"
-          if ($LASTEXITCODE -ne 0) { throw "Python 3.14 source self-test failed." }
-          python tools/release_checkout.py `
-            --root . `
-            --stage python-314-final `
-            --evidence "dist\ci-proof-314\checkout-final.json"
-          if ($LASTEXITCODE -ne 0) { throw "Python 3.14 final clean-tree proof failed." }
+          & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+            -File ".\tools\run_windows_source_ci.ps1" `
+            -PythonVersion "3.14" `
+            -EvidenceRoot "dist\ci-proof-314"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Python 3.14 source proof failed."
+          }
 
       - name: Upload Python 3.14 source proof
         if: always()

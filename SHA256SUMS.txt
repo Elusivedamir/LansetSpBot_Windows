@@ -3,7 +3,7 @@
 494ad2e7691d58c6df4067723ea6103978b52d635b5a20932274635556c8708d  .github/dependabot.yml
 5f515a4baf5c544d010c86a84020b0594c0c08557c675842844b68dd687a9adb  .github/workflows/dependency-audit.yml
 7fffc5a126f78ac5519e477df349da570bbf8cfa9d453450fe155947d041c673  .github/workflows/windows-full-test-matrix.yml
-d19e0da9fad5aa94c272eaffe651e56ecea37f129460a837b2cf1d6e020b00e3  .github/workflows/windows-release-proof.yml
+a838bd58684e8df1d97341f3d5ad7414badd7ed9a9efc8191513ea6956375141  .github/workflows/windows-release-proof.yml
 2f02763fbe21273a3cc6c577f6c8e62fe071b8cf8bfdef2102a7da20b8030fac  .github/workflows/windows-release-sign-attest.yml
 d6cda2c823cb6736aa477a7e211e880c488ea857239950b3f1e41573ac7999c7  .github/workflows/windows-targeted-debug.yml
 c25981055e56c17eade18ef3b80866f78b04d3153f00a98b1749f44d624c7ac3  .github/workflows/workflow-contracts.yml
