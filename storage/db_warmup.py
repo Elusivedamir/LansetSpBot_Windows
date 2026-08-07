@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, cast
 
 from storage.db_common import DatabaseError
 
@@ -20,7 +20,7 @@ MAX_WARMUP_ACCOUNTS = 40
 
 def _positive(value: object, label: str) -> int:
     try:
-        parsed = int(value or 0)
+        parsed: int = int(cast(Any, value or 0))
     except (TypeError, ValueError, OverflowError) as exc:
         raise DatabaseError(f"{label} must be an integer") from exc
     if parsed <= 0:

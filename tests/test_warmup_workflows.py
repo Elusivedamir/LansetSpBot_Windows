@@ -9,10 +9,9 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
-
 from core.warmup_planner import build_week_plan, generate_profile, validate_plan
 from storage.db_warmup import WarmupRepositoryMixin
+from workers.handler_registry import _warmup_contact_phone_provider
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "storage" / "migrations" / "warmup_workflows_v36.py"
@@ -387,4 +386,33 @@ def test_warmup_message_retry_uses_stable_random_id_and_no_manual_stop() -> None
     assert "delay_seconds=5 * 60" in handler
     assert "status='running', last_error=NULL" in repository
     assert "автоматический повтор отключён" not in repository
+
+def test_warmup_contact_phone_provider_is_account_scoped() -> None:
+    class Store:
+        def __init__(self) -> None:
+            self.keys: list[str] = []
+
+        def get_strict_optional(self, key: str) -> str | None:
+            self.keys.append(key)
+            return "+79990001122"
+
+    store = Store()
+    owner = types.SimpleNamespace(
+        _base=types.SimpleNamespace(secret_store=store)
+    )
+    missing_store_owner = types.SimpleNamespace(
+        _base=types.SimpleNamespace(secret_store=None)
+    )
+
+    assert _warmup_contact_phone_provider(owner, None, 0) is None
+    assert (
+        _warmup_contact_phone_provider(missing_store_owner, None, 101)
+        is None
+    )
+    assert (
+        _warmup_contact_phone_provider(owner, None, 101)
+        == "+79990001122"
+    )
+    assert len(store.keys) == 1
+    assert store.keys[0].endswith(".telegram.phone")
 

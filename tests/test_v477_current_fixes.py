@@ -512,7 +512,7 @@ def test_mutating_rpc_500_is_not_automatically_retried() -> None:
     start = transport.index("    def _raise_rpc_error(")
     end = transport.index("    async def execute(", start)
     block = transport[start:end]
-    assert "if action is RpcFailureAction.UNCERTAIN:" in block
+    assert "if result.disposition is TelegramResultDisposition.UNCERTAIN:" in block
     assert "code=unknown_result_code" in block
 
 

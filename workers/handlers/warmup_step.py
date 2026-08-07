@@ -332,13 +332,13 @@ def create_warmup_step_handler(
                     skipped = True
                     result_text = "Нет подходящего сообщения для реакции"
                 else:
-                    peer: object = (
+                    reaction_peer: object = (
                         str(target.get("username") or "").strip().lstrip("@")
                         or target_account_id
                     )
                     input_peer = await telegram.execute(
                         telegram.client.get_input_entity,
-                        peer,
+                        reaction_peer,
                         retry_network=True,
                         dispatch_barrier=barrier,
                     )

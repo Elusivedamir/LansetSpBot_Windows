@@ -152,23 +152,24 @@ class _FakeTimer:
 
 
 def test_runtime_sqlite_timers_suspend_and_resume_without_losing_inactive_state():
-    active = [_FakeTimer(True) for _ in range(8)]
+    active = [_FakeTimer(True) for _ in range(9)]
     inactive = _FakeTimer(False)
     fake = SimpleNamespace(
         activity_panel=SimpleNamespace(
             timer=active[0], countdown_timer=active[1]
         ),
+        warmup_view=SimpleNamespace(refresh_timer=active[2]),
         channels_view=SimpleNamespace(
-            timer=active[2], watcher=SimpleNamespace(timer=active[3])
+            timer=active[3], watcher=SimpleNamespace(timer=active[4])
         ),
-        links_view=SimpleNamespace(watcher=SimpleNamespace(timer=active[4])),
+        links_view=SimpleNamespace(watcher=SimpleNamespace(timer=active[5])),
         commenting_view=SimpleNamespace(
-            refresh_timer=active[5],
-            countdown_timer=active[6],
+            refresh_timer=active[6],
+            countdown_timer=active[7],
             limit_save_timer=inactive,
         ),
         audience_parser_view=SimpleNamespace(
-            watcher=SimpleNamespace(timer=active[7])
+            watcher=SimpleNamespace(timer=active[8])
         ),
         _suspended_runtime_timers=[],
     )

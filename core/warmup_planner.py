@@ -4,7 +4,7 @@ import hashlib
 import random
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Iterable
+from typing import Any, Iterable
 
 from core.warmup_scenarios import SCENARIOS
 
@@ -108,7 +108,7 @@ def _step_values(
     reply_to_previous: bool = False,
     posts_to_read: int = 0,
     should_react: bool = False,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     return {
         "day_number": int(day_number),
         "scenario_key": str(scenario_key),
@@ -143,7 +143,7 @@ def build_week_plan(
         local_now = local_now.replace(tzinfo=timezone.utc).astimezone()
 
     scenarios = {scenario.key: scenario for scenario in SCENARIOS}
-    pending: list[tuple[datetime, dict[str, object]]] = []
+    pending: list[tuple[datetime, dict[str, Any]]] = []
 
     # Contact import happens only during the first week. The peer phone is never
     # persisted in this plan; the worker reads it from the protected account

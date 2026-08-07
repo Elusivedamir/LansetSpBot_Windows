@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 from core.warmup_planner import (
@@ -240,14 +240,17 @@ class WarmupAPIMixin(_MixinHost):
 
     def add_warmup_group(self, chat_ref: str) -> dict[str, Any]:
         normalized = self._normalize_group_ref(chat_ref)
-        return self.database.add_warmup_group(normalized, normalized)
+        return cast(
+            dict[str, Any], self.database.add_warmup_group(normalized, normalized)
+        )
 
     def remove_warmup_group(self, group_id: int) -> bool:
         return bool(self.database.remove_warmup_group(group_id))
 
     def pause_warmup_pair(self, pair_id: int) -> bool:
         owner = int(pair_id)
-        mutation = lambda: self.database.pause_warmup_pair(owner)
+        def mutation() -> Any:
+            return self.database.pause_warmup_pair(owner)
         worker = self.queue_worker
         if worker is not None and worker.isRunning():
             return bool(
@@ -338,7 +341,9 @@ class WarmupAPIMixin(_MixinHost):
         }
 
     def transfer_warmup_account(self, account_id: int) -> dict[str, Any]:
-        result = self.database.transfer_warmup_account(account_id)
+        result = cast(
+            dict[str, Any], self.database.transfer_warmup_account(account_id)
+        )
         self._release_account_warmup_lease(int(account_id))
         return result
 

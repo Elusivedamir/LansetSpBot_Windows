@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import nullcontext
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
@@ -29,6 +30,29 @@ from workers.handlers import (
 from workers.handlers.link_channels import create_link_channels_handler
 
 log = logging.getLogger(__name__)
+
+
+def _warmup_contact_phone_provider(
+    owner: Any,
+    secret_lock: Any,
+    target_account_id: int,
+) -> str | None:
+    target = int(target_account_id or 0)
+    if target <= 0:
+        return None
+    base = getattr(owner, "_base", owner)
+    store = getattr(base, "secret_store", None)
+    if store is None:
+        return None
+    active_lock = secret_lock if secret_lock is not None else nullcontext()
+    with active_lock:
+        key = account_secret_key(target, "telegram.phone")
+        strict_getter = getattr(type(store), "get_strict_optional", None)
+        if callable(strict_getter):
+            value = store.get_strict_optional(key)
+        else:  # pragma: no cover - compatibility for test doubles
+            value = store.get(key, "")
+    return None if value in (None, "") else str(value)
 
 
 def create_worker_handlers(
@@ -531,31 +555,15 @@ def create_worker_handlers(
             "connected": True,
         }
 
-    def warmup_contact_phone_provider(target_account_id: int) -> str | None:
-        target = int(target_account_id or 0)
-        if target <= 0:
-            return None
-        base = getattr(self, "_base", self)
-        store = getattr(base, "secret_store", None)
-        if store is None:
-            return None
-        active_lock = secret_lock if secret_lock is not None else nullcontext()
-        with active_lock:
-            key = account_secret_key(target, "telegram.phone")
-            strict_getter = getattr(type(store), "get_strict_optional", None)
-            if callable(strict_getter):
-                value = store.get_strict_optional(key)
-            else:  # pragma: no cover - compatibility for test doubles
-                value = store.get(key, "")
-        return None if value in (None, "") else str(value)
-
     warmup_step = create_warmup_step_handler(
         queue_worker=self.queue_worker,
         worker_db=worker_db,
         telegram=telegram,
         set_runtime=set_runtime,
         publish_activity=publish_activity,
-        contact_phone_provider=warmup_contact_phone_provider,
+        contact_phone_provider=partial(
+            _warmup_contact_phone_provider, self, secret_lock
+        ),
     )
 
     handlers = {

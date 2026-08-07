@@ -13,7 +13,7 @@ def _app():
     return QApplication.instance() or QApplication([])
 
 
-def test_main_gui_has_seven_user_pages(monkeypatch, tmp_path):
+def test_main_gui_has_eight_user_pages(monkeypatch, tmp_path):
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "gui.db"))
     app = _app()
     config = Config()
@@ -21,6 +21,7 @@ def test_main_gui_has_seven_user_pages(monkeypatch, tmp_path):
     window = MarlenApp(container.adapter, container.queue_worker, config)
     assert [window.menu.item(i).text() for i in range(window.menu.count())] == [
         "Аккаунт",
+        "Прогрев",
         "Каналы",
         "Связки",
         "Комментирование",
@@ -28,7 +29,7 @@ def test_main_gui_has_seven_user_pages(monkeypatch, tmp_path):
         "Парсинг аудитории",
         "Инструкция",
     ]
-    assert window.stack.count() == 7
+    assert window.stack.count() == 8
     window._tray.hide()
     window.deleteLater()
     app.processEvents()
