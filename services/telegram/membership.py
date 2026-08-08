@@ -190,6 +190,34 @@ class TelegramMembershipMixin(_MixinHost):
         # marked channel id (-100...).
         return int(utils.get_peer_id(types.PeerChannel(int(linked_chat_id))))
 
+    async def is_member(self, chat_id, *, dispatch_barrier=None) -> bool:
+        """Return True only when Telegram confirms active membership.
+
+        This is a read-only preflight used by JOIN-first send paths. A pending
+        join request is not membership, and any ambiguous/network failure is
+        propagated so callers fail closed instead of attempting a mutating SEND.
+        """
+        peer_ref = self._resolve_peer_reference(chat_id)
+        execute_kwargs = {
+            "retry_network": True,
+            "unknown_result_code": "membership_result_unknown",
+        }
+        if dispatch_barrier is not None:
+            execute_kwargs["dispatch_barrier"] = dispatch_barrier
+        try:
+            permissions = await self.execute(
+                self.client.get_permissions,
+                peer_ref,
+                "me",
+                **execute_kwargs,
+            )
+        except NonRetryableTelegramError as exc:
+            code = str(getattr(exc, "code", "") or "")
+            if code in {"join_required", "channel_private"}:
+                return False
+            raise
+        return permissions is not None
+
     async def join(self, chat_id, *, dispatch_barrier=None) -> bool:
         """Send exactly one join request without a membership confirmation RPC.
 

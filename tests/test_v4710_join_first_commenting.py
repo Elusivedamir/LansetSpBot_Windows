@@ -31,7 +31,7 @@ async def test_prepared_member_sends_without_join(monkeypatch):
         {"id": 301, "payload": {"campaign_id": 1, "slot_id": 301}}
     )
 
-    assert telegram.member_calls == []
+    assert telegram.member_calls == [20]
     assert telegram.join_calls == []
     assert worker.sleep_calls == []
     assert len(comments.sent) == 1
@@ -39,7 +39,7 @@ async def test_prepared_member_sends_without_join(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_comment_send_relies_on_links_preflight_not_membership_rpc(monkeypatch):
+async def test_comment_send_requires_confirmed_membership(monkeypatch):
     db = _comment_database()
     telegram = _Telegram()
     telegram.member_results = [False]
@@ -55,10 +55,10 @@ async def test_comment_send_relies_on_links_preflight_not_membership_rpc(monkeyp
         {"id": 302, "payload": {"campaign_id": 1, "slot_id": 302}}
     )
 
-    assert telegram.member_calls == []
+    assert telegram.member_calls == [20]
     assert telegram.join_calls == []
-    assert len(comments.sent) == 1
-    assert db.finish_comment_slot.call_args.kwargs["status"] == "sent"
+    assert comments.sent == []
+    assert db.finish_comment_slot.call_args.kwargs["status"] == "skipped"
 
 
 @pytest.mark.asyncio
