@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import contextmanager
 
 from core.exceptions import (
     DeferredTelegramError,
@@ -12,6 +13,23 @@ from services.linked_chat_service import LinkedChatService
 from services.telegram_service import TelegramService
 
 log = logging.getLogger(__name__)
+
+
+class _MembershipCheckedDispatchBarrier:
+    """Re-check exact discussion membership inside the existing RPC barrier."""
+
+    def __init__(self, barrier, membership_check) -> None:
+        self._barrier = barrier
+        self._membership_check = membership_check
+
+    @contextmanager
+    def dispatch(self, request=None):
+        # The wrapped scope barrier owns the Stop/local-ban linearization lock.
+        # Checking membership inside that context closes the final gap between
+        # the durable JOIN proof and the actual mutating MTProto dispatch.
+        with self._barrier.dispatch(request):
+            self._membership_check()
+            yield
 
 
 class CommentService:
@@ -66,6 +84,51 @@ class CommentService:
         self.db = db
         self.activity_schedule = activity_schedule
         self.comment_engine = CommentEngine()
+
+    def _uses_strict_membership_repository(self) -> bool:
+        return self.db is not None and type(self.db).__module__.startswith("storage.")
+
+    def _require_confirmed_discussion_membership(
+        self, channel_id, linked_chat_id, *, account_id=None
+    ) -> None:
+        """Fail closed unless the exact current discussion has durable JOIN proof."""
+
+        if self.db is None:
+            return
+        checker = getattr(
+            type(self.db), "is_comment_link_membership_confirmed", None
+        )
+        if not callable(checker):
+            if self._uses_strict_membership_repository():
+                raise NonRetryableTelegramError(
+                    "Discussion membership verification is unavailable",
+                    code="join_required",
+                )
+            # Compatibility for deliberately tiny test doubles. Production
+            # storage repositories must expose the durable checker above.
+            return
+        if self._uses_strict_membership_repository():
+            confirmed = checker(
+                self.db,
+                channel_id,
+                linked_chat_id,
+                account_id=account_id,
+            )
+        else:
+            try:
+                confirmed = checker(
+                    self.db,
+                    channel_id,
+                    linked_chat_id,
+                    account_id=account_id,
+                )
+            except TypeError:  # pragma: no cover - compatibility test doubles
+                confirmed = checker(self.db, channel_id, linked_chat_id)
+        if confirmed is not True:
+            raise NonRetryableTelegramError(
+                "Prepared discussion membership is not confirmed for the current linked chat",
+                code="join_required",
+            )
 
     def _select_text(self, fallback: str) -> str:
         # An explicitly selected variant must remain deterministic so the queue can
@@ -167,6 +230,32 @@ class CommentService:
         # delivery reservation is created.
         ensure_targets_are_not_locally_banned(channel_id, linked_chat_id)
 
+        # ``membership_ready`` is only a caller hint. The durable storage row for
+        # this exact account/channel/discussion tuple is the authority. This also
+        # closes the manual ``comment`` task path, which previously trusted the
+        # caller without proving JOIN-first.
+        self._require_confirmed_discussion_membership(
+            channel_id, linked_chat_id, account_id=account_id
+        )
+
+        # Production channel-post sends must use the concrete discussion root
+        # returned by GetDiscussionMessageRequest. Falling back to Telethon's
+        # dynamic ``comment_to`` route can silently target a newly relinked chat.
+        if self._uses_strict_membership_repository() and reply_to is None:
+            raise NonRetryableTelegramError(
+                "Resolved discussion root is required before comment dispatch",
+                code="message_id_invalid",
+            )
+
+        checked_dispatch_barrier = dispatch_barrier
+        if dispatch_barrier is not None:
+            checked_dispatch_barrier = _MembershipCheckedDispatchBarrier(
+                dispatch_barrier,
+                lambda: self._require_confirmed_discussion_membership(
+                    channel_id, linked_chat_id, account_id=account_id
+                ),
+            )
+
         reserved = False
         if self.db:
             reserved = self.db.reserve_comment_delivery(
@@ -186,43 +275,16 @@ class CommentService:
         effective_reply_to = reply_to
         try:
             send_kwargs = {}
-            if dispatch_barrier is not None:
-                send_kwargs["dispatch_barrier"] = dispatch_barrier
-            if reply_to is not None:
-                try:
-                    result = await self.telegram.send_comment(
-                        channel_id,
-                        post_message_id,
-                        text,
-                        reply_to=reply_to,
-                        linked_chat_id=linked_chat_id,
-                        **send_kwargs,
-                    )
-                except NonRetryableTelegramError as exc:
-                    if getattr(exc, "code", "") != "message_id_invalid":
-                        raise
-                    log.warning(
-                        "Resolved discussion root became invalid; falling back to "
-                        "Telegram comment_to routing for channel_id=%s post_id=%s",
-                        channel_id,
-                        post_message_id,
-                    )
-                    effective_reply_to = None
-                    result = await self.telegram.send_comment(
-                        channel_id,
-                        post_message_id,
-                        text,
-                        reply_to=None,
-                        **send_kwargs,
-                    )
-            else:
-                result = await self.telegram.send_comment(
-                    channel_id,
-                    post_message_id,
-                    text,
-                    reply_to=None,
-                    **send_kwargs,
-                )
+            if checked_dispatch_barrier is not None:
+                send_kwargs["dispatch_barrier"] = checked_dispatch_barrier
+            result = await self.telegram.send_comment(
+                channel_id,
+                post_message_id,
+                text,
+                reply_to=reply_to,
+                linked_chat_id=linked_chat_id,
+                **send_kwargs,
+            )
         except asyncio.CancelledError:
             if self.db and reserved:
                 self.db.mark_comment_delivery_uncertain(

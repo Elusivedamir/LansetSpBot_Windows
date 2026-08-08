@@ -99,6 +99,7 @@ def test_service_api_uses_one_configured_commenting_limit(tmp_path):
                 "channel_id": channel_id,
                 "title": f"Channel {channel_id}",
                 "linked_chat_id": 1000 + channel_id,
+                "link_status": "linked",
             }
         )
     api = ServiceAPI(database, max_channels_per_run=3)

@@ -359,25 +359,28 @@ def test_explicit_no_link_promotes_ordinary_group_to_direct_target(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_invalid_root_fallback_persists_post_route_not_stale_root():
+async def test_invalid_root_fails_closed_without_dynamic_comment_reroute():
     class Telegram:
         def __init__(self):
             self.calls = []
 
         async def send_comment(
-            self, channel_id, post_id, text, reply_to=None, linked_chat_id=None
+            self, channel_id, post_id, text, reply_to=None, linked_chat_id=None,
+            dispatch_barrier=None,
         ):
             self.calls.append((reply_to, linked_chat_id))
-            if reply_to is not None:
-                raise NonRetryableTelegramError("stale root", code="message_id_invalid")
-            return SimpleNamespace(id=44, sender_id=9, date=None)
+            raise NonRetryableTelegramError("stale root", code="message_id_invalid")
 
     class DB:
         def __init__(self):
             self.finalized = None
+            self.released = False
 
         def reserve_comment_delivery(self, *args, **kwargs):
             return True
+
+        def release_comment_delivery(self, *args, **kwargs):
+            self.released = True
 
         def finalize_comment_delivery(self, data):
             self.finalized = data
@@ -386,17 +389,20 @@ async def test_invalid_root_fallback_persists_post_route_not_stale_root():
     db = DB()
     service = CommentService(telegram=telegram, linked_chat_service=None, db=db)
 
-    await service.ensure_and_send_comment(
-        channel_id=10,
-        post_message_id=20,
-        linked_chat_id=30,
-        text="hello",
-        reply_to=777,
-        membership_ready=True,
-    )
+    with pytest.raises(NonRetryableTelegramError) as error:
+        await service.ensure_and_send_comment(
+            channel_id=10,
+            post_message_id=20,
+            linked_chat_id=30,
+            text="hello",
+            reply_to=777,
+            membership_ready=True,
+        )
 
-    assert telegram.calls == [(777, 30), (None, None)]
-    assert db.finalized["reply_to"] == 20
+    assert error.value.code == "message_id_invalid"
+    assert telegram.calls == [(777, 30)]
+    assert db.released is True
+    assert db.finalized is None
 
 
 def test_failed_group_rescan_preserves_confirmed_direct_target(tmp_path):
