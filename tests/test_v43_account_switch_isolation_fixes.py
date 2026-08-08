@@ -233,7 +233,10 @@ def test_operator_requested_ui_ux_contracts_are_wired():
     assert 'QLabel("Аккаунт B")' in warmup
     assert 'QPushButton("Комментарии")' in commenting
     assert 'QPushButton("Запуск кампании")' in commenting
-    assert "scroll.ensureWidgetVisible(target, 28, 28)" in commenting
+    assert "def _show_section" in commenting
+    assert "self.comments_section.setVisible(show_comments)" in commenting
+    assert "self.campaign_section.setVisible(not show_comments)" in commenting
+    assert "ensureWidgetVisible" not in commenting
     assert "IMAGE_SHARE_OF_SLIDE = 0.78" in instructions
     assert "image.setMinimumHeight(300)" in instructions
     assert "self._theme_apply_timer.start(25)" in main
