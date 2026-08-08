@@ -1,0 +1,62 @@
+name: Capture real GUI tabs
+
+on:
+  push:
+    branches:
+      - "capture-real-gui-tabs-*"
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
+      QT_QPA_PLATFORM: "offscreen"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Python 3.13 x64
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13"
+          architecture: "x64"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements-bootstrap.txt
+            requirements-runtime.lock
+            requirements-openai.lock
+
+      - name: Install locked runtime
+        shell: pwsh
+        run: |
+          python -m ensurepip --upgrade
+          python -m pip install --require-hashes -r requirements-bootstrap.txt
+          python -m pip install --require-hashes --no-build-isolation -r requirements-runtime.lock
+          python -m pip install --require-hashes --no-build-isolation -r requirements-openai.lock
+          python -m pip check
+
+      - name: Capture all eight real GUI tabs
+        shell: pwsh
+        run: |
+          python tools/capture_all_gui_tabs.py --width 1600 --height 1000 --destination dist/gui-tabs
+          $files = Get-ChildItem -LiteralPath dist/gui-tabs -Filter *.png
+          if ($files.Count -ne 8) {
+            throw "Expected 8 screenshots, found $($files.Count)"
+          }
+
+      - name: Upload real GUI screenshots
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: real-gui-tabs-${{ github.sha }}
+          path: dist/gui-tabs/*.png
+          if-no-files-found: error
+          retention-days: 7
