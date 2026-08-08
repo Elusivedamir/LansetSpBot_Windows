@@ -260,7 +260,7 @@ async def test_comment_task_campaign_slot_mismatch_blocks_all_external_actions(
 
 
 @pytest.mark.asyncio
-async def test_persisted_comment_route_is_re_resolved_before_send(tmp_path):
+async def test_relinked_discussion_requires_new_join_preflight_before_send(tmp_path):
     db = Database(tmp_path / "stale-route.db")
     db.set_setting("telegram.account_id", ACCOUNT_ID)
     db.insert_channel({"channel_id": 10, "linked_chat_id": 20, "title": "Source"})
@@ -286,15 +286,9 @@ async def test_persisted_comment_route_is_re_resolved_before_send(tmp_path):
     await handler(task)
 
     assert telegram.exact_calls == [(10, 901)]
-    assert len(comments.calls) == 1
-    sent = comments.calls[0]
-    assert sent["linked_chat_id"] == 30
-    assert sent["post_message_id"] == 901
-    assert sent["reply_to"] == 800
-    assert sent["linked_chat_id"] != 20
+    assert comments.calls == []
     route = db.get_comment_slot_route(slot["id"], task["id"])
     assert route["linked_chat_id"] == 30
     assert route["discussion_message_id"] == 800
     stored_campaign = db.get_comment_campaign(campaign["id"])
-    assert stored_campaign["attempted_count"] == 1
-    assert stored_campaign["sent_count"] == 1
+    assert stored_campaign["sent_count"] == 0

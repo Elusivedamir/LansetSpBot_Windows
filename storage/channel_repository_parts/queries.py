@@ -6,6 +6,8 @@ log = logging.getLogger(__name__)
 
 class ChannelQueryRepositoryMixin:
     _CONFIRMED_COMMENT_LINK_STATUSES = (
+        "linked",
+        "Связано",
         "Связано · обсуждение уже в диалогах",
         "Связано · вступление выполнено",
         "Связано · участие уже было",
