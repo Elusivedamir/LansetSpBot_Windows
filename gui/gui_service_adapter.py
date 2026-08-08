@@ -18,11 +18,14 @@ class GUIServiceAdapter:
     def get_max_channels_per_run(self):
         return self.api.get_max_channels_per_run()
 
-    def get_comment_daily_limit(self):
-        return self.api.get_comment_daily_limit()
+    def get_comment_daily_limit(self, account_id=None):
+        return self.api.get_comment_daily_limit(account_id=account_id)
 
-    def set_comment_daily_limit(self, value):
-        return self.api.set_comment_daily_limit(value)
+    def set_comment_daily_limit(self, value, *, account_id=None):
+        return self.api.set_comment_daily_limit(
+            value,
+            account_id=account_id,
+        )
 
     def create_task(self, task_type, payload):
         return self.api.create_task(task_type, payload)
@@ -271,11 +274,29 @@ class GUIServiceAdapter:
     def check_telegram_account_runtime(self, account_id):
         return self.api.check_telegram_account_runtime(account_id)
 
-    def import_comments_from_previous_account(self, *, mode):
-        return self.api.import_comments_from_previous_account(mode=mode)
+    def import_comments_from_previous_account(
+        self,
+        *,
+        mode,
+        source_account_id=None,
+        target_account_id=None,
+    ):
+        return self.api.import_comments_from_previous_account(
+            mode=mode,
+            source_account_id=source_account_id,
+            target_account_id=target_account_id,
+        )
 
-    def import_channels_from_previous_account(self):
-        return self.api.import_channels_from_previous_account()
+    def import_channels_from_previous_account(
+        self,
+        *,
+        source_account_id=None,
+        target_account_id=None,
+    ):
+        return self.api.import_channels_from_previous_account(
+            source_account_id=source_account_id,
+            target_account_id=target_account_id,
+        )
 
 
     def get_warmup_overview(self):

@@ -122,6 +122,36 @@ function Invoke-PackagedProcess {
     }
 }
 
+function Assert-NoDevelopmentPackages {
+    param(
+        [Parameter(Mandatory = $true)][string]$BundleRoot
+    )
+
+    $ForbiddenPatterns = @(
+        '(^|[\/])mypy([\/]|\.|$)',
+        '(^|[\/])setuptools([\/]|\.|$)'
+    )
+    $Leaks = @(
+        Get-ChildItem -LiteralPath $BundleRoot -Recurse -Force -ErrorAction Stop |
+            Where-Object {
+                $Relative = $_.FullName.Substring($BundleRoot.Length)
+                foreach ($Pattern in $ForbiddenPatterns) {
+                    if ($Relative -match $Pattern) {
+                        return $true
+                    }
+                }
+                return $false
+            } |
+            Select-Object -First 20 -ExpandProperty FullName
+    )
+    if ($Leaks.Count -gt 0) {
+        throw (
+            "Development/build dependency leaked into release bundle: " +
+            ($Leaks -join "; ")
+        )
+    }
+}
+
 function Assert-CleanCheckout {
     param([Parameter(Mandatory = $true)][string]$Stage)
     $SafeStage = ($Stage -replace "[^A-Za-z0-9._-]", "-")
@@ -394,6 +424,9 @@ finally {
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $BuiltExe -PathType Leaf)) {
     throw "PyInstaller did not create $BuiltExe"
 }
+
+Write-BuildStage "Checking release bundle for development dependencies"
+Assert-NoDevelopmentPackages -BundleRoot $BuiltDir
 
 $ReleaseSigned = $false
 if ($SigningPfxPath) {

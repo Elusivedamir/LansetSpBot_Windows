@@ -805,10 +805,40 @@ class AccountsAPIMixin(_MixinHost):
             )
         return source, target
 
+    def _resolve_account_transfer_ids(
+        self,
+        *,
+        source_account_id: int | None = None,
+        target_account_id: int | None = None,
+    ) -> tuple[int, int]:
+        if source_account_id is None and target_account_id is None:
+            return self._previous_account_transfer_ids()
+        try:
+            source = int(source_account_id or 0)
+            target = int(target_account_id or 0)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("Некорректный Telegram-аккаунт") from exc
+        if source <= 0 or target <= 0 or source == target:
+            raise ValueError(
+                "Источник и целевой Telegram-аккаунт должны быть различными."
+            )
+        if not self.database.get_telegram_account(source):
+            raise ValueError("Исходный Telegram-аккаунт не найден")
+        if not self.database.get_telegram_account(target):
+            raise ValueError("Целевой Telegram-аккаунт не найден")
+        return source, target
+
     def import_comments_from_previous_account(
-        self, *, mode: str
+        self,
+        *,
+        mode: str,
+        source_account_id: int | None = None,
+        target_account_id: int | None = None,
     ) -> dict[str, Any]:
-        source, target = self._previous_account_transfer_ids()
+        source, target = self._resolve_account_transfer_ids(
+            source_account_id=source_account_id,
+            target_account_id=target_account_id,
+        )
         return cast(
             dict[str, Any],
             self.database.import_comment_profile_between_accounts(
@@ -818,8 +848,16 @@ class AccountsAPIMixin(_MixinHost):
             ),
         )
 
-    def import_channels_from_previous_account(self) -> dict[str, int]:
-        source, target = self._previous_account_transfer_ids()
+    def import_channels_from_previous_account(
+        self,
+        *,
+        source_account_id: int | None = None,
+        target_account_id: int | None = None,
+    ) -> dict[str, int]:
+        source, target = self._resolve_account_transfer_ids(
+            source_account_id=source_account_id,
+            target_account_id=target_account_id,
+        )
         return cast(
             dict[str, int],
             self.database.import_channels_between_accounts(

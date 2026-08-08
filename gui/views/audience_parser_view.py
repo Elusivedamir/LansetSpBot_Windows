@@ -59,6 +59,9 @@ class AudienceParserView(QWidget):
         self._load_generation = 0
         self._load_job: BackgroundCall | None = None
         self._reload_requested = False
+        self._account_refresh_job: BackgroundCall | None = None
+        self._account_refresh_pending = False
+        self._account_refresh_generation = 0
         self._page_active = False
         self._compact_mode = False
         self._source_guard = False
@@ -261,7 +264,9 @@ class AudienceParserView(QWidget):
         self._root_layout.addStretch(1)
 
         self.account_refresh_timer = QTimer(self)
-        self.account_refresh_timer.setInterval(5_000)
+        # Status overview is not a scheduler clock. Ten seconds keeps it fresh
+        # while reducing database pressure during long multi-account sessions.
+        self.account_refresh_timer.setInterval(10_000)
         self.account_refresh_timer.timeout.connect(
             self._periodic_account_refresh
         )
@@ -577,8 +582,10 @@ class AudienceParserView(QWidget):
             f" · {' · '.join(tags)}" if tags else ""
         )
 
-    def _refresh_account_options(self) -> None:
-        rows = self._workflow_accounts()
+    def _apply_account_options(
+        self,
+        rows: list[dict[str, Any]],
+    ) -> None:
         previous = self._current_account_id()
         global_selected = self._global_account_id()
         self._account_rows = {
@@ -625,6 +632,64 @@ class AudienceParserView(QWidget):
             preferred,
             force=preferred != previous,
         )
+
+    def _refresh_account_options(self) -> None:
+        self._account_refresh_generation += 1
+        generation = self._account_refresh_generation
+        if self._account_refresh_job is not None:
+            self._account_refresh_pending = True
+            return
+        self._account_refresh_pending = False
+
+        cleanup = getattr(self.adapter, "close_thread_connection", None)
+        job = BackgroundCall(
+            self._workflow_accounts,
+            cleanup=cleanup if callable(cleanup) else None,
+        )
+        self._account_refresh_job = job
+
+        def succeeded(view: AudienceParserView, value: object) -> None:
+            if (
+                generation != view._account_refresh_generation
+                or not view._page_active
+            ):
+                view._account_refresh_pending = True
+                return
+            rows = [
+                dict(item)
+                for item in (value or [])
+                if isinstance(item, dict)
+            ]
+            view._apply_account_options(rows)
+
+        def failed(view: AudienceParserView, message: str) -> None:
+            if (
+                generation == view._account_refresh_generation
+                and view._page_active
+            ):
+                view.account_label.setText(
+                    f"Не удалось обновить список аккаунтов: {message}"
+                )
+
+        def finished(view: AudienceParserView) -> None:
+            if view._account_refresh_job is job:
+                view._account_refresh_job = None
+            rerun = (
+                view._account_refresh_pending
+                or generation != view._account_refresh_generation
+            )
+            view._account_refresh_pending = False
+            if rerun and view._page_active:
+                QTimer.singleShot(0, view._refresh_account_options)
+
+        connect_lifecycle_safe(
+            job,
+            self,
+            succeeded=succeeded,
+            failed=failed,
+            finished=finished,
+        )
+        QThreadPool.globalInstance().start(job)
 
     def _periodic_account_refresh(self) -> None:
         if self._page_active and self.current_task_id is None:
@@ -701,7 +766,11 @@ class AudienceParserView(QWidget):
         self.refresh_recovery()
 
     def handle_account_changed(self) -> None:
-        self._refresh_account_options()
+        self._account_refresh_generation += 1
+        if self._page_active:
+            self._refresh_account_options()
+        else:
+            self._account_refresh_pending = True
 
     def set_page_active(self, active: bool) -> None:
         self._page_active = bool(active)
@@ -719,6 +788,7 @@ class AudienceParserView(QWidget):
             self.refresh_recovery()
         else:
             self.account_refresh_timer.stop()
+            self._account_refresh_generation += 1
 
     def _set_work_enabled(self, enabled: bool) -> None:
         idle = bool(

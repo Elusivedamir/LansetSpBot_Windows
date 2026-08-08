@@ -2,8 +2,16 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import (
+    QAbstractTableModel,
+    QModelIndex,
+    QPersistentModelIndex,
+    QThreadPool,
+    Qt,
+    QTimer,
+)
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QFrame,
     QHeaderView,
     QGridLayout,
@@ -11,15 +19,70 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
+    QTableView,
     QVBoxLayout,
     QWidget,
 )
 
 from core.campaign_schedule import from_db_time, utc_now
 from core.version import APP_NAME
+from gui.background import BackgroundCall, connect_lifecycle_safe
 from gui.views.common import TaskWatcher
+
+
+class LinkTableModel(QAbstractTableModel):
+    HEADERS = ("Канал", "ID канала", "Чат обсуждения", "Статус")
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._rows: list[tuple[str, str, str, str]] = []
+
+    def rowCount(
+        self,
+        parent: QModelIndex | QPersistentModelIndex = QModelIndex(),
+    ) -> int:  # noqa: N802
+        return 0 if parent.isValid() else len(self._rows)
+
+    def columnCount(
+        self,
+        parent: QModelIndex | QPersistentModelIndex = QModelIndex(),
+    ) -> int:  # noqa: N802
+        return 0 if parent.isValid() else len(self.HEADERS)
+
+    def data(
+        self,
+        index: QModelIndex | QPersistentModelIndex,
+        role: int = int(Qt.ItemDataRole.DisplayRole),
+    ):
+        if not index.isValid() or not (0 <= index.row() < len(self._rows)):
+            return None
+        if role == int(Qt.ItemDataRole.DisplayRole):
+            return self._rows[index.row()][index.column()]
+        if (
+            role == int(Qt.ItemDataRole.TextAlignmentRole)
+            and index.column() == 1
+        ):
+            return Qt.AlignmentFlag.AlignCenter
+        return None
+
+    def headerData(  # noqa: N802
+        self,
+        section: int,
+        orientation: Qt.Orientation,
+        role: int = int(Qt.ItemDataRole.DisplayRole),
+    ):
+        if (
+            role == int(Qt.ItemDataRole.DisplayRole)
+            and orientation == Qt.Orientation.Horizontal
+            and 0 <= section < len(self.HEADERS)
+        ):
+            return self.HEADERS[section]
+        return None
+
+    def replace_rows(self, rows: list[tuple[str, str, str, str]]) -> None:
+        self.beginResetModel()
+        self._rows = list(rows)
+        self.endResetModel()
 
 
 class LinksView(QWidget):
@@ -32,6 +95,10 @@ class LinksView(QWidget):
         self._last_rendered_progress: int | None = None
         self._due_restart_task_id: int | None = None
         self._page_active = True
+        self._account_generation = 0
+        self._load_generation = 0
+        self._load_job: BackgroundCall | None = None
+        self._reload_requested = False
         self.watcher = TaskWatcher(adapter, self)
         self.watcher.changed.connect(self._task_changed)
         self.watcher.completed.connect(self._task_finished)
@@ -83,13 +150,12 @@ class LinksView(QWidget):
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
 
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(
-            ["Канал", "ID канала", "Чат обсуждения", "Статус"]
-        )
+        self.table = QTableView()
+        self.link_model = LinkTableModel(self.table)
+        self.table.setModel(self.link_model)
         self.table.verticalHeader().setVisible(False)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Stretch
         )
@@ -137,6 +203,9 @@ class LinksView(QWidget):
     def handle_account_changed(self) -> None:
         """Forget task/UI state owned by the previous Telegram account."""
 
+        self._account_generation += 1
+        self._load_generation += 1
+        self._reload_requested = self._load_job is not None
         self._account_id = self._current_account_id()
         self.watcher.stop()
         self.current_task_id = None
@@ -152,7 +221,7 @@ class LinksView(QWidget):
             if self._account_id > 0
             else "Telegram-аккаунт не подключён"
         )
-        self.table.setRowCount(0)
+        self.link_model.replace_rows([])
         if self._page_active:
             self.load_channels()
             self._restore_active_task()
@@ -166,6 +235,8 @@ class LinksView(QWidget):
             self.load_channels()
             if self.current_task_id is None:
                 self._restore_active_task()
+        else:
+            self._load_generation += 1
 
     def set_compact_mode(self, compact: bool) -> None:
         self.buttons_layout.removeWidget(self.link_button)
@@ -434,28 +505,91 @@ class LinksView(QWidget):
                 self, "Ошибка связки", str(task.get("error") or "Неизвестная ошибка")
             )
 
-    def load_channels(self):
-        channels = [
-            row
-            for row in (self.adapter.get_channels() or [])
-            if str(row.get("target_kind") or "channel") == "channel"
-        ]
-        self.table.setRowCount(len(channels))
-        for row, channel in enumerate(channels):
+    def _fetch_link_rows(
+        self,
+        account_id: int,
+    ) -> list[tuple[str, str, str, str]]:
+        try:
+            channels = self.adapter.get_channels(account_id=account_id) or []
+        except TypeError:
+            channels = self.adapter.get_channels() or []
+
+        rows: list[tuple[str, str, str, str]] = []
+        for channel in channels:
+            if str(channel.get("target_kind") or "channel") != "channel":
+                continue
             discussion = channel.get("linked_chat_title") or (
                 str(channel.get("linked_chat_id"))
                 if channel.get("linked_chat_id")
                 else "—"
             )
-            status = channel.get("link_status") or "Не проверено"
-            values = [
-                channel.get("title") or "Без названия",
-                str(channel.get("channel_id") or ""),
-                discussion,
-                status,
-            ]
-            for column, value in enumerate(values):
-                item = QTableWidgetItem(value)
-                if column == 1:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.table.setItem(row, column, item)
+            rows.append(
+                (
+                    str(channel.get("title") or "Без названия"),
+                    str(channel.get("channel_id") or ""),
+                    str(discussion),
+                    str(channel.get("link_status") or "Не проверено"),
+                )
+            )
+        return rows
+
+    def load_channels(self):
+        self._load_generation += 1
+        generation = self._load_generation
+        account_generation = self._account_generation
+        account_id = self._current_account_id()
+        if self._load_job is not None:
+            self._reload_requested = True
+            return
+        self._reload_requested = False
+        if account_id <= 0:
+            self.link_model.replace_rows([])
+            return
+
+        cleanup = getattr(self.adapter, "close_thread_connection", None)
+        job = BackgroundCall(
+            lambda: self._fetch_link_rows(account_id),
+            cleanup=cleanup if callable(cleanup) else None,
+        )
+        self._load_job = job
+
+        def succeeded(view: LinksView, value: object) -> None:
+            if (
+                generation != view._load_generation
+                or account_generation != view._account_generation
+                or account_id != view._current_account_id()
+                or not view._page_active
+            ):
+                view._reload_requested = True
+                return
+            rows = list(value or [])
+            view.link_model.replace_rows(rows)
+
+        def failed(view: LinksView, message: str) -> None:
+            if (
+                generation == view._load_generation
+                and account_generation == view._account_generation
+                and account_id == view._current_account_id()
+                and view._page_active
+            ):
+                view.status.setText(f"Не удалось загрузить каналы: {message}")
+
+        def finished(view: LinksView) -> None:
+            if view._load_job is job:
+                view._load_job = None
+            rerun = (
+                view._reload_requested
+                or generation != view._load_generation
+            )
+            view._reload_requested = False
+            if rerun and view._page_active:
+                QTimer.singleShot(0, view.load_channels)
+
+        connect_lifecycle_safe(
+            job,
+            self,
+            succeeded=succeeded,
+            failed=failed,
+            finished=finished,
+        )
+        QThreadPool.globalInstance().start(job)

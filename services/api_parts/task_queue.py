@@ -72,9 +72,11 @@ class TaskQueueAPIMixin(_MixinHost):
     def get_max_channels_per_run(self) -> int:
         return int(self.max_channels_per_run)
 
-    def get_comment_daily_limit(self) -> int:
-        """Return the locally persisted GUI limit in the inclusive 0-1000 range."""
-        owner = int(self.get_current_account_id() or 0)
+    def get_comment_daily_limit(
+        self, account_id: int | None = None
+    ) -> int:
+        """Return the locally persisted GUI limit for one explicit account."""
+        owner = int(account_id or self.get_current_account_id() or 0)
         database = self.database.for_account(owner) if owner > 0 else self.database
         raw = database.get_setting(
             self.COMMENT_DAILY_LIMIT_SETTING, self.max_channels_per_run
@@ -85,14 +87,13 @@ class TaskQueueAPIMixin(_MixinHost):
             value = self.max_channels_per_run
         return max(0, min(1000, value))
 
-    def set_comment_daily_limit(self, value: int) -> int:
-        """Persist the limit for the *next* campaign only.
-
-        The GUI intentionally locks the slider while a campaign is active.  Keep
-        the same invariant at the service boundary so a script/plugin cannot
-        silently change the saved setting while the running campaign still uses
-        its immutable ``daily_limit`` snapshot.
-        """
+    def set_comment_daily_limit(
+        self,
+        value: int,
+        *,
+        account_id: int | None = None,
+    ) -> int:
+        """Persist the next-campaign limit for one explicit account."""
         try:
             normalized = int(value)
         except (TypeError, ValueError, OverflowError) as exc:
@@ -100,7 +101,7 @@ class TaskQueueAPIMixin(_MixinHost):
                 "Количество комментариев должно быть целым числом"
             ) from exc
         normalized = max(0, min(1000, normalized))
-        owner = int(self.get_current_account_id() or 0)
+        owner = int(account_id or self.get_current_account_id() or 0)
         if owner <= 0:
             raise ValueError("Сначала выберите Telegram-аккаунт")
         database = self.database.for_account(owner)

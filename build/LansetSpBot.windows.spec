@@ -68,7 +68,10 @@ analysis = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        "mypy",
+        "setuptools",
+    ],
     noarchive=False,
 )
 pyz = PYZ(analysis.pure)

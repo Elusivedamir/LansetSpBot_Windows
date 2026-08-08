@@ -244,6 +244,26 @@ class MainWindow(QMainWindow):
         self.horizontal_splitter.setStretchFactor(1, 1)
         self.horizontal_splitter.setSizes([270, 1010])
 
+        self._page_views = (
+            self.account_view,
+            self.warmup_view,
+            self.channels_view,
+            self.links_view,
+            self.commenting_view,
+            self.target_audience_view,
+            self.audience_parser_view,
+            self.instructions_view,
+        )
+        self._active_page_index = -1
+        self._pending_page_index = -1
+        self._page_activation_initialized = False
+        self._page_activation_timer = QTimer(self)
+        self._page_activation_timer.setSingleShot(True)
+        self._page_activation_timer.setInterval(120)
+        self._page_activation_timer.timeout.connect(
+            self._activate_pending_page
+        )
+
         self.menu.currentRowChanged.connect(self._change_page)
         self.menu.setCurrentRow(0)
         root_layout.addWidget(self.horizontal_splitter)
@@ -451,18 +471,47 @@ class MainWindow(QMainWindow):
             self.sidebar.setMaximumWidth(max(310, self.sidebar.minimumWidth()))
 
     def _change_page(self, index: int):
+        if not (0 <= int(index) < len(self._page_views)):
+            return
+        index = int(index)
         self.stack.setCurrentIndex(index)
-        page_views = (
-            self.account_view,
-            self.warmup_view,
-            self.channels_view,
-            self.links_view,
-            self.commenting_view,
-            self.target_audience_view,
-            self.audience_parser_view,
-            self.instructions_view,
-        )
-        for page_index, view in enumerate(page_views):
-            setter = getattr(view, "set_page_active", None)
+
+        # Several view constructors start refresh timers immediately. Establish
+        # one clean inactive baseline, then activate only the final destination.
+        if not self._page_activation_initialized:
+            self._page_activation_initialized = True
+            for view in self._page_views:
+                setter = getattr(view, "set_page_active", None)
+                if callable(setter):
+                    setter(False)
+
+        if self._active_page_index == index:
+            self._pending_page_index = -1
+            self._page_activation_timer.stop()
+            return
+
+        # Only the page that was actually active is deactivated on later clicks.
+        if 0 <= self._active_page_index < len(self._page_views):
+            previous = self._page_views[self._active_page_index]
+            setter = getattr(previous, "set_page_active", None)
             if callable(setter):
-                setter(page_index == index)
+                setter(False)
+        self._active_page_index = -1
+
+        # Paint immediately, but coalesce expensive activation work. During a
+        # rapid A -> B -> C sequence only the final page C starts its refresh.
+        self._pending_page_index = index
+        self._page_activation_timer.start()
+
+    def _activate_pending_page(self) -> None:
+        index = int(self._pending_page_index)
+        self._pending_page_index = -1
+        if not (0 <= index < len(self._page_views)):
+            return
+        if self.stack.currentIndex() != index:
+            return
+        view = self._page_views[index]
+        setter = getattr(view, "set_page_active", None)
+        if callable(setter):
+            setter(True)
+        self._active_page_index = index
