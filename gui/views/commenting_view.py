@@ -189,9 +189,19 @@ class CommentingView(QWidget):
         save_row.addWidget(self.save_status, 1)
         comments_layout.addLayout(save_row)
 
+        self.campaign_settings_card = QFrame()
+        self.campaign_settings_card.setObjectName("statusCard")
+        campaign_settings_layout = QVBoxLayout(self.campaign_settings_card)
+        campaign_settings_layout.setContentsMargins(16, 16, 16, 16)
+        campaign_settings_layout.setSpacing(10)
+
+        campaign_settings_title = QLabel("Параметры запуска")
+        campaign_settings_title.setObjectName("cardTitle")
+        campaign_settings_layout.addWidget(campaign_settings_title)
+
         self.continuous = QCheckBox("Автоматически продолжать каждые следующие 24 часа")
         self.continuous.setChecked(True)
-        comments_layout.addWidget(self.continuous)
+        campaign_settings_layout.addWidget(self.continuous)
 
         limit_header = QHBoxLayout()
         limit_title = QLabel("Количество комментариев в сутки")
@@ -201,7 +211,7 @@ class CommentingView(QWidget):
         self.daily_limit_value.setAlignment(Qt.AlignmentFlag.AlignRight)
         limit_header.addWidget(limit_title, 1)
         limit_header.addWidget(self.daily_limit_value, 0)
-        comments_layout.addLayout(limit_header)
+        campaign_settings_layout.addLayout(limit_header)
 
         self.daily_limit_slider = QSlider(Qt.Orientation.Horizontal)
         self.daily_limit_slider.setRange(0, 1000)
@@ -211,19 +221,19 @@ class CommentingView(QWidget):
         self.daily_limit_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self.daily_limit_slider.setAccessibleName("Количество комментариев в сутки")
         self.daily_limit_slider.valueChanged.connect(self._on_daily_limit_changed)
-        comments_layout.addWidget(self.daily_limit_slider)
+        campaign_settings_layout.addWidget(self.daily_limit_slider)
 
         self.daily_limit_hint = QLabel()
         self.daily_limit_hint.setObjectName("mutedText")
         self.daily_limit_hint.setWordWrap(True)
-        comments_layout.addWidget(self.daily_limit_hint)
+        campaign_settings_layout.addWidget(self.daily_limit_hint)
 
         self.recommended_load = QLabel(
             "Рекомендуемая нагрузка: 40 комментариев в сутки"
         )
         self.recommended_load.setObjectName("saveStatusSaved")
         self.recommended_load.setWordWrap(True)
-        comments_layout.addWidget(self.recommended_load)
+        campaign_settings_layout.addWidget(self.recommended_load)
 
         self.safety = QLabel(
             "Выбранное число — максимум попыток, а не гарантия успешных отправок. "
@@ -233,7 +243,7 @@ class CommentingView(QWidget):
         )
         self.safety.setObjectName("mutedText")
         self.safety.setWordWrap(True)
-        comments_layout.addWidget(self.safety)
+        campaign_settings_layout.addWidget(self.safety)
 
         self.openai_card = QFrame()
         self.openai_card.setObjectName("card")
@@ -424,6 +434,7 @@ class CommentingView(QWidget):
         campaign_heading = QLabel("Запуск и состояние кампании")
         campaign_heading.setObjectName("cardTitle")
         campaign_section_layout.addWidget(campaign_heading)
+        campaign_section_layout.addWidget(self.campaign_settings_card)
         campaign_section_layout.addLayout(self.controls_grid)
         campaign_section_layout.addWidget(campaign_card)
         campaign_section_layout.addWidget(self.progress)

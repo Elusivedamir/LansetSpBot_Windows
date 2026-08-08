@@ -29,6 +29,11 @@ def test_commenting_uses_real_internal_sections_not_scroll_anchor() -> None:
     assert "def _show_section" in source
     assert "ensureWidgetVisible" not in source
     assert "def _jump_to_section" not in source
+    assert "campaign_settings_layout.addWidget(self.continuous)" in source
+    assert "campaign_settings_layout.addWidget(self.daily_limit_slider)" in source
+    assert "campaign_section_layout.addWidget(self.campaign_settings_card)" in source
+    assert "comments_layout.addWidget(self.continuous)" not in source
+    assert "comments_layout.addWidget(self.daily_limit_slider)" not in source
 
 
 def test_instruction_capture_targets_current_sidebar_indices() -> None:
