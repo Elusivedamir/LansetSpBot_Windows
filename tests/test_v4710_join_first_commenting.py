@@ -121,6 +121,7 @@ def test_join_requested_is_excluded_by_durable_comment_membership_gate():
          "Связано · участие подтверждено"),
         (6, 77, 15, "15", "group", "direct_group", None,
          "Группа · локально определена как обычная"),
+        (7, 77, 16, "16", "channel", "channel_post", 25, None),
     ]
     connection.executemany(
         """INSERT INTO channels(
@@ -138,16 +139,16 @@ def test_join_requested_is_excluded_by_durable_comment_membership_gate():
         20, cooldown_hours=24, account_id=77
     )
 
-    assert {row["channel_id"] for row in eligible} == {11, 12, 13, 14, 15}
+    assert {row["channel_id"] for row in eligible} == {11, 12, 13, 14, 15, 16}
     assert {row["channel_id"] for row in eligible_with_cooldown} == {
-        11, 12, 13, 14, 15
+        11, 12, 13, 14, 15, 16
     }
     assert repository.count_channels_for_commenting(
         cooldown_hours=0, account_id=77
-    ) == 5
+    ) == 6
     assert repository.count_channels_for_commenting(
         cooldown_hours=24, account_id=77
-    ) == 5
+    ) == 6
     assert (
         repository.is_comment_link_membership_confirmed(
             10, 20, account_id=77
@@ -156,6 +157,9 @@ def test_join_requested_is_excluded_by_durable_comment_membership_gate():
     )
     assert repository.is_comment_link_membership_confirmed(
         11, 21, account_id=77
+    )
+    assert repository.is_comment_link_membership_confirmed(
+        16, 25, account_id=77
     )
     assert (
         repository.is_comment_link_membership_confirmed(

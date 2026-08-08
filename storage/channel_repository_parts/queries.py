@@ -71,10 +71,13 @@ class ChannelQueryRepositoryMixin:
                 ).fetchone()
             if row is None or row["linked_chat_id"] is None:
                 return False
+            link_status = str(row["link_status"] or "").strip()
             return (
                 int(row["linked_chat_id"]) == expected_linked_id
-                and str(row["link_status"] or "")
-                in self._CONFIRMED_COMMENT_LINK_STATUSES
+                and (
+                    not link_status
+                    or link_status in self._CONFIRMED_COMMENT_LINK_STATUSES
+                )
             )
         except (TypeError, ValueError, OverflowError):
             return False
@@ -126,7 +129,11 @@ class ChannelQueryRepositoryMixin:
                            WHERE account_id=? AND (
                                   (comment_mode='channel_post'
                                    AND linked_chat_id IS NOT NULL
-                                   AND link_status IN ({status_marks}))
+                                   AND (
+                                       link_status IS NULL
+                                       OR TRIM(link_status)=''
+                                       OR link_status IN ({status_marks})
+                                   ))
                                   OR (comment_mode='direct_group' AND target_kind='group')
                               )
                              AND local_banned_at IS NULL
@@ -156,7 +163,11 @@ class ChannelQueryRepositoryMixin:
                            WHERE account_id=? AND (
                                   (comment_mode='channel_post'
                                    AND linked_chat_id IS NOT NULL
-                                   AND link_status IN ({status_marks}))
+                                   AND (
+                                       link_status IS NULL
+                                       OR TRIM(link_status)=''
+                                       OR link_status IN ({status_marks})
+                                   ))
                                   OR (comment_mode='direct_group' AND target_kind='group')
                               )
                              AND local_banned_at IS NULL
@@ -201,7 +212,11 @@ class ChannelQueryRepositoryMixin:
                            WHERE account_id=? AND (
                                   (comment_mode='channel_post'
                                    AND linked_chat_id IS NOT NULL
-                                   AND link_status IN ({status_marks}))
+                                   AND (
+                                       link_status IS NULL
+                                       OR TRIM(link_status)=''
+                                       OR link_status IN ({status_marks})
+                                   ))
                                   OR (comment_mode='direct_group' AND target_kind='group')
                               )
                              AND local_banned_at IS NULL
@@ -219,7 +234,11 @@ class ChannelQueryRepositoryMixin:
                            WHERE account_id=? AND (
                                   (comment_mode='channel_post'
                                    AND linked_chat_id IS NOT NULL
-                                   AND link_status IN ({status_marks}))
+                                   AND (
+                                       link_status IS NULL
+                                       OR TRIM(link_status)=''
+                                       OR link_status IN ({status_marks})
+                                   ))
                                   OR (comment_mode='direct_group' AND target_kind='group')
                               )
                              AND local_banned_at IS NULL
