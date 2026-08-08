@@ -1153,25 +1153,19 @@ class CommentSlotRunner:
             self.suspend_cancelled_slot(state.final_message)
             state.slot_deferred = True
             return
-        membership_checker = getattr(self.telegram, "is_member", None)
-        if not callable(membership_checker):
-            raise NonRetryableTelegramError(
-                "Telegram membership check is unavailable",
-                code="join_required",
-            )
-        membership_barrier = self.create_dispatch_barrier(
-            state.channel_id, state.linked_chat_id
+        membership_guard = getattr(
+            type(self.worker_db),
+            "is_comment_link_membership_confirmed",
+            None,
         )
-        membership_confirmed = await membership_checker(
+        if callable(membership_guard) and not membership_guard(
+            self.worker_db,
+            state.channel_id,
             state.linked_chat_id,
-            **dispatch_barrier_kwargs(
-                membership_checker,
-                membership_barrier,
-            ),
-        )
-        if membership_confirmed is not True:
+            account_id=state.campaign_account_id,
+        ):
             raise NonRetryableTelegramError(
-                "Discussion membership is not confirmed",
+                "Prepared discussion membership is not confirmed",
                 code="join_required",
             )
         # Final local boundary before the mutating Telegram RPC.

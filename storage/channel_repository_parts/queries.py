@@ -5,6 +5,13 @@ from storage.db_common import DatabaseError, resolve_account_id
 log = logging.getLogger(__name__)
 
 class ChannelQueryRepositoryMixin:
+    _CONFIRMED_COMMENT_LINK_STATUSES = (
+        "Связано · обсуждение уже в диалогах",
+        "Связано · вступление выполнено",
+        "Связано · участие уже было",
+        "Связано · участие подтверждено",
+    )
+
     def get_channels(self, *, account_id=None):
         """Get all channels."""
         try:
@@ -46,6 +53,38 @@ class ChannelQueryRepositoryMixin:
             raise
         except Exception as e:
             raise DatabaseError(f"Failed to get channel: {e}") from e
+
+    def is_comment_link_membership_confirmed(
+        self, channel_id, linked_chat_id, *, account_id=None
+    ) -> bool:
+        """Return whether link preparation durably confirmed discussion membership."""
+        try:
+            owner_account_id = resolve_account_id(self, account_id)
+            expected_linked_id = int(linked_chat_id)
+            with self.get_connection() as conn:
+                row = conn.execute(
+                    """SELECT linked_chat_id, link_status
+                       FROM channels
+                       WHERE account_id=? AND channel_id=?
+                         AND comment_mode='channel_post'""",
+                    (owner_account_id, int(channel_id)),
+                ).fetchone()
+            if row is None or row["linked_chat_id"] is None:
+                return False
+            return (
+                int(row["linked_chat_id"]) == expected_linked_id
+                and str(row["link_status"] or "")
+                in self._CONFIRMED_COMMENT_LINK_STATUSES
+            )
+        except (TypeError, ValueError, OverflowError):
+            return False
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError(
+                f"Failed to validate prepared comment membership: {exc}"
+            ) from exc
+
     @staticmethod
     def _comment_cooldown_modifier(cooldown_hours) -> str | None:
         try:
@@ -72,10 +111,12 @@ class ChannelQueryRepositoryMixin:
                 return []
             modifier = self._comment_cooldown_modifier(cooldown_hours)
             owner_account_id = resolve_account_id(self, account_id)
+            confirmed_statuses = self._CONFIRMED_COMMENT_LINK_STATUSES
+            status_marks = ",".join("?" for _ in confirmed_statuses)
             with self.get_connection() as conn:
                 if modifier is None:
                     rows = conn.execute(
-                        """SELECT id, channel_id, username, title, target_kind,
+                        f"""SELECT id, channel_id, username, title, target_kind,
                                   comment_mode, linked_chat_id,
                                   linked_chat_title, link_status, last_sync_at,
                                   last_comment_check_at, access_hash, peer_type,
@@ -83,7 +124,9 @@ class ChannelQueryRepositoryMixin:
                                   local_ban_peer_id, local_banned_at
                            FROM channels
                            WHERE account_id=? AND (
-                                  (comment_mode='channel_post' AND linked_chat_id IS NOT NULL)
+                                  (comment_mode='channel_post'
+                                   AND linked_chat_id IS NOT NULL
+                                   AND link_status IN ({status_marks}))
                                   OR (comment_mode='direct_group' AND target_kind='group')
                               )
                              AND local_banned_at IS NULL
@@ -99,11 +142,11 @@ class ChannelQueryRepositoryMixin:
                                lower(COALESCE(title, username, '')) ASC,
                                id ASC
                            LIMIT ?""",
-                        (owner_account_id, value),
+                        (owner_account_id, *confirmed_statuses, value),
                     ).fetchall()
                 else:
                     rows = conn.execute(
-                        """SELECT id, channel_id, username, title, target_kind,
+                        f"""SELECT id, channel_id, username, title, target_kind,
                                   comment_mode, linked_chat_id,
                                   linked_chat_title, link_status, last_sync_at,
                                   last_comment_check_at, access_hash, peer_type,
@@ -111,7 +154,9 @@ class ChannelQueryRepositoryMixin:
                                   local_ban_peer_id, local_banned_at
                            FROM channels
                            WHERE account_id=? AND (
-                                  (comment_mode='channel_post' AND linked_chat_id IS NOT NULL)
+                                  (comment_mode='channel_post'
+                                   AND linked_chat_id IS NOT NULL
+                                   AND link_status IN ({status_marks}))
                                   OR (comment_mode='direct_group' AND target_kind='group')
                               )
                              AND local_banned_at IS NULL
@@ -129,7 +174,7 @@ class ChannelQueryRepositoryMixin:
                                lower(COALESCE(title, username, '')) ASC,
                                id ASC
                            LIMIT ?""",
-                        (owner_account_id, modifier, value),
+                        (owner_account_id, *confirmed_statuses, modifier, value),
                     ).fetchall()
                 return [dict(row) for row in rows]
         except (TypeError, ValueError) as exc:
@@ -146,13 +191,17 @@ class ChannelQueryRepositoryMixin:
         """Count post-comment and standalone-group targets in the current window."""
         modifier = self._comment_cooldown_modifier(cooldown_hours)
         owner_account_id = resolve_account_id(self, account_id)
+        confirmed_statuses = self._CONFIRMED_COMMENT_LINK_STATUSES
+        status_marks = ",".join("?" for _ in confirmed_statuses)
         try:
             with self.get_connection() as conn:
                 if modifier is None:
                     row = conn.execute(
-                        """SELECT COUNT(*) AS total FROM channels
+                        f"""SELECT COUNT(*) AS total FROM channels
                            WHERE account_id=? AND (
-                                  (comment_mode='channel_post' AND linked_chat_id IS NOT NULL)
+                                  (comment_mode='channel_post'
+                                   AND linked_chat_id IS NOT NULL
+                                   AND link_status IN ({status_marks}))
                                   OR (comment_mode='direct_group' AND target_kind='group')
                               )
                              AND local_banned_at IS NULL
@@ -162,13 +211,15 @@ class ChannelQueryRepositoryMixin:
                                    AND ban.peer_id IN (channels.channel_id, channels.linked_chat_id)
                              )
                              AND (negative_until IS NULL OR negative_until <= CURRENT_TIMESTAMP)""",
-                        (owner_account_id,),
+                        (owner_account_id, *confirmed_statuses),
                     ).fetchone()
                 else:
                     row = conn.execute(
-                        """SELECT COUNT(*) AS total FROM channels
+                        f"""SELECT COUNT(*) AS total FROM channels
                            WHERE account_id=? AND (
-                                  (comment_mode='channel_post' AND linked_chat_id IS NOT NULL)
+                                  (comment_mode='channel_post'
+                                   AND linked_chat_id IS NOT NULL
+                                   AND link_status IN ({status_marks}))
                                   OR (comment_mode='direct_group' AND target_kind='group')
                               )
                              AND local_banned_at IS NULL
@@ -180,7 +231,7 @@ class ChannelQueryRepositoryMixin:
                              AND (negative_until IS NULL OR negative_until <= CURRENT_TIMESTAMP)
                              AND (last_comment_check_at IS NULL
                                   OR last_comment_check_at < datetime('now', ?))""",
-                        (owner_account_id, modifier),
+                        (owner_account_id, *confirmed_statuses, modifier),
                     ).fetchone()
                 return int(row["total"] if row else 0)
         except DatabaseError:

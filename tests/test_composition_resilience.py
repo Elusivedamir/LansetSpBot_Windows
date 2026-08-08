@@ -249,7 +249,7 @@ async def test_sync_saved_dialogs_streams_in_bounded_batches(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_comment_slot_fails_closed_without_confirmed_membership(
+async def test_comment_slot_trusts_links_preflight_without_membership_rpc(
     monkeypatch,
 ):
     db = MagicMock()
@@ -276,9 +276,9 @@ async def test_comment_slot_fails_closed_without_confirmed_membership(
     db.get_join_guard.assert_not_called()
     assert telegram.join_calls == []
     db.record_join_event.assert_not_called()
-    assert telegram.member_calls == [20]
-    assert comments.sent == []
-    assert db.finish_comment_slot.call_args.kwargs["status"] == "skipped"
+    assert telegram.member_calls == []
+    assert len(comments.sent) == 1
+    assert db.finish_comment_slot.call_args.kwargs["status"] == "sent"
 
 
 @pytest.mark.asyncio
