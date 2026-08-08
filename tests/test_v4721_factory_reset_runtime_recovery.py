@@ -15,9 +15,9 @@ from storage.database import Database
 
 
 def test_factory_reset_button_does_not_use_account_change_guard() -> None:
-    source = Path("gui/views/account_view.py").read_text(encoding="utf-8")
+    source = Path("gui/views/account_parts/settings.py").read_text(encoding="utf-8")
     reset_block = source.split("    def reset_database(self) -> None:", 1)[1].split(
-        "    def logout_account", 1
+        "    def _settings_save_failed", 1
     )[0]
 
     assert "_ensure_account_change_allowed" not in reset_block

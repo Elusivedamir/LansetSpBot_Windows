@@ -120,7 +120,7 @@ def test_post_commit_hardening_failure_does_not_report_write_failure(
 
 
 def test_first_connection_creates_a_pending_session_before_auth() -> None:
-    source = Path("gui/views/account_view.py").read_text(encoding="utf-8")
+    source = Path("gui/views/account_parts/auth_flow.py").read_text(encoding="utf-8")
     request_code = source.split("    def request_code(self):", 1)[1].split(
         "    def confirm_login(self):", 1
     )[0]

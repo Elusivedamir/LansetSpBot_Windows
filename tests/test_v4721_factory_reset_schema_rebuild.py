@@ -223,9 +223,12 @@ def test_comment_refresh_timer_contains_database_error(monkeypatch):
         # check time is known.
         _next_check_at=None,
     )
+    fake._handle_refresh_error = lambda message: CommentingView._handle_refresh_error(
+        fake, message
+    )
     warnings: list[object] = []
     monkeypatch.setattr(
-        "gui.views.commenting_view.log.warning",
+        "gui.views.commenting_parts.campaign.log.warning",
         lambda *args, **kwargs: warnings.append((args, kwargs)),
     )
 
