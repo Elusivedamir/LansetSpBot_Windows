@@ -1,0 +1,15 @@
+# The 2026-08 split kept facade imports in internal implementation modules so
+# runtime behavior stayed byte-for-byte compatible while ownership moved. The
+# exceptions are intentionally limited to import-hygiene rules and to those
+# split modules; all other Ruff rules remain active project-wide.
+[lint.per-file-ignores]
+"gui/views/account_parts/*.py" = ["F401"]
+"gui/views/commenting_parts/*.py" = ["F401", "E402"]
+"gui/views/account_view.py" = ["F401", "E402"]
+"gui/views/commenting_view.py" = ["F401", "E402"]
+"storage/account_repository_parts/*.py" = ["F401"]
+"storage/channel_repository_parts/*.py" = ["F401"]
+"storage/db_accounts.py" = ["F401"]
+"storage/db_channels.py" = ["F401", "E402"]
+"workers/queue_parts/*.py" = ["F401"]
+"workers/queue_worker.py" = ["F401", "E402"]

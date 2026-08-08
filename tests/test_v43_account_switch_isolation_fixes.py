@@ -10,6 +10,13 @@ from storage.database import Database
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _read_sources(*relative_paths: str) -> str:
+    return "\n".join(
+        (ROOT / relative_path).read_text(encoding="utf-8")
+        for relative_path in relative_paths
+    )
+
+
 def _extracted_method(path: Path, class_name: str, method_name: str):
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     original = next(
@@ -125,8 +132,9 @@ def test_stale_delivery_recovery_reports_each_real_owner(tmp_path):
 
 
 def test_gui_callbacks_are_bound_to_account_and_generation():
-    commenting = (ROOT / "gui" / "views" / "commenting_view.py").read_text(
-        encoding="utf-8"
+    commenting = _read_sources(
+        "gui/views/commenting_view.py",
+        "gui/views/commenting_parts/campaign.py",
     )
     activity = (ROOT / "gui" / "activity_panel.py").read_text(encoding="utf-8")
     channels = (ROOT / "gui" / "views" / "channels_view.py").read_text(
@@ -215,10 +223,15 @@ def test_operator_requested_ui_ux_contracts_are_wired():
     assert DEFAULT_LINK_CHECK_DELAY_MIN_SECONDS == 7
     assert DEFAULT_LINK_CHECK_DELAY_MAX_SECONDS == 12
 
-    account = (ROOT / "gui" / "views" / "account_view.py").read_text(encoding="utf-8")
+    account = _read_sources(
+        "gui/views/account_view.py",
+        "gui/views/account_parts/auth_flow.py",
+        "gui/views/account_parts/account_ops.py",
+        "gui/views/account_parts/settings.py",
+    )
     manager = (ROOT / "gui" / "account_manager_panel.py").read_text(encoding="utf-8")
     warmup = (ROOT / "gui" / "views" / "warmup_view.py").read_text(encoding="utf-8")
-    commenting = (ROOT / "gui" / "views" / "commenting_view.py").read_text(encoding="utf-8")
+    commenting = _read_sources("gui/views/commenting_view.py", "gui/views/commenting_parts/campaign.py")
     instructions = (ROOT / "gui" / "views" / "instructions_view.py").read_text(encoding="utf-8")
     main = (ROOT / "gui" / "main_window.py").read_text(encoding="utf-8")
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, cast
 
 from PySide6.QtCore import QStandardPaths, QThreadPool, QTimer, QUrl, Qt
 from PySide6.QtGui import QDesktopServices
@@ -657,7 +657,7 @@ class AudienceParserView(QWidget):
                 return
             rows = [
                 dict(item)
-                for item in (value or [])
+                for item in cast(Iterable[object], value or [])
                 if isinstance(item, dict)
             ]
             view._apply_account_options(rows)

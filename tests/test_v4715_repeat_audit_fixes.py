@@ -189,7 +189,10 @@ def test_limit_timer_is_cancelled_before_campaign_becomes_active() -> None:
     state = {"active": False}
 
     class _Adapter:
-        def get_comment_daily_limit(self):
+        def get_current_account_id(self):
+            return 1
+
+        def get_comment_daily_limit(self, **_kwargs):
             return 40
 
         def get_main_comments(self):
@@ -204,7 +207,7 @@ def test_limit_timer_is_cancelled_before_campaign_becomes_active() -> None:
         def get_commenting_channels(self):
             return [{"channel_id": 1, "title": "Group"}]
 
-        def set_comment_daily_limit(self, value):
+        def set_comment_daily_limit(self, value, **_kwargs):
             calls.append((int(value), bool(state["active"])))
             if state["active"]:
                 raise ValueError("active campaign")

@@ -98,7 +98,12 @@ def test_factory_reset_uses_local_paths_without_secret_store_calls(tmp_path):
 
 
 def test_account_view_declares_red_factory_reset_button_and_signal():
-    source = Path("gui/views/account_view.py").read_text(encoding="utf-8")
+    source = "\n".join(
+        (
+            Path("gui/views/account_view.py").read_text(encoding="utf-8"),
+            Path("gui/views/account_parts/settings.py").read_text(encoding="utf-8"),
+        )
+    )
     theme = Path("gui/theme.py").read_text(encoding="utf-8")
 
     assert "factory_reset_requested = Signal()" in source

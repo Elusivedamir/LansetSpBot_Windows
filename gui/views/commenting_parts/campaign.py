@@ -428,7 +428,7 @@ class CommentingCampaignMixin:
         try:
             self._refresh_campaign()
         except Exception as exc:  # noqa: BLE001 - explicit UI callback boundary
-            CommentingView._handle_refresh_error(self, f"{type(exc).__name__}: {exc}")
+            self._handle_refresh_error(f"{type(exc).__name__}: {exc}")
             return
         self._last_refresh_error = ""
     def _refresh_campaign(self):

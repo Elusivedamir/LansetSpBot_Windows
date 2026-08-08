@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from typing import Iterable, cast
 
 from PySide6.QtCore import (
     QAbstractTableModel,
@@ -562,7 +563,9 @@ class LinksView(QWidget):
             ):
                 view._reload_requested = True
                 return
-            rows = list(value or [])
+            rows = list(
+                cast(Iterable[tuple[str, str, str, str]], value or [])
+            )
             view.link_model.replace_rows(rows)
 
         def failed(view: LinksView, message: str) -> None:

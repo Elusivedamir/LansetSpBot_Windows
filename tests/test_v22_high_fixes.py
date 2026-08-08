@@ -83,10 +83,10 @@ async def test_cooldown_boot_change_reanchors_full_recorded_wait(tmp_path, monke
             "WHERE account_id=502"
         )
 
-    import workers.queue_worker as queue_module
+    import workers.queue_parts.cooldowns as cooldown_module
 
-    monkeypatch.setattr(queue_module, "current_boot_identity", lambda: "new-boot")
-    monkeypatch.setattr(queue_module, "steady_time", lambda: 1000.0)
+    monkeypatch.setattr(cooldown_module, "current_boot_identity", lambda: "new-boot")
+    monkeypatch.setattr(cooldown_module, "steady_time", lambda: 1000.0)
     called: list[int] = []
 
     async def handler(current):
