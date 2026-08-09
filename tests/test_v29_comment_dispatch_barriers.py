@@ -86,6 +86,22 @@ class _ResolvedTelegram:
             discussion_message_id=77,
         )
 
+    async def get_post_for_commenting(
+        self, _channel_id, post_id, *, dispatch_barrier=None
+    ):
+        self.read_calls += 1
+        if self.before_result is not None:
+            self.before_result()
+        if dispatch_barrier is not None:
+            with dispatch_barrier.dispatch():
+                pass
+        return SimpleNamespace(
+            status="ok",
+            message=SimpleNamespace(id=int(post_id)),
+            discussion_chat_id=DISCUSSION_ID,
+            discussion_message_id=77,
+        )
+
 
 class _BarrierComments:
     def __init__(self, *, before_dispatch=None):
