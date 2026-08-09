@@ -10,6 +10,7 @@ from telethon import types
 
 from core.exceptions import DeferredTelegramError, NonRetryableTelegramError
 from workers.handlers.warmup_step import (
+    _catchup_delay_seconds,
     _extract_sent_message_id,
     _group_join_parts,
     _recover_existing_message_id,
@@ -50,6 +51,7 @@ class _Telegram:
         self.send_result: object = pytypes.SimpleNamespace(
             updates=[type("UpdateShortSentMessage", (), {"id": 777})()]
         )
+        self.entity_results: dict[object, object] = {}
 
     async def execute(self, target, *args, **_kwargs):
         target_name = str(getattr(target, "__name__", "client"))
@@ -61,6 +63,14 @@ class _Telegram:
             self.execute_error = None
             raise exc
         if target_name == "get_input_entity":
+            locator = args[0] if args else None
+            override = self.entity_results.get(locator)
+            if isinstance(override, BaseException):
+                raise override
+            if override is not None:
+                return override
+            if locator in {102, "beta"}:
+                return types.InputPeerUser(user_id=102, access_hash=0)
             return types.InputPeerUser(user_id=9001, access_hash=0)
         if target_name == "get_messages":
             return list(self.recent_messages)
@@ -83,6 +93,7 @@ class _Queue:
         self.notifications = 0
         self.sleep_result = True
         self.barriers: list[tuple[tuple[object, ...], ...]] = []
+        self.sleeps: list[int] = []
 
     def create_scope_dispatch_barrier(self, *scopes, pre_dispatch_check):
         assert pre_dispatch_check() is True
@@ -91,6 +102,7 @@ class _Queue:
 
     async def safe_sleep(self, _seconds: int, *, cancel_scope) -> bool:
         assert cancel_scope[0] == "warmup_pair"
+        self.sleeps.append(int(_seconds))
         return self.sleep_result
 
     def notify_task_available(self) -> None:
@@ -111,6 +123,8 @@ class _DB:
             "account_b_id": 102,
             "owner_token_a": "a" * 32,
             "owner_token_b": "b" * 32,
+            "reply_min_seconds": 120,
+            "reply_max_seconds": 900,
         }
         self.group: dict[str, Any] | None = None
         self.finished: list[dict[str, Any]] = []
@@ -122,6 +136,7 @@ class _DB:
         self.leases: list[tuple[int, str]] = []
         self.released: list[tuple[int, str]] = []
         self.finish_completed = False
+        self.previous_message_context: dict[str, Any] | None = None
 
     def begin_warmup_step(self, _step_id: int, *, account_id: int):
         if self.step is None:
@@ -142,6 +157,18 @@ class _DB:
     def enqueue_warmup_step(self, pair_id: int):
         self.enqueued.append(pair_id)
         return {"pair_id": pair_id}
+
+    def get_previous_warmup_message_context(
+        self, *, pair_id: int, week_number: int, before_sequence_no: int
+    ):
+        assert pair_id == 7
+        assert week_number == 1
+        assert before_sequence_no == 11
+        return (
+            dict(self.previous_message_context)
+            if self.previous_message_context is not None
+            else None
+        )
 
     def get_telegram_account(self, account_id: int):
         value = self.accounts.get(account_id)
@@ -183,6 +210,9 @@ def _step(action: str, **overrides: Any) -> dict[str, Any]:
         "actor_account_id": 101,
         "target_account_id": 102,
         "owner_token": "a" * 32,
+        "week_number": 1,
+        "sequence_no": 11,
+        "scheduled_at": None,
         "action": action,
         "message_text": "Привет",
         "typing_seconds": 1,
@@ -342,7 +372,22 @@ def test_message_success_uses_reply_and_persists_telegram_message_id() -> None:
                 last_message_id=321,
             )
         )
+        db.previous_message_context = {
+            "actor_account_id": 102,
+            "target_account_id": 101,
+            "message_text": "Предыдущее",
+            "completed_at": None,
+        }
         telegram = _Telegram()
+        telegram.recent_messages = [
+            pytypes.SimpleNamespace(
+                id=812,
+                out=False,
+                sender_id=102,
+                message="Предыдущее",
+                date=None,
+            )
+        ]
         queue = _Queue()
         activity: list[tuple[str, dict[str, Any]]] = []
 
@@ -362,7 +407,7 @@ def test_message_success_uses_reply_and_persists_telegram_message_id() -> None:
         assert request.random_id == _stable_message_random_id(
             pair_id=7, step_id=11, account_id=101
         )
-        assert int(request.reply_to.reply_to_msg_id) == 321
+        assert int(request.reply_to.reply_to_msg_id) == 812
 
     asyncio.run(run())
 
@@ -419,6 +464,21 @@ def test_private_reaction_skip_and_success_paths() -> None:
         assert skipped.finished[0]["skipped"] is True
 
         success = _DB(_step("private_reaction"))
+        success.previous_message_context = {
+            "actor_account_id": 102,
+            "target_account_id": 101,
+            "message_text": "Предыдущее",
+            "completed_at": None,
+        }
+        telegram.recent_messages = [
+            pytypes.SimpleNamespace(
+                id=913,
+                out=False,
+                sender_id=102,
+                message="Предыдущее",
+                date=None,
+            )
+        ]
         await _handler(success, telegram, queue, activity)(_task())
         assert success.finished[0]["skipped"] is False
         assert any(
@@ -428,6 +488,51 @@ def test_private_reaction_skip_and_success_paths() -> None:
         )
 
     asyncio.run(run())
+
+
+def test_stale_username_identity_mismatch_fails_closed_before_send() -> None:
+    async def run() -> None:
+        db = _DB(_step("message"))
+        telegram = _Telegram()
+        telegram.entity_results[102] = ValueError("entity cache miss")
+        telegram.entity_results["beta"] = types.InputPeerUser(
+            user_id=999,
+            access_hash=0,
+        )
+        queue = _Queue()
+        activity: list[tuple[str, dict[str, Any]]] = []
+
+        with pytest.raises(NonRetryableTelegramError) as exc_info:
+            await _handler(db, telegram, queue, activity)(_task())
+
+        assert exc_info.value.code == "warmup_partner_identity_mismatch"
+        assert db.failed and db.failed[0]["uncertain"] is False
+        assert not any(
+            type(request).__name__ == "SendMessageRequest"
+            for _target, request in telegram.calls
+            if request is not None
+        )
+
+    asyncio.run(run())
+
+
+def test_overdue_message_gets_human_scale_catchup_delay() -> None:
+    delay = _catchup_delay_seconds(
+        step={"scheduled_at": "2000-01-01 00:00:00"},
+        pair={"reply_min_seconds": 120, "reply_max_seconds": 120},
+        pair_id=7,
+        step_id=11,
+    )
+    assert delay == 120
+    assert (
+        _catchup_delay_seconds(
+            step={"scheduled_at": None},
+            pair={"reply_min_seconds": 120, "reply_max_seconds": 900},
+            pair_id=7,
+            step_id=11,
+        )
+        == 0
+    )
 
 
 def test_group_visit_without_group_and_pending_membership_are_safe_skips() -> None:
