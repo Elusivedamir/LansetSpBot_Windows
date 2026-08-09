@@ -69,6 +69,22 @@ class _ReadBoundaryTelegram:
             discussion_message_id=77,
         )
 
+    async def get_post_for_commenting(
+        self, _channel_id, post_id, *, dispatch_barrier=None
+    ):
+        self.before_dispatch()
+        if dispatch_barrier is None:
+            self.rpc_calls += 1
+        else:
+            with dispatch_barrier.dispatch():
+                self.rpc_calls += 1
+        return LatestPostResult(
+            "ok",
+            SimpleNamespace(id=int(post_id)),
+            discussion_chat_id=DISCUSSION_ID,
+            discussion_message_id=77,
+        )
+
 
 class _NoSendComments:
     def __init__(self):
