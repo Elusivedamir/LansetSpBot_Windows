@@ -85,6 +85,7 @@ def test_negative_cache_excludes_target_until_expiry(tmp_path):
                 "target_kind": "channel",
                 "comment_mode": "channel_post",
                 "linked_chat_id": -1000000000020,
+                "link_status": "Связано",
             }
         ],
         account_id=77,

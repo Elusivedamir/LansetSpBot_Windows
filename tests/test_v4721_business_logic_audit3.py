@@ -296,7 +296,17 @@ class _NoIdTelegram:
 async def test_comment_without_confirmed_telegram_message_id_is_uncertain(tmp_path):
     db = Database(tmp_path / "comment-no-id.db")
     db.set_setting("telegram.account_id", 7)
-    db.insert_channel({"channel_id": 10, "linked_chat_id": 20, "title": "X"})
+    db.insert_channel(
+        {
+            "account_id": 7,
+            "channel_id": 10,
+            "linked_chat_id": 20,
+            "title": "X",
+            "target_kind": "channel",
+            "comment_mode": "channel_post",
+            "link_status": "Связано",
+        }
+    )
     service = CommentService(_NoIdTelegram(), db=db)
 
     with pytest.raises(NonRetryableTelegramError) as caught:
@@ -306,6 +316,7 @@ async def test_comment_without_confirmed_telegram_message_id_is_uncertain(tmp_pa
             post_message_id=15,
             text="snapshot",
             membership_ready=True,
+            reply_to=25,
             account_id=7,
         )
 

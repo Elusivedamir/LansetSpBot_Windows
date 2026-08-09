@@ -15,6 +15,19 @@ from storage.database import Database
 UTC = timezone.utc
 
 
+def _prepare_comment_target(db: Database, channel_id: int, linked_chat_id: int) -> None:
+    db.insert_channel(
+        {
+            "channel_id": channel_id,
+            "linked_chat_id": linked_chat_id,
+            "title": f"Prepared {channel_id}",
+            "target_kind": "channel",
+            "comment_mode": "channel_post",
+            "link_status": "Связано",
+        }
+    )
+
+
 def test_pending_task_type_is_not_limited_to_first_twenty(tmp_path):
     db = Database(tmp_path / "pending.db")
     for _ in range(25):
@@ -28,9 +41,12 @@ async def test_sent_comment_is_reserved_if_receipt_finalization_fails(
     tmp_path, monkeypatch
 ):
     db = Database(tmp_path / "delivery.db")
+    _prepare_comment_target(db, 10, 20)
 
     class Telegram:
-        async def send_comment(self, channel_id, post_id, text, reply_to=None):
+        async def send_comment(
+            self, channel_id, post_id, text, reply_to=None, linked_chat_id=None
+        ):
             return SimpleNamespace(id=99, sender_id=7, date=None)
 
     service = CommentService(Telegram(), linked_chat_service=None, db=db)
@@ -46,6 +62,7 @@ async def test_sent_comment_is_reserved_if_receipt_finalization_fails(
             post_message_id=30,
             text="hello",
             membership_ready=True,
+            reply_to=40,
         )
     assert raised.value.code == "delivery_persist_failed"
     assert db.has_commented(10, 30) is True
@@ -59,9 +76,12 @@ async def test_sent_comment_is_reserved_if_receipt_finalization_fails(
 @pytest.mark.asyncio
 async def test_known_send_failure_releases_delivery_reservation(tmp_path):
     db = Database(tmp_path / "known-failure.db")
+    _prepare_comment_target(db, 1, 2)
 
     class Telegram:
-        async def send_comment(self, channel_id, post_id, text, reply_to=None):
+        async def send_comment(
+            self, channel_id, post_id, text, reply_to=None, linked_chat_id=None
+        ):
             raise NonRetryableTelegramError("forbidden", code="chat_write_forbidden")
 
     service = CommentService(Telegram(), linked_chat_service=None, db=db)
@@ -72,6 +92,7 @@ async def test_known_send_failure_releases_delivery_reservation(tmp_path):
             post_message_id=3,
             text="hello",
             membership_ready=True,
+            reply_to=4,
         )
     assert db.has_commented(1, 3) is False
 

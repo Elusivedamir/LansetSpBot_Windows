@@ -217,7 +217,7 @@ async def test_delivery_ledger_contains_selected_text_before_telegram_rpc(
             "channel_id": 10,
             "title": "Target",
             "target_kind": "channel",
-            "comment_mode": "linked_discussion",
+            "comment_mode": "channel_post",
             "linked_chat_id": 30,
             "link_status": "Связано",
         }

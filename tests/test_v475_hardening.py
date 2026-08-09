@@ -22,9 +22,23 @@ def _delivery_status(db: Database, channel_id: int, post_id: int) -> str | None:
     return str(row[0]) if row is not None else None
 
 
+def _prepare_comment_target(db: Database, channel_id: int, linked_chat_id: int) -> None:
+    db.insert_channel(
+        {
+            "channel_id": channel_id,
+            "linked_chat_id": linked_chat_id,
+            "title": f"Prepared {channel_id}",
+            "target_kind": "channel",
+            "comment_mode": "channel_post",
+            "link_status": "Связано",
+        }
+    )
+
+
 @pytest.mark.asyncio
 async def test_unexpected_send_exception_keeps_duplicate_guard(tmp_path):
     db = Database(tmp_path / "unexpected-send.db")
+    _prepare_comment_target(db, 10, 20)
 
     class Telegram:
         async def send_comment(self, *args, **kwargs):
@@ -38,6 +52,7 @@ async def test_unexpected_send_exception_keeps_duplicate_guard(tmp_path):
             post_message_id=30,
             text="hello",
             membership_ready=True,
+            reply_to=40,
         )
 
     assert _delivery_status(db, 10, 30) == "uncertain"
@@ -47,6 +62,7 @@ async def test_unexpected_send_exception_keeps_duplicate_guard(tmp_path):
 @pytest.mark.asyncio
 async def test_cancelled_send_keeps_duplicate_guard(tmp_path):
     db = Database(tmp_path / "cancelled-send.db")
+    _prepare_comment_target(db, 11, 21)
 
     class Telegram:
         async def send_comment(self, *args, **kwargs):
@@ -60,6 +76,7 @@ async def test_cancelled_send_keeps_duplicate_guard(tmp_path):
             post_message_id=31,
             text="hello",
             membership_ready=True,
+            reply_to=41,
         )
 
     assert _delivery_status(db, 11, 31) == "uncertain"
@@ -68,6 +85,7 @@ async def test_cancelled_send_keeps_duplicate_guard(tmp_path):
 @pytest.mark.asyncio
 async def test_deferred_pre_execution_send_releases_reservation(tmp_path):
     db = Database(tmp_path / "deferred-send.db")
+    _prepare_comment_target(db, 12, 22)
 
     class Telegram:
         async def send_comment(self, *args, **kwargs):
@@ -83,6 +101,7 @@ async def test_deferred_pre_execution_send_releases_reservation(tmp_path):
             post_message_id=32,
             text="hello",
             membership_ready=True,
+            reply_to=42,
         )
 
     assert _delivery_status(db, 12, 32) is None
@@ -396,6 +415,9 @@ def test_service_api_uses_configured_campaign_duration(tmp_path):
             "channel_id": 1,
             "linked_chat_id": 2,
             "title": "A",
+            "target_kind": "channel",
+            "comment_mode": "channel_post",
+            "link_status": "Связано",
         }
     )
     api = ServiceAPI(db, campaign_hours=6)

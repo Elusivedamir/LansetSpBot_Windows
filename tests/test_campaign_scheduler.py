@@ -25,6 +25,7 @@ def _add_linked_channels(db: Database, count: int) -> None:
                 "title": f"Канал {index:03d}",
                 "username": f"channel_{index}",
                 "linked_chat_id": 20_000 + index,
+                "link_status": "Связано",
             }
         )
 
@@ -318,6 +319,7 @@ def test_commenting_24h_cooldown_excludes_old_channels_but_accepts_new_sync(tmp_
                 "title": f"Канал после синхронизации {index}",
                 "username": f"synced_channel_{index}",
                 "linked_chat_id": 20_000 + index,
+                "link_status": "Связано",
             }
             for index in range(1, 16)
         ]

@@ -34,6 +34,7 @@ def _insert_linked_channels(db: Database, count: int) -> None:
                 "channel_id": 10_000 + index,
                 "linked_chat_id": 20_000 + index,
                 "title": f"Channel {index}",
+                "link_status": "Связано",
             }
         )
 

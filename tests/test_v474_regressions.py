@@ -33,6 +33,7 @@ def _add_linked_channels(db: Database, count: int) -> None:
                 "title": f"Канал {index}",
                 "username": f"v474_channel_{index}",
                 "linked_chat_id": 60_000 + index,
+                "link_status": "Связано",
             }
         )
 

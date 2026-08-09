@@ -242,6 +242,7 @@ def test_commenting_batch_rotates_and_excludes_unlinked_channels(tmp_path):
                 "channel_id": channel_id,
                 "title": title,
                 "linked_chat_id": linked_chat_id,
+                "link_status": "Связано" if linked_chat_id is not None else None,
             }
         )
 

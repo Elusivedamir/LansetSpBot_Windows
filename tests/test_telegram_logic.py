@@ -79,7 +79,7 @@ async def test_comment_uses_channel_comment_route():
         channel_id=123,
     )
     assert result.id == 44
-    assert calls == [(123, 55, "hello", None, None)]
+    assert calls == [(123, 55, "hello", None, 777)]
 
 
 @pytest.mark.asyncio
@@ -637,7 +637,7 @@ async def test_discussion_resolver_selects_message_from_linked_chat():
 
 
 @pytest.mark.asyncio
-async def test_invalid_direct_discussion_root_falls_back_to_comment_to():
+async def test_invalid_direct_discussion_root_fails_closed_without_fallback():
     from core.exceptions import NonRetryableTelegramError
 
     calls = []
@@ -654,17 +654,15 @@ async def test_invalid_direct_discussion_root_falls_back_to_comment_to():
             return SimpleNamespace(id=44, sender_id=9, date=None)
 
     service = CommentService(Telegram(), linked_chat_service=None, db=None)
-    result = await service.ensure_and_send_comment(
-        channel_id=123,
-        linked_chat_id=777,
-        post_message_id=55,
-        text="hello",
-        reply_to=888,
-        membership_ready=True,
-    )
+    with pytest.raises(NonRetryableTelegramError) as raised:
+        await service.ensure_and_send_comment(
+            channel_id=123,
+            linked_chat_id=777,
+            post_message_id=55,
+            text="hello",
+            reply_to=888,
+            membership_ready=True,
+        )
 
-    assert result.id == 44
-    assert calls == [
-        (123, 55, "hello", 888, 777),
-        (123, 55, "hello", None, None),
-    ]
+    assert raised.value.code == "message_id_invalid"
+    assert calls == [(123, 55, "hello", 888, 777)]
