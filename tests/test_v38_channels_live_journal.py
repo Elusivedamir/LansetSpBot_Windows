@@ -53,7 +53,7 @@ async def test_sync_channels_writes_start_progress_and_finish_to_live_journal(mo
         for line in rendered
     )
     assert rendered[-1] == (
-        "[Каналы] Список обновлён · найдено каналов и групп: 11 · "
+        "[Каналы] Полная синхронизация завершена · найдено каналов и групп: 11 · "
         "рабочих целей: 11"
     )
 

@@ -236,7 +236,9 @@ def test_operator_requested_ui_ux_contracts_are_wired():
     main = (ROOT / "gui" / "main_window.py").read_text(encoding="utf-8")
 
     assert 'QPushButton("Выйти из аккаунта")' in manager
-    assert "disconnect_requested = Signal(int)" in manager
+    # Telegram account IDs are 64-bit values; Qt Signal(int) is signed
+    # 32-bit and caused OverflowError for valid Telegram IDs above 2^31-1.
+    assert "disconnect_requested = Signal(object)" in manager
     assert "def _set_authorization_required_ui" in account
     assert "self._refresh_dynamic_layout(self.api_id)" in account
     assert '"Режим тишины · включён"' in account

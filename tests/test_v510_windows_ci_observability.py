@@ -18,7 +18,9 @@ def test_windows_build_log_is_streamed_live_and_persisted() -> None:
     assert '--log "dist\\ci-proof\\build.log"' in section
     assert "--idle-timeout-seconds 900" in section
     assert "--total-timeout-seconds 6600" in section
-    assert '-File ".\\build\\build_windows_x64.ps1"' in section
+    assert '"-File", ".\\build\\build_windows_x64.ps1"' in section
+    assert 'powershell.exe @buildArgs' in section
+    assert '$buildArgs += "-SkipTests"' in section
     assert "Tee-Object" not in section
     assert '*> "dist\\ci-proof\\build.log"' not in section
     assert (
