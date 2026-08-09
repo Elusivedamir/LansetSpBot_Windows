@@ -48,7 +48,11 @@ def test_pending_task_deadline_supports_event_driven_worker(tmp_path):
         )
     delay = db.seconds_until_next_pending_task()
     assert delay is not None
-    assert delay == pytest.approx(2.0, abs=0.15)
+    # SQLite CURRENT_TIMESTAMP has one-second resolution. Because retry_at is
+    # derived from that value while the repository computes the remaining
+    # delay against a higher-resolution clock, an immediately observed
+    # two-second deadline can legitimately report roughly 1..2 seconds.
+    assert 0.75 <= delay <= 2.15
 
 
 @pytest.mark.asyncio
