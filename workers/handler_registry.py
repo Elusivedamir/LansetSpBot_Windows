@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from contextlib import nullcontext
 from functools import partial
@@ -115,6 +116,7 @@ def create_worker_handlers(
             "noop": noop,
             "import": import_data,
             "sync_channels": secret_store_unavailable,
+            "sync_new_channels": secret_store_unavailable,
             "link_channels": secret_store_unavailable,
             "auto_comment": secret_store_unavailable,
             "auto_comment_slot": secret_store_unavailable,
@@ -171,6 +173,7 @@ def create_worker_handlers(
             "noop": noop,
             "import": import_data,
             "sync_channels": telegram_not_configured,
+            "sync_new_channels": telegram_not_configured,
             "link_channels": telegram_not_configured,
             "auto_comment": telegram_not_configured,
             "auto_comment_slot": telegram_not_configured,
@@ -285,8 +288,10 @@ def create_worker_handlers(
         activity_schedule=activity_schedule,
     )
 
+    DIALOG_SYNC_STATE_KEY = "telegram.dialog_sync_state_v1"
+
     async def sync_channels(task: dict[str, Any]) -> None:
-        """Refresh working targets and the portable saved list in one dialog pass."""
+        """Full reconciliation plus a pre-scan marker for later deltas."""
         task_id = int(task["id"])
         payload = dict(task.get("payload") or {})
         selected_account_id = self._as_int(
@@ -333,6 +338,11 @@ def create_worker_handlers(
         publish_activity(
             "Начато получение списка каналов и групп", category="Каналы"
         )
+
+        # Capture before GetDialogs so changes racing with the full scan
+        # are replayed by the next incremental sync instead of being lost.
+        baseline_state = await telegram.get_dialog_sync_state()
+        require_account_binding()
 
         channel_batch: list[dict[str, Any]] = []
         saved_batch: list[dict[str, Any]] = []
@@ -440,8 +450,12 @@ def create_worker_handlers(
                 worker_db.mark_unseen_saved_dialogs_left(
                     account_id=account_id, seen_dialog_ids=seen_dialog_ids
                 )
+            worker_db.set_setting(
+                DIALOG_SYNC_STATE_KEY,
+                json.dumps(baseline_state, separators=(",", ":"), sort_keys=True),
+            )
             final_status = (
-                f"Список обновлён · найдено каналов и групп: {saved_count} · "
+                f"Полная синхронизация завершена · найдено каналов и групп: {saved_count} · "
                 f"рабочих целей: {channel_count}"
             )
             set_runtime(task_id, final_status)
@@ -462,6 +476,115 @@ def create_worker_handlers(
                 category="Каналы",
             )
             raise
+
+    async def sync_new_channels(task: dict[str, Any]) -> None:
+        task_id = int(task["id"])
+        payload = dict(task.get("payload") or {})
+        selected_account_id = self._as_int(
+            worker_db.get_setting("telegram.account_id", 0), 0
+        )
+        task_account_id = self._as_int(payload.get("account_id"), 0)
+        strict_repository = type(worker_db).__module__.startswith("storage.")
+        account_id = task_account_id or selected_account_id
+        if strict_repository and (
+            account_id <= 0 or selected_account_id != account_id
+        ):
+            raise NonRetryableTelegramError(
+                "Задача синхронизации принадлежит другому Telegram-аккаунту",
+                code="account_state_mismatch",
+            )
+
+        def require_account_binding() -> None:
+            if not strict_repository:
+                return
+            current_account_id = self._as_int(
+                worker_db.get_setting("telegram.account_id", 0), 0
+            )
+            if current_account_id != account_id:
+                raise NonRetryableTelegramError(
+                    "Telegram-аккаунт изменён во время incremental-синхронизации",
+                    code="account_state_mismatch",
+                )
+
+        raw_marker = worker_db.get_setting(DIALOG_SYNC_STATE_KEY, "")
+        try:
+            marker = json.loads(str(raw_marker or ""))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise NonRetryableTelegramError(
+                "Сначала выполните «Полную синхронизацию» каналов",
+                code="full_sync_required",
+            ) from exc
+        if not isinstance(marker, dict):
+            raise NonRetryableTelegramError(
+                "Сначала выполните «Полную синхронизацию» каналов",
+                code="full_sync_required",
+            )
+
+        set_runtime(
+            task_id,
+            "Получение только новых и изменённых каналов",
+            account_id=account_id,
+        )
+        publish_activity(
+            "Начата incremental-синхронизация без полного обхода диалогов",
+            category="Каналы",
+        )
+        require_account_binding()
+        result = await telegram.fetch_incremental_dialog_snapshots(marker)
+        snapshots = list(result.get("snapshots") or [])
+        next_state = dict(result.get("state") or {})
+        channel_rows: list[dict[str, Any]] = []
+        saved_rows: list[dict[str, Any]] = []
+        for snapshot in snapshots:
+            channel = snapshot.get("work_target")
+            if channel is not None:
+                channel_rows.append(
+                    {
+                        "channel_id": channel.get("id"),
+                        "title": channel.get("title"),
+                        "username": channel.get("username"),
+                        "target_kind": channel.get("target_kind", "channel"),
+                        "comment_mode": channel.get("comment_mode", "channel_post"),
+                        "linked_chat_id": channel.get("linked_chat_id"),
+                        "linked_chat_title": channel.get("linked_chat_title"),
+                        "link_status": channel.get("link_status"),
+                        "access_hash": channel.get("access_hash"),
+                        "peer_type": channel.get("peer_type"),
+                    }
+                )
+            saved = snapshot.get("saved_dialog")
+            if saved is not None:
+                saved_rows.append(saved)
+
+        require_account_binding()
+        if channel_rows:
+            if strict_repository:
+                worker_db.upsert_channels_batch(
+                    channel_rows, account_id=account_id
+                )
+            else:
+                worker_db.upsert_channels_batch(channel_rows)
+        if saved_rows and account_id > 0:
+            phone = str(worker_db.get_setting("telegram.phone", "") or "")
+            worker_db.upsert_saved_dialogs_batch(
+                saved_rows, account_id=account_id, phone=phone
+            )
+
+        # Incremental absence is never a deletion signal. Do not prune old rows,
+        # mark saved dialogs left, reset link_checked_at, or invoke link/JOIN.
+        require_account_binding()
+        worker_db.set_setting(
+            DIALOG_SYNC_STATE_KEY,
+            json.dumps(next_state, separators=(",", ":"), sort_keys=True),
+        )
+        status = (
+            "Новые каналы проверены · "
+            f"изменившихся Telegram peers: {len(snapshots)} · "
+            f"рабочих целей обновлено: {len(channel_rows)}"
+        )
+        set_runtime(task_id, status)
+        publish_activity(status, category="Каналы")
+        worker_db.update_task_progress(task_id, 100)
 
     link_channels = create_link_channels_handler(
         self=self,
@@ -570,6 +693,7 @@ def create_worker_handlers(
         "noop": noop,
         "import": import_data,
         "sync_channels": sync_channels,
+        "sync_new_channels": sync_new_channels,
         "link_channels": link_channels,
         "auto_comment": legacy_auto_comment_disabled,
         "auto_comment_slot": auto_comment_slot,

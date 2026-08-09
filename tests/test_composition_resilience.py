@@ -53,6 +53,16 @@ class _Telegram:
         self.latest_calls = 0
         self.exact_post: object | None = None
         self.exact_calls: list[tuple[object, int]] = []
+        self.dialog_snapshot_calls = 0
+        self.dialog_sync_state = {
+            "version": 1, "pts": 100, "qts": 0,
+            "date": 1_700_000_000, "seq": 10,
+        }
+        self.incremental_calls: list[dict] = []
+        self.incremental_result = {
+            "snapshots": [],
+            "state": {**self.dialog_sync_state, "date": 1_700_000_001},
+        }
 
     async def iter_channels(self):
         for row in self.channels:
@@ -62,7 +72,18 @@ class _Telegram:
         for row in self.saved_dialogs:
             yield row
 
+    async def get_dialog_sync_state(self):
+        return dict(self.dialog_sync_state)
+
+    async def fetch_incremental_dialog_snapshots(self, marker):
+        self.incremental_calls.append(dict(marker))
+        return {
+            "snapshots": list(self.incremental_result["snapshots"]),
+            "state": dict(self.incremental_result["state"]),
+        }
+
     async def iter_dialog_snapshot(self):
+        self.dialog_snapshot_calls += 1
         for row in self.channels:
             yield {"work_target": row, "saved_dialog": None}
         for row in self.saved_dialogs:
@@ -228,6 +249,71 @@ async def test_sync_channels_streams_in_bounded_batches(monkeypatch):
     assert batch_sizes == [200, 200, 50]
     assert len(db.prune_channels_except.call_args.args[0]) == 450
     db.update_task_progress.assert_any_call(11, 100)
+
+
+@pytest.mark.asyncio
+async def test_incremental_sync_never_traverses_or_prunes_full_dialog_list(monkeypatch):
+    db = MagicMock()
+    marker = {
+        "version": 1, "pts": 100, "qts": 0,
+        "date": 1_700_000_000, "seq": 10,
+    }
+    db.get_setting.side_effect = lambda key, default=None: {
+        "telegram.account_id": 77,
+        "telegram.phone": "+100",
+        "telegram.dialog_sync_state_v1": __import__("json").dumps(marker),
+    }.get(key, default)
+    telegram = _Telegram()
+    telegram.incremental_result = {
+        "snapshots": [{
+            "work_target": {
+                "id": 501, "title": "New channel", "username": "new_channel",
+                "target_kind": "channel", "comment_mode": "channel_post",
+                "linked_chat_id": None, "linked_chat_title": None,
+                "link_status": None, "access_hash": 9001, "peer_type": "channel",
+            },
+            "saved_dialog": {
+                "peer_id": -1000000000501, "title": "New channel",
+                "username": "new_channel", "kind": "channel",
+                "invite_link": None, "access_hash": 9001, "peer_type": "channel",
+            },
+        }],
+        "state": {**marker, "pts": 101, "date": 1_700_000_010},
+    }
+    handlers, _cleanup, _comments, _worker = _handlers(monkeypatch, db, telegram)
+    await handlers["sync_new_channels"](
+        {"id": 1200, "payload": {"account_id": 77}}
+    )
+    assert telegram.dialog_snapshot_calls == 0
+    assert telegram.incremental_calls == [marker]
+    db.prune_channels_except.assert_not_called()
+    db.mark_unseen_saved_dialogs_left.assert_not_called()
+    assert db.upsert_channels_batch.call_count == 1
+    assert db.upsert_saved_dialogs_batch.call_count == 1
+    state_calls = [
+        call for call in db.set_setting.call_args_list
+        if call.args and call.args[0] == "telegram.dialog_sync_state_v1"
+    ]
+    assert len(state_calls) == 1
+    assert '"pts":101' in state_calls[0].args[1]
+
+
+@pytest.mark.asyncio
+async def test_incremental_sync_requires_full_sync_without_marker(monkeypatch):
+    db = MagicMock()
+    db.get_setting.side_effect = lambda key, default=None: {
+        "telegram.account_id": 77,
+        "telegram.dialog_sync_state_v1": "",
+    }.get(key, default)
+    telegram = _Telegram()
+    handlers, _cleanup, _comments, _worker = _handlers(monkeypatch, db, telegram)
+    with pytest.raises(NonRetryableTelegramError) as exc_info:
+        await handlers["sync_new_channels"](
+            {"id": 1201, "payload": {"account_id": 77}}
+        )
+    assert exc_info.value.code == "full_sync_required"
+    assert telegram.incremental_calls == []
+    assert telegram.dialog_snapshot_calls == 0
 
 
 @pytest.mark.asyncio

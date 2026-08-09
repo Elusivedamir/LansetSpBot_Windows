@@ -122,6 +122,10 @@ jobs:
 
   release-proof:
     name: Windows release proof
-    needs: contracts
+    needs:
+      - contracts
+      - source-proof
     if: ${{ github.event_name != 'pull_request' || !startsWith(github.head_ref, 'dependabot/github_actions/') }}
     uses: ./.github/workflows/windows-release-proof.yml
+    with:
+      skip_source_tests: true

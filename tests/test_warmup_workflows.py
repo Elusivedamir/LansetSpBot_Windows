@@ -234,10 +234,11 @@ def test_gui_has_no_json_editor_and_reuses_theme_object_names() -> None:
     assert "QPlainTextEdit" not in source
     assert "JSON" not in source
     assert 'setObjectName("card")' in source
-    assert 'setObjectName("proxyToggle")' in source
-    assert 'setObjectName("proxyCard")' in source
-    assert "AccountView" in source
-    assert "onboarding_only=True" in source
+    assert "AccountView" not in source
+    assert "onboarding_only" not in source
+    assert "self.existing_account_selector = QComboBox()" in source
+    assert "self.account_a = QComboBox()" in source
+    assert "self.account_b = QComboBox()" in source
 
     parser_source = (
         ROOT / "gui" / "views" / "audience_parser_view.py"

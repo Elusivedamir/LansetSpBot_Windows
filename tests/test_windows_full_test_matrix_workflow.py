@@ -23,6 +23,8 @@ def test_only_windows_ci_runs_automatically_for_main_changes() -> None:
     assert "\n  push:\n" in text
     assert "uses: ./.github/workflows/workflow-contracts.yml" in text
     assert "uses: ./.github/workflows/windows-release-proof.yml" in text
+    assert "needs:\n      - contracts\n      - source-proof" in text
+    assert "skip_source_tests: true" in text
 
     for reusable_name in ("workflow-contracts.yml", "windows-release-proof.yml"):
         reusable = (WORKFLOW.parent / reusable_name).read_text(encoding="utf-8")
@@ -86,3 +88,11 @@ def test_windows_source_runner_preserves_ambiguous_failure_diagnostics() -> None
     assert "$CoreShardCount = 4" in text
     assert "checkout-final.json" in text
     assert "summary.json" in text
+
+
+def test_release_reuses_source_proof_only_when_called_from_main_ci() -> None:
+    text = (WORKFLOW.parent / "windows-release-proof.yml").read_text(encoding="utf-8")
+    assert "skip_source_tests:" in text
+    assert "default: false" in text
+    assert '$buildArgs += "-SkipTests"' in text
+    assert "!inputs.skip_source_tests" in text

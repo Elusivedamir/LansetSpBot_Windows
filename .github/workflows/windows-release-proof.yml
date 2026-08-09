@@ -2,7 +2,19 @@ name: Windows Release Proof
 
 on:
   workflow_call:
+    inputs:
+      skip_source_tests:
+        description: Reuse source/test proof from the calling Windows CI
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
+    inputs:
+      skip_source_tests:
+        description: Skip source tests only with an already-passed upstream proof
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -114,14 +126,21 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
+          $buildArgs = @(
+            "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", ".\build\build_windows_x64.ps1"
+          )
+          if ("${{ inputs.skip_source_tests }}" -eq "true") {
+            $buildArgs += "-SkipTests"
+            Write-Host "Reusing upstream Python 3.13/3.14 source/test proof."
+          }
           python tools/run_ci_subprocess.py `
             --label windows-release `
             --log "dist\ci-proof\build.log" `
             --idle-timeout-seconds 900 `
             --total-timeout-seconds 6600 `
             -- `
-            powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
-              -File ".\build\build_windows_x64.ps1"
+            powershell.exe @buildArgs
           $buildExit = $LASTEXITCODE
 
           if ($buildExit -ne 0) {
@@ -217,7 +236,7 @@ jobs:
           retention-days: 14
 
   prove-python-314-source:
-    if: ${{ github.event_name != 'pull_request' || !startsWith(github.head_ref, 'dependabot/github_actions/') }}
+    if: ${{ !inputs.skip_source_tests && (github.event_name != 'pull_request' || !startsWith(github.head_ref, 'dependabot/github_actions/')) }}
     name: Prove Python 3.14 x64 source runtime
     runs-on: windows-2022
     timeout-minutes: 90

@@ -65,6 +65,7 @@ class ServiceAPI(
         {
             "noop",
             "sync_channels",
+            "sync_new_channels",
             "link_channels",
             "auto_comment",
             "auto_comment_slot",
@@ -78,6 +79,7 @@ class ServiceAPI(
     ACCOUNT_BOUND_TASK_TYPES = frozenset(
         {
             "sync_channels",
+            "sync_new_channels",
             "link_channels",
             "auto_comment",
             "auto_comment_slot",

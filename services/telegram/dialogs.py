@@ -4,11 +4,13 @@ from typing import TYPE_CHECKING
 
 import asyncio
 import logging
+from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
-from telethon import utils
+from telethon import functions, types, utils
 
-from core.exceptions import TelegramOperationError
+from core.exceptions import NonRetryableTelegramError, TelegramOperationError
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +107,138 @@ class TelegramDialogsMixin(_MixinHost):
             "access_hash": int(access_hash) if access_hash is not None else None,
             "peer_type": peer_type,
         }
+
+    @staticmethod
+    def _dialog_sync_state_record(state) -> dict[str, int]:
+        return {
+            "version": 1,
+            "pts": int(getattr(state, "pts", 0) or 0),
+            "qts": int(getattr(state, "qts", 0) or 0),
+            "date": int(getattr(state, "date").timestamp()),
+            "seq": int(getattr(state, "seq", 0) or 0),
+        }
+
+    @staticmethod
+    def _validated_dialog_sync_state(value: object) -> dict[str, int]:
+        if not isinstance(value, dict) or int(value.get("version") or 0) != 1:
+            raise NonRetryableTelegramError(
+                "Incremental channel state is missing or incompatible; run full synchronization",
+                code="full_sync_required",
+            )
+        try:
+            result = {
+                "version": 1,
+                "pts": int(value["pts"]),
+                "qts": int(value["qts"]),
+                "date": int(value["date"]),
+                "seq": int(value.get("seq") or 0),
+            }
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise NonRetryableTelegramError(
+                "Incremental channel state is invalid; run full synchronization",
+                code="full_sync_required",
+            ) from exc
+        if result["pts"] < 0 or result["qts"] < 0 or result["date"] <= 0:
+            raise NonRetryableTelegramError(
+                "Incremental channel state is invalid; run full synchronization",
+                code="full_sync_required",
+            )
+        return result
+
+    def _snapshot_from_difference_entity(self, entity) -> dict[str, Any] | None:
+        if isinstance(entity, types.Channel):
+            if bool(getattr(entity, "left", False)):
+                return None
+            dialog = SimpleNamespace(
+                is_channel=True,
+                is_group=bool(getattr(entity, "megagroup", False)),
+            )
+        elif isinstance(entity, types.Chat):
+            if bool(getattr(entity, "left", False)) or bool(
+                getattr(entity, "deactivated", False)
+            ):
+                return None
+            dialog = SimpleNamespace(is_channel=False, is_group=True)
+        else:
+            return None
+        try:
+            self.register_peer_reference(utils.get_peer_id(entity), entity=entity)
+        except Exception:
+            log.debug("Could not cache incremental dialog InputPeer", exc_info=True)
+        work_target = self._work_target_row(dialog, entity)
+        saved_dialog = self._saved_dialog_row(dialog, entity)
+        if work_target is None and saved_dialog is None:
+            return None
+        return {"work_target": work_target, "saved_dialog": saved_dialog}
+
+    async def get_dialog_sync_state(self) -> dict[str, int]:
+        await self.ensure_connected()
+        state = await self.execute(
+            self.client,
+            functions.updates.GetStateRequest(),
+            retry_network=True,
+        )
+        return self._dialog_sync_state_record(state)
+
+    async def fetch_incremental_dialog_snapshots(
+        self,
+        marker: object,
+        *,
+        max_slices: int = 64,
+        pts_total_limit: int = 10_000,
+    ) -> dict[str, Any]:
+        await self.ensure_connected()
+        current = self._validated_dialog_sync_state(marker)
+        snapshots: dict[int, dict[str, Any]] = {}
+        for _slice_index in range(max(1, int(max_slices))):
+            request = functions.updates.GetDifferenceRequest(
+                pts=current["pts"],
+                date=datetime.fromtimestamp(current["date"], tz=timezone.utc),
+                qts=current["qts"],
+                pts_total_limit=max(1, int(pts_total_limit)),
+            )
+            difference = await self.execute(
+                self.client,
+                request,
+                retry_network=True,
+            )
+            if isinstance(difference, types.updates.DifferenceTooLong):
+                raise NonRetryableTelegramError(
+                    "Telegram update gap is too large for incremental synchronization; run full synchronization",
+                    code="full_sync_required",
+                    details={"remote_pts": int(getattr(difference, "pts", 0) or 0)},
+                )
+            for entity in list(getattr(difference, "chats", None) or []):
+                snapshot = self._snapshot_from_difference_entity(entity)
+                if snapshot is None:
+                    continue
+                peer = snapshot.get("saved_dialog") or snapshot.get("work_target") or {}
+                peer_id = peer.get("peer_id", peer.get("id"))
+                if peer_id is not None:
+                    snapshots[int(peer_id)] = snapshot
+            if isinstance(difference, types.updates.DifferenceEmpty):
+                current = {
+                    **current,
+                    "date": int(difference.date.timestamp()),
+                    "seq": int(difference.seq),
+                }
+                return {"snapshots": list(snapshots.values()), "state": current}
+            if isinstance(difference, types.updates.Difference):
+                current = self._dialog_sync_state_record(difference.state)
+                return {"snapshots": list(snapshots.values()), "state": current}
+            if isinstance(difference, types.updates.DifferenceSlice):
+                current = self._dialog_sync_state_record(
+                    difference.intermediate_state
+                )
+                continue
+            raise NonRetryableTelegramError(
+                f"Unsupported Telegram update difference: {type(difference).__name__}",
+                code="full_sync_required",
+            )
+        raise NonRetryableTelegramError(
+            "Telegram returned too many update slices for safe incremental synchronization; run full synchronization",
+            code="full_sync_required",
+        )
 
     async def iter_dialog_snapshot(self):
         """Yield work-target and saved-dialog projections from one Telegram pass."""

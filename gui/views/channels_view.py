@@ -120,8 +120,9 @@ class ChannelsView(QWidget):
         info_title = QLabel("Как пользоваться")
         info_title.setObjectName("cardTitle")
         info = QLabel(
-            "«Получить каналы и сохранить список» одним проходом обновляет рабочую базу и "
-            "запоминает публичные каналы и группы. После смены аккаунта перенесите список "
+            "«Получить новые» использует Telegram update difference и не перечитывает весь "
+            "список диалогов. «Полная синхронизация» выполняет полную сверку и нужна "
+            "после первого подключения или большого разрыва updates. После смены аккаунта перенесите список "
             "кнопкой «Импортировать каналы из предыдущего аккаунта» в разделе «Аккаунт». "
             "Приватные чаты без публичного username или сохранённой инвайт-ссылки останутся в списке, "
             "но автоматически вступить в них нельзя."
@@ -131,8 +132,13 @@ class ChannelsView(QWidget):
         info_layout.addWidget(info_title)
         info_layout.addWidget(info)
 
-        self.sync_button = QPushButton("Получить каналы и сохранить список")
-        self.sync_button.setObjectName("primaryButton")
+        self.incremental_sync_button = QPushButton("Получить новые")
+        self.incremental_sync_button.setObjectName("primaryButton")
+        self.incremental_sync_button.clicked.connect(
+            lambda: self._start_task("sync_new_channels")
+        )
+        self.sync_button = QPushButton("Полная синхронизация")
+        self.sync_button.setObjectName("secondaryButton")
         self.sync_button.clicked.connect(lambda: self._start_task("sync_channels"))
         self.save_button = QPushButton("Сохранить список аккаунта")
         self.save_button.setObjectName("secondaryButton")
@@ -154,6 +160,7 @@ class ChannelsView(QWidget):
         self.delete_button.clicked.connect(self.delete_selected_channels)
 
         self.buttons = [
+            self.incremental_sync_button,
             self.sync_button,
             self.pause_join_button,
             self.stop_join_button,
@@ -315,6 +322,7 @@ class ChannelsView(QWidget):
             )
 
     def _set_buttons(self, enabled):
+        self.incremental_sync_button.setEnabled(enabled)
         self.sync_button.setEnabled(enabled)
         self.save_button.setEnabled(enabled)
         self.join_button.setEnabled(enabled)

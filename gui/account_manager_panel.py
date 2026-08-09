@@ -36,13 +36,14 @@ STATE_LABELS = {
 
 
 class AccountManagerPanel(QFrame):
-    account_selected = Signal(int)
+    # Telegram IDs may exceed Qt signed 32-bit int.
+    account_selected = Signal(object)
     add_requested = Signal()
-    stop_requested = Signal(int)
-    resume_requested = Signal(int)
-    reauthorize_requested = Signal(int)
-    disconnect_requested = Signal(int)
-    delete_requested = Signal(int)
+    stop_requested = Signal(object)
+    resume_requested = Signal(object)
+    reauthorize_requested = Signal(object)
+    disconnect_requested = Signal(object)
+    delete_requested = Signal(object)
     import_comments_requested = Signal()
     import_channels_requested = Signal()
 

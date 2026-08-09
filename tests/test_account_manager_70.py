@@ -65,3 +65,43 @@ def test_catalog_filters_seventy_accounts_without_changing_selection() -> None:
     assert int(panel.selector.currentData()) == 42
     panel.deleteLater()
     app.processEvents()
+
+def test_account_manager_supports_telegram_ids_above_qt_int32() -> None:
+    app = QApplication.instance() or QApplication([])
+    panel = AccountManagerPanel()
+    large_id = 5_173_126_087
+    account = {
+        "telegram_account_id": large_id,
+        "display_name": "Large ID Account",
+        "username": "large_id_user",
+        "phone_masked": "+7 *** ***-0001",
+        "runtime_state": "connected",
+        "authorized": True,
+        "stopped": False,
+        "campaign_active": False,
+    }
+    selected, stopped, resumed = [], [], []
+    reauthorized, disconnected, deleted = [], [], []
+    panel.account_selected.connect(selected.append)
+    panel.stop_requested.connect(stopped.append)
+    panel.resume_requested.connect(resumed.append)
+    panel.reauthorize_requested.connect(reauthorized.append)
+    panel.disconnect_requested.connect(disconnected.append)
+    panel.delete_requested.connect(deleted.append)
+    panel.reload([account], selected_account_id=large_id, previous_account_id=0)
+    panel.selector.setCurrentIndex(-1)
+    panel.selector.setCurrentIndex(0)
+    app.processEvents()
+    assert selected == [large_id]
+    panel._stop_clicked()
+    panel._resume_clicked()
+    panel._reauthorize_clicked()
+    panel._disconnect_clicked()
+    panel._delete_clicked()
+    assert stopped == [large_id]
+    assert resumed == [large_id]
+    assert reauthorized == [large_id]
+    assert disconnected == [large_id]
+    assert deleted == [large_id]
+    panel.deleteLater()
+    app.processEvents()

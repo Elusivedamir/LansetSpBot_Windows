@@ -32,7 +32,8 @@ def test_main_gui_has_eight_user_pages(monkeypatch, tmp_path):
     assert window.stack.count() == 8
     assert hasattr(window.account_view, "proxy_status_card")
     assert hasattr(window.account_view, "proxy_details_button")
-    assert window.warmup_view.account_onboarding._onboarding_only is True
+    assert not hasattr(window.warmup_view, "account_onboarding")
+    assert not hasattr(window.warmup_view, "onboarding_toggle")
     assert hasattr(window.audience_parser_view, "account_selector")
     assert not hasattr(window.activity_panel, "spambot_button")
     window._tray.hide()

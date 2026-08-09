@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import partial
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
 )
 
 from gui.background import BackgroundCall, connect_lifecycle_safe
-from gui.views.account_view import AccountView
 
 
 _STATUS_LABELS = {
@@ -32,12 +31,9 @@ _STATUS_LABELS = {
 class WarmupView(QWidget):
     """Managed seven-day account-pair workflows with native controls."""
 
-    account_added = Signal()
-
-    def __init__(self, adapter, config=None) -> None:
+    def __init__(self, adapter) -> None:
         super().__init__()
         self.adapter = adapter
-        self.config = config
         self._overview: dict[str, Any] = {}
         self._busy = False
         self._page_active = False
@@ -61,12 +57,12 @@ class WarmupView(QWidget):
         root.addWidget(title)
         root.addWidget(subtitle)
 
-        onboarding_card = QFrame()
-        onboarding_card.setObjectName("card")
-        onboarding_layout = QVBoxLayout(onboarding_card)
-        onboarding_layout.setContentsMargins(20, 18, 20, 18)
-        onboarding_layout.setSpacing(12)
-        existing_title = QLabel("Уже подключённый аккаунт")
+        account_card = QFrame()
+        account_card.setObjectName("card")
+        account_layout = QVBoxLayout(account_card)
+        account_layout.setContentsMargins(20, 18, 20, 18)
+        account_layout.setSpacing(12)
+        existing_title = QLabel("Подключённый аккаунт")
         existing_title.setObjectName("cardTitle")
         self.existing_account_selector = QComboBox()
         self.existing_account_selector.setMinimumContentsLength(24)
@@ -74,39 +70,15 @@ class WarmupView(QWidget):
             self._existing_account_selected
         )
         self.existing_account_hint = QLabel(
-            "Выберите аккаунт из вкладки «Аккаунт» — он будет подставлен как «Аккаунт A»."
+            "Выберите аккаунт, уже подключённый во вкладке «Аккаунт». "
+            "Подключение и авторизация из «Прогрева» недоступны."
         )
         self.existing_account_hint.setObjectName("mutedText")
         self.existing_account_hint.setWordWrap(True)
-        onboarding_layout.addWidget(existing_title)
-        onboarding_layout.addWidget(self.existing_account_selector)
-        onboarding_layout.addWidget(self.existing_account_hint)
-
-        self.onboarding_toggle = QPushButton("Добавить новый аккаунт для прогрева ▸")
-        self.onboarding_toggle.setObjectName("secondaryButton")
-        self.onboarding_toggle.setCheckable(True)
-        self.onboarding_toggle.toggled.connect(self._toggle_onboarding)
-        onboarding_layout.addWidget(self.onboarding_toggle)
-
-        onboarding_hint = QLabel(
-            "Если нужного аккаунта ещё нет, добавьте его здесь через тот же защищённый "
-            "API ID / API Hash / телефон / Telegram-код / 2FA / proxy flow."
-        )
-        onboarding_hint.setObjectName("mutedText")
-        onboarding_hint.setWordWrap(True)
-        onboarding_layout.addWidget(onboarding_hint)
-
-        self.account_onboarding = AccountView(
-            adapter,
-            config,
-            onboarding_only=True,
-        )
-        self.account_onboarding.onboarding_completed.connect(
-            self._onboarding_completed
-        )
-        self.account_onboarding.hide()
-        onboarding_layout.addWidget(self.account_onboarding)
-        root.addWidget(onboarding_card)
+        account_layout.addWidget(existing_title)
+        account_layout.addWidget(self.existing_account_selector)
+        account_layout.addWidget(self.existing_account_hint)
+        root.addWidget(account_card)
 
         create_card = QFrame()
         create_card.setObjectName("card")
@@ -185,20 +157,6 @@ class WarmupView(QWidget):
         self.refresh_timer.setInterval(5_000)
         self.refresh_timer.timeout.connect(self.refresh)
         QTimer.singleShot(0, self.refresh)
-
-    def _toggle_onboarding(self, expanded: bool) -> None:
-        self.account_onboarding.setVisible(bool(expanded))
-        self.onboarding_toggle.setText(
-            "Добавить новый аккаунт для прогрева ▾"
-            if expanded
-            else "Добавить новый аккаунт для прогрева ▸"
-        )
-        if expanded:
-            self.account_onboarding.begin_onboarding()
-
-    def _onboarding_completed(self) -> None:
-        self.account_added.emit()
-        self.refresh(force=True)
 
     def _existing_account_selected(self, _index: int = -1) -> None:
         account_id = int(self.existing_account_selector.currentData() or 0)
@@ -688,11 +646,5 @@ class WarmupView(QWidget):
         layout = self.layout()
         if layout is not None:
             layout.setContentsMargins(margin, 22, margin, 26)
-        self.account_onboarding.set_compact_mode(compact)
-
-    def request_auth_stop(self) -> bool:
-        return self.account_onboarding.request_auth_stop()
-
     def shutdown(self) -> None:
         self.refresh_timer.stop()
-        self.request_auth_stop()
