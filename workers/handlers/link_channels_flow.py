@@ -63,6 +63,7 @@ class LinkChannelsRunner:
     checkpoint: dict[str, Any] = field(init=False, default_factory=dict)
     channel_by_id: dict[int, dict[str, Any]] = field(init=False, default_factory=dict)
     group_by_id: dict[int, dict[str, Any]] = field(init=False, default_factory=dict)
+    known_group_ids: set[int] = field(init=False, default_factory=set)
     channel_ids: list[int] = field(init=False, default_factory=list)
     group_ids: list[int] = field(init=False, default_factory=list)
     channel_index: int = field(init=False, default=0)
@@ -267,6 +268,13 @@ class LinkChannelsRunner:
 
     def initialize_checkpoint(self) -> None:
         all_rows = self._load_rows()
+        self.known_group_ids = {
+            int(row["channel_id"])
+            for row in all_rows
+            if row.get("channel_id") is not None
+            and str(row.get("target_kind") or "channel") == "group"
+            and not row.get("local_banned_at")
+        }
         raw_checkpoint = self.payload.get("_link_checkpoint")
         checkpoint_valid = self._checkpoint_is_valid(raw_checkpoint)
         working_rows = (
@@ -544,6 +552,32 @@ class LinkChannelsRunner:
                 work.channel_id, linked_id, title, status
             )
 
+    def _finalize_channel_link(
+        self,
+        work: ChannelWork,
+        linked_id: int | None,
+        title: str | None,
+        status: str,
+    ) -> None:
+        """Persist a completed link result and checked marker as one durable step."""
+        if self.strict_repository:
+            changed = self.worker_db.finalize_channel_link_check(
+                work.channel_id,
+                linked_id,
+                title,
+                status,
+                account_id=self.account_id,
+            )
+        else:
+            self.worker_db.update_channel_link(
+                work.channel_id, linked_id, title, status
+            )
+            changed = self.worker_db.mark_link_checked(
+                work.channel_id, account_id=self.account_id
+            )
+        if changed is False:
+            raise RuntimeError("Could not finalize channel link result")
+
     def _join_guard(self) -> dict[str, Any]:
         reader = getattr(self.worker_db, "get_join_guard", None)
         guard = (
@@ -591,7 +625,7 @@ class LinkChannelsRunner:
         self, work: ChannelWork, linked_id: int
     ) -> ChannelStepResult:
         work.resolved_linked_id = linked_id
-        if linked_id in self.group_by_id:
+        if linked_id in self.known_group_ids:
             self.prepared_count += 1
             status = "Связано · обсуждение уже в диалогах"
         else:
@@ -647,7 +681,7 @@ class LinkChannelsRunner:
                 status = "Связано · вступление выполнено"
             else:
                 status = "Связано · участие уже было"
-        self._update_channel_link(work, linked_id, None, status)
+        self._finalize_channel_link(work, linked_id, None, status)
         if linked_id in self.group_by_id:
             self.resolved_discussion_ids.add(linked_id)
         self.set_runtime(
@@ -706,13 +740,13 @@ class LinkChannelsRunner:
             )
             return ChannelStepResult.ADVANCED
 
-        self._update_channel_link(
+        self._finalize_channel_link(
             work,
             None,
             None,
             "Пропущено · Telegram FloodWait",
         )
-        self._advance_channel(mark_checked=True)
+        self._advance_channel(mark_checked=False)
         self.set_runtime(
             self.task_id,
             f"Канал {work.number} из {len(self.channel_ids)}: {work.title} · "
@@ -762,12 +796,20 @@ class LinkChannelsRunner:
             if disposition is LinkErrorDisposition.JOIN_REQUESTED
             else f"Недоступно: {exc}"
         )
-        self._update_channel_link(
-            work,
-            work.resolved_linked_id,
-            work.resolved_linked_title,
-            status,
-        )
+        if disposition is LinkErrorDisposition.RAISE_RESTRICTION:
+            self._update_channel_link(
+                work,
+                work.resolved_linked_id,
+                work.resolved_linked_title,
+                status,
+            )
+        else:
+            self._finalize_channel_link(
+                work,
+                work.resolved_linked_id,
+                work.resolved_linked_title,
+                status,
+            )
         self.set_runtime(
             self.task_id,
             f"Канал {work.number} из {len(self.channel_ids)}: {work.title} · {status}",
@@ -793,7 +835,7 @@ class LinkChannelsRunner:
                 **dispatch_barrier_kwargs(resolver, barrier),
             )
             if linked_id is None:
-                self._update_channel_link(
+                self._finalize_channel_link(
                     work, None, None, "Нет чата обсуждения"
                 )
                 self.set_runtime(
@@ -844,6 +886,11 @@ class LinkChannelsRunner:
                     level="WARNING",
                 )
                 continue
+            if channel.get("link_checked_at"):
+                # A completed durable result may be ahead of a stale checkpoint
+                # after a process crash. Never replay Telegram RPCs for it.
+                self._advance_channel(mark_checked=False)
+                continue
 
             number = self.channel_index + 1
             title = channel.get("title") or channel_id
@@ -863,7 +910,7 @@ class LinkChannelsRunner:
                 return False
             if result is ChannelStepResult.ADVANCED:
                 continue
-            self._advance_channel(mark_checked=True)
+            self._advance_channel(mark_checked=False)
             if self.pause_requested():
                 raise TaskPausedError(
                     "Остановлено пользователем; прогресс связок сохранён"

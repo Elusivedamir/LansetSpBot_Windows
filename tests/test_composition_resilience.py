@@ -51,6 +51,8 @@ class _Telegram:
         self.latest_post = SimpleNamespace(status="ok", message=SimpleNamespace(id=901))
         self.latest_posts: list[object] = []
         self.latest_calls = 0
+        self.exact_post: object | None = None
+        self.exact_calls: list[tuple[object, int]] = []
 
     async def iter_channels(self):
         for row in self.channels:
@@ -97,6 +99,19 @@ class _Telegram:
         if self.latest_posts:
             return self.latest_posts.pop(0)
         return self.latest_post
+
+    async def get_post_for_commenting(self, channel_id, post_id):
+        self.exact_calls.append((channel_id, int(post_id)))
+        if self.latest_error:
+            raise self.latest_error
+        if self.exact_post is not None:
+            return self.exact_post
+        return SimpleNamespace(
+            status="ok",
+            message=SimpleNamespace(id=int(post_id)),
+            discussion_chat_id=20,
+            discussion_message_id=40,
+        )
 
     async def get_chat_title(self, chat_id):
         return self.chat_titles.get(chat_id, f"Chat {chat_id}")
@@ -680,7 +695,8 @@ async def test_join_slot_network_and_safety_failures(monkeypatch):
 @pytest.mark.asyncio
 async def test_direct_message_comment_and_legacy_handlers(monkeypatch):
     db = MagicMock()
-    handlers, _cleanup, comments, _worker = _handlers(monkeypatch, db, _Telegram())
+    telegram = _Telegram()
+    handlers, _cleanup, comments, _worker = _handlers(monkeypatch, db, telegram)
 
     with pytest.raises(NonRetryableTelegramError) as disabled_empty:
         await handlers["direct_message"]({"id": 1, "payload": {"chat_id": 10}})
@@ -707,6 +723,10 @@ async def test_direct_message_comment_and_legacy_handlers(monkeypatch):
         }
     )
     assert comments.sent[-1]["post_message_id"] == 30
+    assert comments.sent[-1]["linked_chat_id"] == 20
+    assert comments.sent[-1]["reply_to"] == 40
+    assert telegram.exact_calls == [(10, 30)]
+    assert telegram.latest_calls == 0
 
     with pytest.raises(NonRetryableTelegramError) as legacy:
         await handlers["auto_comment"]({"id": 5, "payload": {}})

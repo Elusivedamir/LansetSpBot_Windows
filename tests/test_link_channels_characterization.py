@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from core.exceptions import DeferredTelegramError, NonRetryableTelegramError
+from storage.database import Database
 from workers.handlers.link_channels import create_link_channels_handler
 
 
@@ -314,6 +315,86 @@ async def test_existing_discussion_group_requires_no_join_rpc() -> None:
     assert telegram.join_calls == []
     assert db.rows[1]["link_status"] == "Связано · обсуждение уже в диалогах"
     assert db.rows[100]["comment_mode"] == "linked_discussion"
+
+
+@pytest.mark.asyncio
+async def test_checked_discussion_group_still_proves_presence_without_join_rpc() -> None:
+    source = _row(1)
+    checked_group = _row(100, kind="group")
+    checked_group["link_checked_at"] = "old"
+    db = _Database([source, checked_group])
+    telegram = _Telegram()
+
+    await _handler(db, telegram, _Linked({1: 100}))(
+        {"id": 131, "payload": {"account_id": 7}}
+    )
+
+    assert telegram.join_calls == []
+    assert db.rows[1]["link_status"] == "Связано · обсуждение уже в диалогах"
+    assert db.rows[100]["link_checked_at"] == "old"
+
+
+@pytest.mark.asyncio
+async def test_resume_skips_checked_channel_before_any_telegram_rpc() -> None:
+    checked = _row(1)
+    checked.update(
+        link_checked_at="done",
+        linked_chat_id=100,
+        link_status="Связано · вступление выполнено",
+    )
+    db = _Database([checked])
+    telegram = _Telegram()
+    linked = _Linked({1: 100})
+    payload = {
+        "account_id": 7,
+        "_link_checkpoint": {
+            "version": 1,
+            "account_id": 7,
+            "phase": "channels",
+            "channel_ids": [1],
+            "group_ids": [],
+            "channel_index": 0,
+            "group_index": 0,
+            "join_attempt_count": 0,
+            "joined_count": 0,
+            "prepared_count": 0,
+            "banned_count": 0,
+        },
+    }
+
+    await _handler(db, telegram, linked)({"id": 132, "payload": payload})
+
+    assert linked.calls == []
+    assert telegram.join_calls == []
+
+
+def test_production_finalizer_persists_link_and_checked_marker_atomically(tmp_path) -> None:
+    db = Database(tmp_path / "link-finalizer.db")
+    db.upsert_channels_batch(
+        [
+            {
+                "channel_id": 1,
+                "title": "Source",
+                "target_kind": "channel",
+                "comment_mode": "channel_post",
+            }
+        ],
+        account_id=7,
+    )
+
+    assert db.finalize_channel_link_check(
+        1,
+        100,
+        None,
+        "Связано · вступление выполнено",
+        account_id=7,
+    ) is True
+
+    row = db.get_channel_by_id(1, account_id=7)
+    assert row is not None
+    assert row["linked_chat_id"] == 100
+    assert row["link_status"] == "Связано · вступление выполнено"
+    assert row["link_checked_at"] is not None
 
 
 @pytest.mark.asyncio

@@ -486,6 +486,41 @@ class WarmupRepositoryMixin(_MixinHost):
         except Exception as exc:
             raise DatabaseError(f"Failed to enqueue warmup step: {exc}") from exc
 
+    def get_previous_warmup_message_context(
+        self,
+        *,
+        pair_id: object,
+        week_number: object,
+        before_sequence_no: object,
+    ) -> dict[str, Any] | None:
+        """Return the last completed message before a warmup step.
+
+        The stored telegram_message_id belongs to the sender's local private-chat
+        history. Callers must resolve the receiver-local copy before reply/reaction.
+        """
+        pair_owner = _positive(pair_id, "pair_id")
+        week_owner = _positive(week_number, "week_number")
+        sequence_owner = _positive(before_sequence_no, "before_sequence_no")
+        try:
+            with self.get_connection() as conn:
+                row = conn.execute(
+                    """SELECT id, sequence_no, actor_account_id, target_account_id,
+                              message_text, telegram_message_id, completed_at
+                       FROM warmup_steps
+                       WHERE pair_id=? AND week_number=? AND sequence_no<?
+                         AND action='message' AND status='done'
+                       ORDER BY sequence_no DESC
+                       LIMIT 1""",
+                    (pair_owner, week_owner, sequence_owner),
+                ).fetchone()
+                return dict(row) if row is not None else None
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError(
+                f"Failed to read previous warmup message context: {exc}"
+            ) from exc
+
     def begin_warmup_step(
         self, step_id: object, *, account_id: object
     ) -> dict[str, Any] | None:

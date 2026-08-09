@@ -6,6 +6,7 @@ from typing import Any
 
 from telethon import functions, types
 
+from core.campaign_schedule import from_db_time, utc_now
 from core.exceptions import DeferredTelegramError, NonRetryableTelegramError
 from core.redaction import sanitize_exception
 
@@ -118,6 +119,137 @@ async def _recover_existing_message_id(
         if candidate > 0:
             return candidate
     return 0
+
+
+def _catchup_delay_seconds(
+    *,
+    step: dict[str, Any],
+    pair: dict[str, Any],
+    pair_id: int,
+    step_id: int,
+) -> int:
+    """Return a deterministic human-scale delay for an overdue message step."""
+    scheduled_at = from_db_time(step.get("scheduled_at"))
+    if scheduled_at is None:
+        return 0
+    overdue_seconds = (utc_now() - scheduled_at).total_seconds()
+    minimum = max(120, int(pair.get("reply_min_seconds") or 120))
+    maximum = max(minimum, int(pair.get("reply_max_seconds") or 900))
+    if overdue_seconds <= maximum:
+        return 0
+    digest = hashlib.blake2b(
+        f"lanset-warmup-catchup:{pair_id}:{step_id}".encode("utf-8"),
+        digest_size=8,
+    ).digest()
+    span = maximum - minimum + 1
+    return minimum + (int.from_bytes(digest, "big") % span)
+
+
+async def _resolve_verified_user_peer(
+    *,
+    telegram,
+    target: dict[str, Any],
+    target_account_id: int,
+    dispatch_barrier,
+) -> object:
+    """Resolve a Telegram user and verify immutable user-id identity before activity."""
+    username = str(target.get("username") or "").strip().lstrip("@")
+    locators: list[object] = [target_account_id]
+    if username:
+        locators.append(username)
+
+    last_error: BaseException | None = None
+    for locator in locators:
+        try:
+            input_peer = await telegram.execute(
+                telegram.client.get_input_entity,
+                locator,
+                retry_network=True,
+                dispatch_barrier=dispatch_barrier,
+            )
+        except (DeferredTelegramError, NonRetryableTelegramError):
+            raise
+        except Exception as exc:
+            last_error = exc
+            continue
+
+        resolved_user_id = int(getattr(input_peer, "user_id", 0) or 0)
+        if resolved_user_id != target_account_id:
+            raise NonRetryableTelegramError(
+                "Telegram peer не соответствует связанному аккаунту",
+                code="warmup_partner_identity_mismatch",
+            )
+        return input_peer
+
+    raise NonRetryableTelegramError(
+        "Не удалось безопасно определить Telegram peer связанного аккаунта",
+        code="warmup_partner_unresolvable",
+    ) from last_error
+
+
+async def _resolve_receiver_local_message_id(
+    *,
+    telegram,
+    peer: object,
+    account_id: int,
+    target_account_id: int,
+    previous_context: dict[str, Any] | None,
+    dispatch_barrier,
+) -> int:
+    """Map the previous sent message to the receiver account's local Message.id."""
+    if not previous_context:
+        return 0
+
+    previous_actor = int(previous_context.get("actor_account_id") or 0)
+    previous_target = int(previous_context.get("target_account_id") or 0)
+    previous_text = str(previous_context.get("message_text") or "").strip()
+    if (
+        previous_actor != target_account_id
+        or previous_target != account_id
+        or not previous_text
+    ):
+        return 0
+
+    completed_at = from_db_time(previous_context.get("completed_at"))
+    recent = await telegram.execute(
+        telegram.client.get_messages,
+        peer,
+        limit=60,
+        retry_network=True,
+        dispatch_barrier=dispatch_barrier,
+    )
+
+    candidates: list[int] = []
+    for item in list(recent or []):
+        if bool(getattr(item, "out", False)):
+            continue
+        body = str(getattr(item, "message", "") or "").strip()
+        if body != previous_text:
+            continue
+
+        sender_id = int(
+            getattr(item, "sender_id", 0)
+            or getattr(getattr(item, "from_id", None), "user_id", 0)
+            or 0
+        )
+        if sender_id > 0 and sender_id != target_account_id:
+            continue
+
+        if completed_at is not None:
+            message_time = from_db_time(getattr(item, "date", None))
+            if (
+                message_time is not None
+                and abs((message_time - completed_at).total_seconds()) > 15 * 60
+            ):
+                continue
+
+        candidate = int(getattr(item, "id", 0) or 0)
+        if candidate > 0:
+            candidates.append(candidate)
+
+    if len(candidates) != 1:
+        return 0
+    return candidates[0]
 
 
 def _group_join_parts(chat_ref: str) -> tuple[str | None, str | None]:
@@ -237,10 +369,6 @@ def create_warmup_step_handler(
                         "Связанный аккаунт не найден",
                         code="warmup_partner_missing",
                     )
-                peer: object = (
-                    str(target.get("username") or "").strip().lstrip("@")
-                    or target_account_id
-                )
                 text = str(step.get("message_text") or "").strip()
                 if not text:
                     raise NonRetryableTelegramError(
@@ -248,8 +376,50 @@ def create_warmup_step_handler(
                         code="warmup_empty_message",
                     )
                 typing_seconds = max(1, min(12, int(step.get("typing_seconds") or 3)))
+                input_peer = await _resolve_verified_user_peer(
+                    telegram=telegram,
+                    target=target,
+                    target_account_id=target_account_id,
+                    dispatch_barrier=barrier,
+                )
+
+                pair_state = dict(worker_db.get_warmup_pair(pair_id) or {})
+                catchup_delay = _catchup_delay_seconds(
+                    step=step,
+                    pair=pair_state,
+                    pair_id=pair_id,
+                    step_id=step_id,
+                )
+                if catchup_delay > 0:
+                    set_runtime(task_id, f"Восстановление темпа связки #{pair_id}")
+                    completed_sleep = await queue_worker.safe_sleep(
+                        catchup_delay,
+                        cancel_scope=("warmup_pair", pair_id),
+                    )
+                    if not completed_sleep:
+                        raise NonRetryableTelegramError(
+                            "Прогрев остановлен до отправки сообщения",
+                            code="warmup_cancelled_before_send",
+                        )
+
+                reply_to = None
+                if bool(step.get("reply_to_previous")):
+                    previous_context = worker_db.get_previous_warmup_message_context(
+                        pair_id=pair_id,
+                        week_number=int(step.get("week_number") or 0),
+                        before_sequence_no=int(step.get("sequence_no") or 0),
+                    )
+                    reply_to = await _resolve_receiver_local_message_id(
+                        telegram=telegram,
+                        peer=input_peer,
+                        account_id=account_id,
+                        target_account_id=target_account_id,
+                        previous_context=previous_context,
+                        dispatch_barrier=barrier,
+                    )
+
                 set_runtime(task_id, f"Диалог связки #{pair_id}")
-                async with telegram.client.action(peer, "typing"):
+                async with telegram.client.action(input_peer, "typing"):
                     completed_sleep = await queue_worker.safe_sleep(
                         typing_seconds,
                         cancel_scope=("warmup_pair", pair_id),
@@ -259,18 +429,6 @@ def create_warmup_step_handler(
                             "Прогрев остановлен до отправки сообщения",
                             code="warmup_cancelled_before_send",
                         )
-                reply_to = None
-                if bool(step.get("reply_to_previous")):
-                    previous_sender = int(step.get("last_sender_account_id") or 0)
-                    previous_message_id = int(step.get("last_message_id") or 0)
-                    if previous_message_id > 0 and previous_sender != account_id:
-                        reply_to = previous_message_id
-                input_peer = await telegram.execute(
-                    telegram.client.get_input_entity,
-                    peer,
-                    retry_network=True,
-                    dispatch_barrier=barrier,
-                )
                 reply_input = (
                     types.InputReplyToMessage(reply_to_msg_id=int(reply_to))
                     if reply_to is not None
@@ -303,7 +461,7 @@ def create_warmup_step_handler(
                         raise
                     telegram_message_id = await _recover_existing_message_id(
                         telegram=telegram,
-                        peer=peer,
+                        peer=input_peer,
                         text=text,
                         reply_to=reply_to,
                         dispatch_barrier=barrier,
@@ -311,7 +469,7 @@ def create_warmup_step_handler(
                 if telegram_message_id <= 0:
                     telegram_message_id = await _recover_existing_message_id(
                         telegram=telegram,
-                        peer=peer,
+                        peer=input_peer,
                         text=text,
                         reply_to=reply_to,
                         dispatch_barrier=barrier,
@@ -335,22 +493,32 @@ def create_warmup_step_handler(
                         "Связанный аккаунт не найден",
                         code="warmup_partner_missing",
                     )
-                previous_sender = int(step.get("last_sender_account_id") or 0)
-                previous_message_id = int(step.get("last_message_id") or 0)
-                if previous_message_id <= 0 or previous_sender != target_account_id:
+                input_peer = await _resolve_verified_user_peer(
+                    telegram=telegram,
+                    target=target,
+                    target_account_id=target_account_id,
+                    dispatch_barrier=barrier,
+                )
+                previous_context = worker_db.get_previous_warmup_message_context(
+                    pair_id=pair_id,
+                    week_number=int(step.get("week_number") or 0),
+                    before_sequence_no=int(step.get("sequence_no") or 0),
+                )
+                previous_message_id = await _resolve_receiver_local_message_id(
+                    telegram=telegram,
+                    peer=input_peer,
+                    account_id=account_id,
+                    target_account_id=target_account_id,
+                    previous_context=previous_context,
+                    dispatch_barrier=barrier,
+                )
+                if previous_message_id <= 0:
                     skipped = True
-                    result_text = "Нет подходящего сообщения для реакции"
+                    result_text = (
+                        "Не удалось однозначно определить локальный ID "
+                        "предыдущего сообщения"
+                    )
                 else:
-                    reaction_peer: object = (
-                        str(target.get("username") or "").strip().lstrip("@")
-                        or target_account_id
-                    )
-                    input_peer = await telegram.execute(
-                        telegram.client.get_input_entity,
-                        reaction_peer,
-                        retry_network=True,
-                        dispatch_barrier=barrier,
-                    )
                     emoji = _REACTION_EMOJIS[step_id % len(_REACTION_EMOJIS)]
                     reaction_request = functions.messages.SendReactionRequest(
                         peer=input_peer,

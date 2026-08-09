@@ -140,40 +140,60 @@ def create_manual_comment_handler(
                     peer_type=(linked_row or {}).get("peer_type"),
                 )
 
-        ensure_rpc_allowed(channel_id, linked_chat_id)
-        latest_resolver = telegram.get_latest_post_for_commenting
-        route_barrier = create_dispatch_barrier(linked_chat_id)
-        resolved = await latest_resolver(
+        ensure_rpc_allowed(channel_id)
+        exact_resolver = getattr(telegram, "get_post_for_commenting", None)
+        if not callable(exact_resolver):
+            raise NonRetryableTelegramError(
+                "Exact post resolver is unavailable",
+                code="message_id_invalid",
+            )
+        route_barrier = create_dispatch_barrier()
+        resolved = await exact_resolver(
             channel_id,
-            **dispatch_barrier_kwargs(latest_resolver, route_barrier),
+            post_id,
+            **dispatch_barrier_kwargs(exact_resolver, route_barrier),
         )
         resolved_message = getattr(resolved, "message", None)
-        if (
-            str(getattr(resolved, "status", "") or "") == "ok"
-            and resolved_message is not None
-            and int(resolved_message.id) == post_id
-        ):
-            linked_chat_id = (
-                getattr(resolved, "discussion_chat_id", None) or linked_chat_id
-            )
-            reply_to = getattr(resolved, "discussion_message_id", None) or reply_to
-        ensure_rpc_allowed(channel_id, linked_chat_id)
-        if linked_chat_id is None:
-            linked_resolver = telegram.get_linked_chat
-            linked_chat_id = await linked_resolver(
-                channel_id,
-                **dispatch_barrier_kwargs(
-                    linked_resolver,
-                    create_dispatch_barrier(),
+        resolved_status = str(getattr(resolved, "status", "") or "")
+        if resolved_status != "ok":
+            raise NonRetryableTelegramError(
+                "Exact comment route is unavailable for the requested post",
+                code=(
+                    "comments_disabled"
+                    if resolved_status == "comments_disabled"
+                    else "message_id_invalid"
                 ),
             )
-        if linked_chat_id is None:
+        if (
+            resolved_message is None
+            or int(getattr(resolved_message, "id", 0) or 0) != post_id
+        ):
             raise NonRetryableTelegramError(
-                "Channel has no linked discussion chat",
+                "Telegram returned a different post for the manual comment",
+                code="message_id_invalid",
+            )
+        resolved_linked_chat_id = getattr(resolved, "discussion_chat_id", None)
+        resolved_reply_to = getattr(resolved, "discussion_message_id", None)
+        if resolved_linked_chat_id is None:
+            raise NonRetryableTelegramError(
+                "Requested post has no accessible discussion chat",
                 code="linked_chat_missing",
             )
-        linked_chat_id = int(linked_chat_id)
+        if resolved_reply_to is None:
+            raise NonRetryableTelegramError(
+                "Requested post discussion root is unavailable",
+                code="message_id_invalid",
+            )
+        linked_chat_id = int(resolved_linked_chat_id)
+        reply_to = int(resolved_reply_to)
         ensure_rpc_allowed(channel_id, linked_chat_id)
+        if callable(register_peer):
+            linked_row = read_channel(linked_chat_id)
+            register_peer(
+                linked_chat_id,
+                access_hash=(linked_row or {}).get("access_hash"),
+                peer_type=(linked_row or {}).get("peer_type"),
+            )
 
         dispatch_barrier = create_dispatch_barrier(linked_chat_id)
         try:

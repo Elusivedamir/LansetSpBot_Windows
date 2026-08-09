@@ -540,6 +540,47 @@ class ChannelMutationRepositoryMixin:
             raise
         except Exception as exc:
             raise DatabaseError(f"Failed to update channel link: {exc}") from exc
+    def finalize_channel_link_check(
+        self,
+        channel_id,
+        linked_chat_id=None,
+        linked_chat_title=None,
+        status=None,
+        *,
+        account_id=None,
+    ) -> bool:
+        """Atomically persist one completed channel-link inspection result."""
+        try:
+            owner_account_id = resolve_account_id(self, account_id)
+            with self.get_connection() as conn:
+                cursor = conn.execute(
+                    """UPDATE channels
+                       SET linked_chat_id=?, linked_chat_title=?, link_status=?,
+                           link_checked_at=COALESCE(link_checked_at, CURRENT_TIMESTAMP),
+                           last_sync_at=CURRENT_TIMESTAMP
+                       WHERE account_id=? AND channel_id=?
+                         AND local_banned_at IS NULL
+                         AND NOT EXISTS(
+                             SELECT 1 FROM local_ban_targets AS ban
+                             WHERE ban.account_id=channels.account_id
+                               AND ban.peer_id IN (channels.channel_id, ?)
+                         )""",
+                    (
+                        linked_chat_id,
+                        linked_chat_title,
+                        status,
+                        owner_account_id,
+                        channel_id,
+                        linked_chat_id,
+                    ),
+                )
+                return bool(cursor.rowcount == 1)
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError(
+                f"Failed to finalize channel link check: {exc}"
+            ) from exc
     def update_group_link_classification(
         self, group_id, *, is_linked: bool | None, status: str, account_id=None
     ) -> bool:
