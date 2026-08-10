@@ -165,8 +165,20 @@ jobs:
           if ($null -eq $zip) { throw "Release ZIP was not produced." }
           if ($null -eq $checksums) { throw "Release checksum file was not produced." }
           if ($null -eq $sbom) { throw "Release SBOM was not produced." }
-          if (-not (Test-Path -LiteralPath "dist\ci-proof\coverage.json" -PathType Leaf)) {
-            throw "dist\ci-proof\coverage.json was not produced."
+          $reusedSourceProof = "${{ inputs.skip_source_tests }}" -eq "true"
+          if ($reusedSourceProof) {
+            $coverageEvidence = "upstream: Python 3.13 + Python 3.14 source proofs"
+            @(
+              "reused=true"
+              "commit=${{ github.sha }}"
+              "source=calling Windows CI source-proof matrix"
+            ) | Set-Content -LiteralPath "dist\ci-proof\upstream-source-proof.txt" -Encoding UTF8
+          }
+          else {
+            if (-not (Test-Path -LiteralPath "dist\ci-proof\coverage.json" -PathType Leaf)) {
+              throw "dist\ci-proof\coverage.json was not produced."
+            }
+            $coverageEvidence = "dist/ci-proof/coverage.json"
           }
 
           $checksumLine = (Get-Content -LiteralPath $checksums.FullName -Raw).Trim()
@@ -192,7 +204,8 @@ jobs:
             "checksums=$($checksums.Name)"
             "sbom=$($sbom.Name)"
             "sbom_components=$($components.Count)"
-            "coverage=dist/ci-proof/coverage.json"
+            "coverage=$coverageEvidence"
+            "source_proof_reused=$reusedSourceProof"
           ) | Set-Content -LiteralPath "dist\ci-proof\release-evidence.txt" -Encoding UTF8
 
           @"
@@ -203,7 +216,8 @@ jobs:
           - Release ZIP: `$($zip.Name)`
           - ZIP SHA-256: `$actualHash`
           - SBOM components: `$($components.Count)`
-          - Full pytest, coverage, Ruff, Mypy, SQLCipher, PyInstaller and packaged self-tests completed.
+          - Source proof: `$coverageEvidence`
+          - Python 3.13/3.14 source gates and coverage were completed upstream when reuse is enabled; SQLCipher, PyInstaller and packaged self-tests were completed in this release job.
           "@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
 
       - name: Upload verified release

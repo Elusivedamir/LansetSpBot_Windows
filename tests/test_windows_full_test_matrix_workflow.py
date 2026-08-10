@@ -96,3 +96,7 @@ def test_release_reuses_source_proof_only_when_called_from_main_ci() -> None:
     assert "default: false" in text
     assert '$buildArgs += "-SkipTests"' in text
     assert "!inputs.skip_source_tests" in text
+    assert '$reusedSourceProof = "${{ inputs.skip_source_tests }}" -eq "true"' in text
+    assert "upstream-source-proof.txt" in text
+    assert '$coverageEvidence = "dist/ci-proof/coverage.json"' in text
+    assert "source_proof_reused=$reusedSourceProof" in text
