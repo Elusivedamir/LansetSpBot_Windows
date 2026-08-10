@@ -307,7 +307,13 @@ def test_rapid_account_selection_is_serialized_and_last_intent_wins(monkeypatch)
             selected_calls.append(int(account_id))
             return {"telegram_account_id": int(account_id)}
 
-    monkeypatch.setattr(AccountView, "load_settings", lambda self: None)
+    def complete_settings_load(_self, *, on_finished=None):
+        if on_finished is not None:
+            on_finished()
+
+    monkeypatch.setattr(
+        AccountView, "load_settings", complete_settings_load
+    )
     view = AccountView(Adapter(), SimpleNamespace())
     view.account_manager.reload(
         [

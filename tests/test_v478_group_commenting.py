@@ -191,11 +191,15 @@ def test_v15_database_migrates_work_targets_to_v16(tmp_path):
             );
             CREATE TABLE direct_message_deliveries(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id INTEGER,
-                status TEXT,
-                reserved_at DATETIME,
-                updated_at DATETIME,
-                error TEXT
+                task_id INTEGER NOT NULL UNIQUE,
+                chat_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                message_id INTEGER,
+                status TEXT NOT NULL DEFAULT 'sending'
+                    CHECK(status IN ('sending','sent','uncertain','failed')),
+                error TEXT,
+                reserved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE tasks(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

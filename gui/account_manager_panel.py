@@ -285,7 +285,12 @@ class AccountManagerPanel(QFrame):
 
     def _selection_changed(self, _index: int) -> None:
         account_id = int(self.selector.currentData() or 0)
-        if account_id <= 0 or account_id == self._selected_account_id:
+        if account_id <= 0:
+            return
+        if (
+            account_id == self._selected_account_id
+            and self._pending_selection_id <= 0
+        ):
             return
         self._pending_selection_id = account_id
         self._sync_import_buttons()

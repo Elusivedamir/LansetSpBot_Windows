@@ -53,9 +53,18 @@ def test_import_is_atomic_on_database_failure(tmp_path):
 
 
 def test_import_task_payload_is_accepted(tmp_path):
-    api = ServiceAPI(Database(tmp_path / "app.db"))
+    database = Database(tmp_path / "app.db")
+    database.register_telegram_account(
+        telegram_account_id=101,
+        session_name="account_101",
+        display_name="Import account",
+        authorized=True,
+    )
+    database.select_telegram_account(101)
+    api = ServiceAPI(database)
     created = api.create_task("import", {"kind": "channels", "path": "channels.csv"})
     assert created["type"] == "import"
+    assert created["payload"]["account_id"] == 101
 
 
 def test_service_api_rejects_comment_with_only_linked_chat_id(tmp_path):
