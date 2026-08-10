@@ -85,7 +85,8 @@ def test_dependency_audit_covers_all_lock_files_and_uploads_json():
         assert name in workflow
     assert "--format=json" in workflow
     assert "dependency-audit.json" in workflow
-    assert "disable-pip: true" in workflow
+    assert "internal-be-careful-extra-flags: >-" in workflow
+    assert "--disable-pip" in workflow
     assert "enforce_dependency_audit_policy.py" in workflow
 
 
