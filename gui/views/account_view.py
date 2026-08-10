@@ -46,6 +46,7 @@ from gui.views.account_parts.settings import AccountViewSettingsMixin
 
 class AccountView(AccountViewAuthFlowMixin, AccountViewAccountOpsMixin, AccountViewSettingsMixin, QWidget):
     account_changed = Signal()
+    account_selection_busy = Signal(bool)
     onboarding_completed = Signal()
     factory_reset_requested = Signal()
 
@@ -69,6 +70,7 @@ class AccountView(AccountViewAuthFlowMixin, AccountViewAccountOpsMixin, AccountV
         self._account_selection_generation = 0
         self._account_selection_in_flight = False
         self._pending_account_selection: tuple[int, int] | None = None
+        self._durable_selected_account_id = 0
         self._settings_load_generation = 0
         self._factory_reset_pending = False
         self._applying_settings = False

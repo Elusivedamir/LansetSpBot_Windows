@@ -53,6 +53,7 @@ class AccountManagerPanel(QFrame):
         self._accounts: dict[int, dict] = {}
         self._selected_account_id = 0
         self._previous_account_id = 0
+        self._pending_selection_id = 0
 
         title = QLabel("Выберите аккаунт")
         title.setObjectName("cardTitle")
@@ -212,6 +213,7 @@ class AccountManagerPanel(QFrame):
             else next(iter(self._accounts), 0)
         )
         self._previous_account_id = int(previous_account_id or 0)
+        self._pending_selection_id = 0
 
         count = len(self._accounts)
         limit = MAX_REGISTERED_TELEGRAM_ACCOUNTS
@@ -238,14 +240,36 @@ class AccountManagerPanel(QFrame):
                 f"{self._display(account)} — {state}{campaign}",
                 account_id,
             )
-        index = self.selector.findData(self._selected_account_id)
+        visible_account_id = (
+            self._pending_selection_id or self._selected_account_id
+        )
+        index = self.selector.findData(visible_account_id)
         self.selector.setCurrentIndex(index if index >= 0 else -1)
         self.selector.blockSignals(False)
+        self._sync_import_buttons()
+        self._render_selected()
+
+    def _selection_action_account_id(self) -> int:
+        if self._pending_selection_id > 0:
+            return 0
+        try:
+            visible = int(self.selector.currentData() or 0)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+        if (
+            visible <= 0
+            or visible != self._selected_account_id
+            or visible not in self._accounts
+        ):
+            return 0
+        return visible
 
     def _sync_import_buttons(self) -> None:
+        owner = self._selection_action_account_id()
         previous_available = (
-            self._previous_account_id in self._accounts
-            and self._previous_account_id != self._selected_account_id
+            owner > 0
+            and self._previous_account_id in self._accounts
+            and self._previous_account_id != owner
         )
         tooltip = (
             ""
@@ -261,19 +285,48 @@ class AccountManagerPanel(QFrame):
 
     def _selection_changed(self, _index: int) -> None:
         account_id = int(self.selector.currentData() or 0)
-        if account_id > 0:
-            self.account_selected.emit(account_id)
+        if account_id <= 0 or account_id == self._selected_account_id:
+            return
+        self._pending_selection_id = account_id
+        self._sync_import_buttons()
+        self._render_selected()
+        self.account_selected.emit(account_id)
 
     def set_selected_account_id(self, account_id: int) -> None:
         self._selected_account_id = int(account_id or 0)
+        self._pending_selection_id = 0
+        self._rebuild_selector()
+        self._sync_import_buttons()
+        self._render_selected()
+
+    def cancel_pending_selection(self) -> None:
+        self._pending_selection_id = 0
         self._rebuild_selector()
         self._sync_import_buttons()
         self._render_selected()
 
     def _render_selected(self) -> None:
-        account = self._accounts.get(self._selected_account_id)
+        if self._pending_selection_id > 0:
+            self.state_text.setText("Переключение аккаунта…")
+            self.details.setText(
+                f"Целевой Telegram ID: {self._pending_selection_id}"
+            )
+            self.state_dot.setObjectName("accountStateWarning")
+            self.stop_button.setEnabled(False)
+            self.resume_button.setEnabled(False)
+            self.reauthorize_button.setEnabled(False)
+            self.disconnect_button.setEnabled(False)
+            self.delete_button.setEnabled(False)
+            return
+
+        actionable_id = self._selection_action_account_id()
+        account = self._accounts.get(actionable_id)
         if not account:
-            self.state_text.setText("Аккаунт не выбран")
+            self.state_text.setText(
+                "Выбранный аккаунт скрыт фильтром"
+                if self._selected_account_id in self._accounts
+                else "Аккаунт не выбран"
+            )
             self.details.setText("")
             self.state_dot.setObjectName("accountStateDisconnected")
             self.stop_button.setEnabled(False)
@@ -285,7 +338,7 @@ class AccountManagerPanel(QFrame):
         state = str(account.get("runtime_state") or "disconnected")
         label = STATE_LABELS.get(state, state)
         self.state_text.setText(label)
-        self.details.setText(f"Telegram ID: {self._selected_account_id}")
+        self.details.setText(f"Telegram ID: {actionable_id}")
         self.state_dot.setObjectName(
             {
                 "connected": "accountStateOnline",
@@ -314,21 +367,26 @@ class AccountManagerPanel(QFrame):
         self.delete_button.setEnabled(True)
 
     def _stop_clicked(self) -> None:
-        if self._selected_account_id > 0:
-            self.stop_requested.emit(self._selected_account_id)
+        owner = self._selection_action_account_id()
+        if owner > 0:
+            self.stop_requested.emit(owner)
 
     def _resume_clicked(self) -> None:
-        if self._selected_account_id > 0:
-            self.resume_requested.emit(self._selected_account_id)
+        owner = self._selection_action_account_id()
+        if owner > 0:
+            self.resume_requested.emit(owner)
 
     def _reauthorize_clicked(self) -> None:
-        if self._selected_account_id > 0:
-            self.reauthorize_requested.emit(self._selected_account_id)
+        owner = self._selection_action_account_id()
+        if owner > 0:
+            self.reauthorize_requested.emit(owner)
 
     def _disconnect_clicked(self) -> None:
-        if self._selected_account_id > 0:
-            self.disconnect_requested.emit(self._selected_account_id)
+        owner = self._selection_action_account_id()
+        if owner > 0:
+            self.disconnect_requested.emit(owner)
 
     def _delete_clicked(self) -> None:
-        if self._selected_account_id > 0:
-            self.delete_requested.emit(self._selected_account_id)
+        owner = self._selection_action_account_id()
+        if owner > 0:
+            self.delete_requested.emit(owner)

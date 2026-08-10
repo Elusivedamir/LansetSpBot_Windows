@@ -457,7 +457,10 @@ class CommentService:
                     code="channel_locally_banned",
                 )
             reserved = self.db.reserve_direct_message_delivery(
-                durable_task_id, chat_id, selected
+                durable_task_id,
+                chat_id,
+                selected,
+                account_id=account_id,
             )
             if not reserved:
                 raise NonRetryableTelegramError(

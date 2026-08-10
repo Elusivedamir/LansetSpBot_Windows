@@ -98,6 +98,7 @@ class QueueWorker(QueueWorkerStateMixin, QueueWorkerCooldownMixin, QThread):
         {
             "noop",
             "sync_channels",
+            "sync_new_channels",
             "sync_saved_dialogs",
             "link_channels",
             "import",
@@ -107,6 +108,7 @@ class QueueWorker(QueueWorkerStateMixin, QueueWorkerCooldownMixin, QThread):
     DIRECT_ACCOUNT_BOUND_TASK_TYPES = frozenset(
         {
             "sync_channels",
+            "sync_new_channels",
             "sync_saved_dialogs",
             "link_channels",
             "auto_comment",
@@ -119,6 +121,7 @@ class QueueWorker(QueueWorkerStateMixin, QueueWorkerCooldownMixin, QThread):
     ACCOUNT_RPC_TASK_TYPES = frozenset(
         {
             "sync_channels",
+            "sync_new_channels",
             "sync_saved_dialogs",
             "link_channels",
             "auto_comment",
@@ -132,8 +135,9 @@ class QueueWorker(QueueWorkerStateMixin, QueueWorkerCooldownMixin, QThread):
     )
 
     stats_changed = Signal(dict)
-    task_completed = Signal(int)
-    task_failed = Signal(int, str)
+    # SQLite task ids are 64-bit; Qt Signal(int) is signed 32-bit.
+    task_completed = Signal(object)
+    task_failed = Signal(object, str)
     worker_error = Signal(str)
     lifecycle_changed = Signal(str)
 

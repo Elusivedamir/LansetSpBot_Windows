@@ -84,6 +84,7 @@ class ServiceAPI(
             "auto_comment",
             "auto_comment_slot",
             "comment",
+            "import",
             "sync_saved_dialogs",
             "join_saved_slot",
             "parse_audience",

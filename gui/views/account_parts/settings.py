@@ -155,25 +155,44 @@ class AccountViewSettingsMixin:
         )
         QThreadPool.globalInstance().start(job)
         return job
-    def load_settings(self):
+    def load_settings(self, *, on_finished=None):
         self._settings_load_generation += 1
         generation = self._settings_load_generation
         self._load_account_catalog()
         self.connect_button.setEnabled(False)
 
+        def finish_if_current() -> None:
+            if (
+                generation == self._settings_load_generation
+                and on_finished is not None
+            ):
+                on_finished()
+
         def applied(values) -> None:
-            if generation == self._settings_load_generation:
+            if generation != self._settings_load_generation:
+                return
+            try:
                 self._apply_settings(values)
+            finally:
+                finish_if_current()
 
         def failed(message: str) -> None:
-            if generation == self._settings_load_generation:
+            if generation != self._settings_load_generation:
+                return
+            try:
                 self._settings_load_failed(message)
+            finally:
+                finish_if_current()
 
-        self._run_background(
-            lambda: self.adapter.get_settings(),
-            on_success=applied,
-            on_error=failed,
-        )
+        try:
+            self._run_background(
+                lambda: self.adapter.get_settings(),
+                on_success=applied,
+                on_error=failed,
+            )
+        except BaseException:
+            finish_if_current()
+            raise
     def _settings_load_failed(self, message: str) -> None:
         self.connect_button.setEnabled(True)
         self.status_label.setText("Не удалось загрузить настройки")

@@ -477,6 +477,26 @@ class AccountRegistryRepositoryMixin:
                         (owner,),
                     )
 
+                # saved_dialogs is a global Telegram peer catalog, but its
+                # provenance must never retain the identity/phone of a deleted
+                # account. Reassign provenance to another account that still has
+                # a membership row for the peer, otherwise clear it.
+                if {"saved_dialogs", "saved_dialog_memberships"} <= tables:
+                    conn.execute(
+                        """UPDATE saved_dialogs
+                           SET source_account_id=(
+                                   SELECT m.account_id
+                                   FROM saved_dialog_memberships m
+                                   WHERE m.saved_dialog_id=saved_dialogs.id
+                                     AND m.account_id<>?
+                                   ORDER BY m.updated_at DESC, m.account_id ASC
+                                   LIMIT 1
+                               ),
+                               source_phone=NULL
+                           WHERE source_account_id=?""",
+                        (owner, owner),
+                    )
+
                 remaining = list(account_tables)
                 while remaining:
                     deferred: list[str] = []

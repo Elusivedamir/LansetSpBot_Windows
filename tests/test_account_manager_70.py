@@ -51,7 +51,8 @@ def test_catalog_filters_seventy_accounts_without_changing_selection() -> None:
     assert emitted == []
     assert panel._selected_account_id == 42
     assert panel.selector.count() == 2  # user7 and user70
-    assert panel.state_text.text() == "Подключён"
+    assert panel.state_text.text() == "Выбранный аккаунт скрыт фильтром"
+    assert panel.delete_button.isEnabled() is False
 
     panel.search.setText("42")
     app.processEvents()
@@ -70,7 +71,17 @@ def test_account_manager_supports_telegram_ids_above_qt_int32() -> None:
     app = QApplication.instance() or QApplication([])
     panel = AccountManagerPanel()
     large_id = 5_173_126_087
-    account = {
+    small = {
+        "telegram_account_id": 101,
+        "display_name": "Small ID Account",
+        "username": "small_id_user",
+        "phone_masked": "+7 *** ***-0000",
+        "runtime_state": "connected",
+        "authorized": True,
+        "stopped": False,
+        "campaign_active": False,
+    }
+    large = {
         "telegram_account_id": large_id,
         "display_name": "Large ID Account",
         "username": "large_id_user",
@@ -88,11 +99,16 @@ def test_account_manager_supports_telegram_ids_above_qt_int32() -> None:
     panel.reauthorize_requested.connect(reauthorized.append)
     panel.disconnect_requested.connect(disconnected.append)
     panel.delete_requested.connect(deleted.append)
-    panel.reload([account], selected_account_id=large_id, previous_account_id=0)
-    panel.selector.setCurrentIndex(-1)
-    panel.selector.setCurrentIndex(0)
+    panel.reload([small, large], selected_account_id=101, previous_account_id=0)
+
+    panel.selector.setCurrentIndex(panel.selector.findData(large_id))
     app.processEvents()
     assert selected == [large_id]
+    assert panel.delete_button.isEnabled() is False
+    panel._delete_clicked()
+    assert deleted == []
+
+    panel.set_selected_account_id(large_id)
     panel._stop_clicked()
     panel._resume_clicked()
     panel._reauthorize_clicked()

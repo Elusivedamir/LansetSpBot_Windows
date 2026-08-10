@@ -498,6 +498,7 @@ def create_multiaccount_handlers(
 
     names = {
         "sync_channels",
+        "sync_new_channels",
         "link_channels",
         "auto_comment",
         "auto_comment_slot",

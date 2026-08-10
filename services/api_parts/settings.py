@@ -184,7 +184,19 @@ class SettingsAPIMixin(_MixinHost):
 
     def get_settings(self, prefix: str | None = None) -> dict[str, Any]:
         owner = self.get_current_account_id()
-        if owner > 0 and hasattr(self, "get_account_settings"):
+        account_prefixes = (
+            "telegram.",
+            "automation.",
+            "commenting.",
+            "openai.",
+            "scheduler.",
+        )
+        account_scoped = prefix is None or str(prefix).startswith(account_prefixes)
+        if (
+            owner > 0
+            and account_scoped
+            and hasattr(self, "get_account_settings")
+        ):
             values = dict(self.get_account_settings(owner))
             if prefix:
                 values = {

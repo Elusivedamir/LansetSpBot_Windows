@@ -212,6 +212,9 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(scroll)
 
         self.activity_panel = ActivityPanel(adapter)
+        self.account_view.account_selection_busy.connect(
+            self._set_account_selection_busy
+        )
         self.account_view.account_changed.connect(
             self.channels_view.handle_account_changed
         )
@@ -265,6 +268,15 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self.horizontal_splitter)
         self.setCentralWidget(root)
         self._suspended_runtime_timers: list[object] = []
+
+    def _set_account_selection_busy(self, busy: bool) -> None:
+        enabled = not bool(busy)
+        # The durable selected account can change before the queued GUI callback
+        # repaints every page. Disable account-bound interaction across that
+        # boundary so visual account A cannot launch work as durable account B.
+        self.menu.setEnabled(enabled)
+        self.stack.setEnabled(enabled)
+        self.activity_panel.setEnabled(enabled)
 
     @property
     def current_theme_key(self) -> str:

@@ -16,6 +16,7 @@ class AccountHealthCard(QFrame):
         super().__init__(parent)
         self.adapter = adapter
         self._job: BackgroundCall | None = None
+        self._refresh_pending = False
         self.setObjectName("infoCard")
 
         layout = QVBoxLayout(self)
@@ -87,7 +88,9 @@ class AccountHealthCard(QFrame):
 
     def refresh(self) -> None:
         if self._job is not None:
+            self._refresh_pending = True
             return
+        self._refresh_pending = False
         account_id = self._account_id()
         if account_id <= 0:
             self.values["status"].setText("Аккаунт не выбран")
@@ -108,6 +111,8 @@ class AccountHealthCard(QFrame):
                 label.setText(str(result.get(key, "—")))
 
         def failed(card: AccountHealthCard, message: str) -> None:
+            if account_id != card._account_id():
+                return
             card.values["status"].setText("Не удалось обновить")
             card.values["last_error"].setText(humanize_reason(message))
 
@@ -115,6 +120,9 @@ class AccountHealthCard(QFrame):
             if card._job is job:
                 card._job = None
             card._set_busy(False)
+            if card._refresh_pending:
+                card._refresh_pending = False
+                QTimer.singleShot(0, card.refresh)
 
         connect_lifecycle_safe(job, self, succeeded=succeeded, failed=failed, finished=finished)
         QThreadPool.globalInstance().start(job)
@@ -153,12 +161,19 @@ class AccountHealthCard(QFrame):
             QTimer.singleShot(0, card.refresh)
 
         def failed(card: AccountHealthCard, message: str) -> None:
-            card.diagnostic_result.setText(f"Диагностика не пройдена · {humanize_reason(message)}")
+            if account_id != card._account_id():
+                return
+            card.diagnostic_result.setText(
+                f"Диагностика не пройдена · {humanize_reason(message)}"
+            )
 
         def finished(card: AccountHealthCard) -> None:
             if card._job is job:
                 card._job = None
             card._set_busy(False)
+            if card._refresh_pending:
+                card._refresh_pending = False
+                QTimer.singleShot(0, card.refresh)
 
         connect_lifecycle_safe(job, self, succeeded=succeeded, failed=failed, finished=finished)
         QThreadPool.globalInstance().start(job)

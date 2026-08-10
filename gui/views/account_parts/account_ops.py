@@ -48,6 +48,7 @@ class AccountViewAccountOpsMixin:
                 return
             selected = self.adapter.get_selected_account_id()
             previous = self.adapter.get_previous_selected_account_id()
+            self._durable_selected_account_id = int(selected or 0)
             self.account_manager.reload(
                 list(accounts or []),
                 selected_account_id=selected,
@@ -68,12 +69,14 @@ class AccountViewAccountOpsMixin:
         if account_id <= 0:
             return
         if self._account_blocking_jobs:
+            self.account_manager.cancel_pending_selection()
             QMessageBox.warning(
                 self,
                 APP_NAME,
                 "Дождитесь завершения операции с Telegram-аккаунтом",
             )
             return
+        self.account_selection_busy.emit(True)
         self._account_selection_generation += 1
         generation = self._account_selection_generation
         self._pending_account_selection = (account_id, generation)
@@ -93,27 +96,34 @@ class AccountViewAccountOpsMixin:
         self._account_selection_in_flight = True
 
         def selected(_result) -> None:
-            try:
-                if generation != self._account_selection_generation:
-                    return
-                self._adding_account = False
-                self._pending_session_name = ""
-                self.account_manager.set_selected_account_id(account_id)
-                self.load_settings()
-                self.account_changed.emit()
-            finally:
+            # The database selection transaction has committed even when a
+            # newer GUI intent makes this callback stale. Remember the real
+            # durable owner before deciding whether to repaint this result.
+            self._durable_selected_account_id = account_id
+            if generation != self._account_selection_generation:
                 self._finish_account_selection()
+                return
+            self._adding_account = False
+            self._pending_session_name = ""
+            self.account_manager.set_selected_account_id(account_id)
+            self.account_changed.emit()
+            self.load_settings(on_finished=self._finish_account_selection)
 
         def failed(message: str) -> None:
-            try:
-                if generation != self._account_selection_generation:
-                    return
-                # Restore the selector and fields from the durable account that
-                # remained selected after the failed request.
-                self.load_settings()
-                QMessageBox.warning(self, "Аккаунт", message)
-            finally:
+            if generation != self._account_selection_generation:
                 self._finish_account_selection()
+                return
+            # A previous queued selection may already have committed. Render
+            # that durable owner before re-enabling any account-bound UI.
+            durable = int(
+                self._durable_selected_account_id
+                or self.account_manager._selected_account_id
+                or 0
+            )
+            self.account_manager.set_selected_account_id(durable)
+            self.account_changed.emit()
+            QMessageBox.warning(self, "Аккаунт", message)
+            self.load_settings(on_finished=self._finish_account_selection)
 
         try:
             self._run_background(
@@ -123,11 +133,16 @@ class AccountViewAccountOpsMixin:
             )
         except BaseException:
             self._account_selection_in_flight = False
+            if generation == self._account_selection_generation:
+                self.account_manager.cancel_pending_selection()
+            self._finish_account_selection()
             raise
     def _finish_account_selection(self) -> None:
         self._account_selection_in_flight = False
         if self._pending_account_selection is not None:
             self._start_pending_account_selection()
+            return
+        self.account_selection_busy.emit(False)
     def _begin_add_account(self) -> None:
         state = self.adapter.can_add_telegram_account()
         if not state.get("allowed"):

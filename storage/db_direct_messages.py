@@ -22,7 +22,28 @@ class DirectMessageRepositoryMixin:
         """Provided by the concrete Database facade."""
         raise NotImplementedError
 
-    def reserve_direct_message_delivery(self, task_id, chat_id, text):
+    @staticmethod
+    def _direct_message_account_id(conn, task_id: int, account_id=None) -> int:
+        try:
+            requested = max(0, int(account_id or 0))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise DatabaseError("Direct-message account_id must be an integer") from exc
+        row = conn.execute(
+            "SELECT account_id FROM tasks WHERE id=?", (int(task_id),)
+        ).fetchone()
+        try:
+            stored = max(0, int(row["account_id"] or 0)) if row else 0
+        except (TypeError, ValueError, OverflowError):
+            stored = 0
+        if requested > 0 and stored > 0 and requested != stored:
+            raise DatabaseError(
+                "Direct-message task/account ownership mismatch"
+            )
+        return requested or stored
+
+    def reserve_direct_message_delivery(
+        self, task_id, chat_id, text, *, account_id=None
+    ):
         try:
             task_id = int(task_id)
             if task_id <= 0:
@@ -35,19 +56,25 @@ class DirectMessageRepositoryMixin:
                 raise DatabaseError("Direct-message delivery requires chat_id and text")
             with self.get_connection() as conn:
                 conn.execute("BEGIN IMMEDIATE")
+                owner = self._direct_message_account_id(
+                    conn, task_id, account_id
+                )
                 active = conn.execute(
                     """SELECT 1 FROM direct_message_deliveries
-                       WHERE chat_id=? AND status IN ('sending','uncertain')
+                       WHERE account_id=? AND chat_id=?
+                         AND status IN ('sending','uncertain')
                        LIMIT 1""",
-                    (normalized_chat,),
+                    (owner, normalized_chat),
                 ).fetchone()
                 if active is not None:
                     return False
                 cursor = conn.execute(
                     """INSERT OR IGNORE INTO direct_message_deliveries(
-                           task_id, chat_id, text, status, reserved_at, updated_at)
-                       VALUES(?, ?, ?, 'sending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-                    (task_id, normalized_chat, normalized_text),
+                           account_id, task_id, chat_id, text, status,
+                           reserved_at, updated_at)
+                       VALUES(?, ?, ?, ?, 'sending',
+                              CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+                    (owner, task_id, normalized_chat, normalized_text),
                 )
                 return cursor.rowcount == 1
         except DatabaseError:
