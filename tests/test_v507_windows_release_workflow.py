@@ -20,7 +20,14 @@ def test_workflow_runs_the_full_release_script_without_cmd_pause() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     assert r'build\build_windows_x64.ps1' in text
     assert "BUILD_WINDOWS_X64.cmd" not in text
-    assert "pytest, coverage, Ruff, Mypy, SQLCipher, PyInstaller" in text
+    assert (
+        "Python 3.13/3.14 source gates and coverage were completed upstream "
+        "when reuse is enabled" in text
+    )
+    assert (
+        "SQLCipher, PyInstaller and packaged self-tests were completed "
+        "in this release job" in text
+    )
 
 
 def test_workflow_verifies_and_uploads_release_evidence() -> None:
