@@ -28,11 +28,11 @@ jobs:
             requirements-dev-windows-x64.lock
           require-hashes: true
           no-deps: true
-          disable-pip: true
           vulnerability-service: osv
           summary: false
           internal-be-careful-allow-failure: true
           internal-be-careful-extra-flags: >-
+            --disable-pip
             --format=json
             --output=dependency-audit.json
 
