@@ -94,11 +94,14 @@ class OpenAIDraftRepositoryMixin:
                     (int(campaign_id),),
                 ).fetchone()
                 if row:
-                    return dict(row)
+                    result = dict(row)
+                    result["snapshot_missing"] = False
+                    return result
                 return {
                     "campaign_id": int(campaign_id),
                     "comment_source": SOURCE_PREWRITTEN,
                     "manual_approval_required": 0,
+                    "snapshot_missing": True,
                 }
         except DatabaseError:
             raise

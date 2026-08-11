@@ -14,13 +14,23 @@ log = logging.getLogger(__name__)
 
 _REACTION_EMOJIS = ("👍", "❤️", "🔥", "👏")
 _REACTION_SKIP_ERRORS = {
+    "reaction_invalid",
+    "chat_write_forbidden",
+    "message_id_invalid",
+    "message_not_modified",
     "ReactionInvalidError",
     "ChatWriteForbiddenError",
     "MessageIdInvalidError",
     "MessageNotModifiedError",
 }
-_PENDING_MEMBERSHIP_ERRORS = {"InviteRequestSentError"}
+_PENDING_MEMBERSHIP_ERRORS = {"join_requested", "InviteRequestSentError"}
 _UNAVAILABLE_GROUP_ERRORS = {
+    "channel_private",
+    "permission_denied",
+    "invite_expired",
+    "invite_invalid",
+    "username_invalid",
+    "username_not_found",
     "ChannelPrivateError",
     "ChatAdminRequiredError",
     "InviteHashExpiredError",
@@ -28,8 +38,13 @@ _UNAVAILABLE_GROUP_ERRORS = {
     "UsernameInvalidError",
     "UsernameNotOccupiedError",
 }
-_BLOCKED_GROUP_ERRORS = {"UserBannedInChannelError"}
+_BLOCKED_GROUP_ERRORS = {"user_banned", "UserBannedInChannelError"}
 _ALREADY_MEMBER_ERRORS = {"UserAlreadyParticipantError"}
+
+
+def _warmup_error_key(exc: BaseException) -> str:
+    code = str(getattr(exc, "code", "") or "").strip()
+    return code or type(exc).__name__
 
 
 def _unknown_result(exc: BaseException) -> bool:
@@ -539,7 +554,7 @@ def create_warmup_step_handler(
                             category="Прогрев",
                         )
                     except Exception as exc:
-                        if type(exc).__name__ in _REACTION_SKIP_ERRORS:
+                        if _warmup_error_key(exc) in _REACTION_SKIP_ERRORS:
                             skipped = True
                             result_text = "Реакция недоступна в этом диалоге"
                         else:
@@ -563,7 +578,7 @@ def create_warmup_step_handler(
                                 dispatch_barrier=barrier,
                             )
                         except Exception as exc:
-                            name = type(exc).__name__
+                            name = _warmup_error_key(exc)
                             if name not in _ALREADY_MEMBER_ERRORS:
                                 if name in _PENDING_MEMBERSHIP_ERRORS:
                                     worker_db.record_warmup_group_visit(
@@ -606,7 +621,7 @@ def create_warmup_step_handler(
                                 or []
                             )
                         except Exception as exc:
-                            name = type(exc).__name__
+                            name = _warmup_error_key(exc)
                             if name in _PENDING_MEMBERSHIP_ERRORS or (
                                 membership_state == "requested"
                                 and name in _UNAVAILABLE_GROUP_ERRORS
@@ -688,7 +703,7 @@ def create_warmup_step_handler(
                                     )
                                     reacted = message_id
                                 except Exception as exc:
-                                    if type(exc).__name__ not in _REACTION_SKIP_ERRORS:
+                                    if _warmup_error_key(exc) not in _REACTION_SKIP_ERRORS:
                                         raise
                             worker_db.record_warmup_group_visit(
                                 group_id=group_id,

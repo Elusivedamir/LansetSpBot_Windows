@@ -49,6 +49,7 @@ class CommentCampaignLifecycleMixin(_MixinHost):
         allow_empty_comments=False,
         rng=None,
         account_id=None,
+        comment_settings_snapshot=None,
     ):
         """Create one persistent UTC campaign and its randomized schedule.
 
@@ -133,6 +134,30 @@ class CommentCampaignLifecycleMixin(_MixinHost):
                         (campaign_id, index, to_db_time(moment))
                         for index, moment in enumerate(slots, start=1)
                     ],
+                )
+                snapshot = dict(comment_settings_snapshot or {})
+                source = str(snapshot.get("comment_source") or "prepared").strip().lower()
+                if source not in {"prepared", "openai"}:
+                    raise DatabaseError(
+                        f"Unsupported campaign comment source: {source!r}"
+                    )
+                conn.execute(
+                    """INSERT INTO campaign_comment_settings(
+                           campaign_id, account_id, comment_source, model,
+                           system_prompt, max_words, temperature, timeout_seconds,
+                           max_generation_attempts, manual_approval_required, updated_at)
+                       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)""",
+                    (
+                        campaign_id,
+                        owner_account_id,
+                        source,
+                        snapshot.get("model") if source == "openai" else None,
+                        snapshot.get("system_prompt") if source == "openai" else None,
+                        snapshot.get("max_words") if source == "openai" else None,
+                        snapshot.get("temperature") if source == "openai" else None,
+                        snapshot.get("timeout_seconds") if source == "openai" else None,
+                        snapshot.get("max_generation_attempts") if source == "openai" else None,
+                    ),
                 )
             return self.get_comment_campaign(campaign_id)
         except DatabaseError:

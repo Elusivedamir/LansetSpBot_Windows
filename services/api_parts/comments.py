@@ -14,6 +14,7 @@ from core.config import MAX_COMMENT_VARIANTS
 from core.openai_settings import (
     DEFAULT_OPENAI_SYSTEM_PROMPT,
     SOURCE_OPENAI,
+    SOURCE_PREWRITTEN,
     CommentGenerationSettings,
     normalize_comment_source,
 )
@@ -33,6 +34,25 @@ class CommentCampaignAPIMixin(_MixinHost):
     _scheduler_error_present: bool
     _scheduler_failures: int
     _secret_migration_retry_at: float
+
+    @staticmethod
+    def _comment_settings_snapshot(
+        source: str,
+        settings: CommentGenerationSettings,
+        system_prompt: str,
+    ) -> dict[str, Any]:
+        normalized = normalize_comment_source(source)
+        if normalized == SOURCE_PREWRITTEN:
+            return {"comment_source": SOURCE_PREWRITTEN}
+        return {
+            "comment_source": SOURCE_OPENAI,
+            "model": settings.model,
+            "system_prompt": str(system_prompt or ""),
+            "max_words": settings.max_words,
+            "temperature": settings.temperature,
+            "timeout_seconds": settings.timeout_seconds,
+            "max_generation_attempts": settings.max_generation_attempts,
+        }
 
     def start_comment_campaign(
         self,
@@ -123,17 +143,13 @@ class CommentCampaignAPIMixin(_MixinHost):
             continuous=bool(continuous),
             allow_empty_comments=False,
             account_id=account_id,
+            comment_settings_snapshot=self._comment_settings_snapshot(
+                source, openai_settings, openai_prompt
+            ),
         )
         campaign_id = int((campaign or {}).get("id") or 0)
         if campaign_id <= 0:
             raise RuntimeError("Кампания создана без корректного идентификатора")
-        self.database.save_campaign_comment_settings(
-            campaign_id=campaign_id,
-            account_id=account_id,
-            comment_source=source,
-            settings=openai_settings,
-            system_prompt=openai_prompt,
-        )
         try:
             self.database.insert_log(
                 "INFO",
@@ -226,6 +242,12 @@ class CommentCampaignAPIMixin(_MixinHost):
         comments = list(source.get("comments") or [])
         source_campaign_id = int(source.get("id") or 0)
         source_settings = self.database.get_campaign_comment_settings(source_campaign_id)
+        if bool(source_settings.get("snapshot_missing")):
+            log.error(
+                "Continuous campaign %s has no immutable comment settings snapshot",
+                source_campaign_id,
+            )
+            return False
         comment_source = normalize_comment_source(source_settings.get("comment_source"))
         if not bool(source.get("continuous")):
             return False
@@ -241,18 +263,6 @@ class CommentCampaignAPIMixin(_MixinHost):
         desired, eligible = self._continuous_comment_cycle_capacity(limit)
         if desired <= 0 or eligible < desired:
             return False
-        successor = self.database.create_comment_campaign(
-            comments,
-            daily_limit=limit,
-            slot_count=desired,
-            duration_hours=self.campaign_hours,
-            continuous=True,
-            allow_empty_comments=False,
-            account_id=source_account_id,
-        )
-        successor_id = int((successor or {}).get("id") or 0)
-        if successor_id <= 0:
-            return False
         snapshot_mapping = {
             "openai.model": source_settings.get("model"),
             "openai.max_words": source_settings.get("max_words"),
@@ -262,32 +272,24 @@ class CommentCampaignAPIMixin(_MixinHost):
                 "max_generation_attempts"
             ),
         }
-        try:
-            self.database.save_campaign_comment_settings(
-                campaign_id=successor_id,
-                account_id=source_account_id,
-                comment_source=comment_source,
-                settings=CommentGenerationSettings.from_mapping(snapshot_mapping),
-                system_prompt=str(source_settings.get("system_prompt") or ""),
-            )
-        except Exception:
-            # A successor without its immutable source snapshot must never run:
-            # prepared/OpenAI mode, model and prompt are part of campaign state,
-            # not optional decoration. Fail closed and leave it paused for an
-            # explicit operator decision instead of sending with defaults.
-            try:
-                self.database.pause_comment_campaign(
-                    successor_id,
-                    reason=(
-                        "Новый 24-часовой цикл приостановлен: "
-                        "не удалось сохранить настройки комментариев"
-                    ),
-                )
-            except Exception:
-                log.exception(
-                    "Could not pause successor after comment-settings failure"
-                )
-            raise
+        successor_settings = CommentGenerationSettings.from_mapping(snapshot_mapping)
+        successor = self.database.create_comment_campaign(
+            comments,
+            daily_limit=limit,
+            slot_count=desired,
+            duration_hours=self.campaign_hours,
+            continuous=True,
+            allow_empty_comments=False,
+            account_id=source_account_id,
+            comment_settings_snapshot=self._comment_settings_snapshot(
+                comment_source,
+                successor_settings,
+                str(source_settings.get("system_prompt") or ""),
+            ),
+        )
+        successor_id = int((successor or {}).get("id") or 0)
+        if successor_id <= 0:
+            return False
         QTimer.singleShot(0, self._campaign_tick)
         return True
 
@@ -299,6 +301,11 @@ class CommentCampaignAPIMixin(_MixinHost):
         campaign = self.database.get_active_comment_campaign()
         if not campaign or campaign.get("status") != "paused":
             return False
+        comment_settings = self.database.get_campaign_comment_settings(campaign["id"])
+        if bool(comment_settings.get("snapshot_missing")):
+            raise ValueError(
+                "Кампания не может быть продолжена без immutable snapshot настроек"
+            )
         # A pause suspends the campaign clock; it never consumes pending slots.
         # Database.resume_comment_campaign() re-lays every pending slot from the
         # current moment and extends ends_at when the original window elapsed.

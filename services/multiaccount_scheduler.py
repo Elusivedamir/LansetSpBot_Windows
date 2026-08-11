@@ -129,6 +129,24 @@ class AccountCampaignDatabaseView(AccountDatabaseView):
             if owner != self.account_id:
                 raise DatabaseError(scope_error)
 
+            if task_type == "auto_comment_slot":
+                snapshot = connection.execute(
+                    """SELECT 1 FROM campaign_comment_settings
+                       WHERE campaign_id=? AND account_id=?""",
+                    (int(row["campaign_id"]), owner),
+                ).fetchone()
+                if snapshot is None:
+                    connection.execute(
+                        """UPDATE comment_campaigns
+                           SET status='paused',
+                               pause_reason='Кампания приостановлена: отсутствует immutable snapshot настроек комментариев',
+                               updated_at=CURRENT_TIMESTAMP
+                           WHERE id=? AND account_id=? AND status='running'""",
+                        (int(row["campaign_id"]), owner),
+                    )
+                    connection.commit()
+                    return None
+
             payload = json_dumps_safe(
                 {
                     "campaign_id": int(row["campaign_id"]),

@@ -150,31 +150,26 @@ class OpenAICommentAPIMixin(_MixinHost):
                 else self._strict_openai_key()
             )
             secret_touched = False
-            try:
-                if update_key:
-                    # Write the compensatable secret first. The following
-                    # account-scoped SQLite batch is atomic by itself.
-                    secret_touched = True
-                    self._set_account_secret(
-                        owner,
-                        OPENAI_API_KEY_SECRET,
-                        key,
-                    )
-                database.set_settings(public)
-            except BaseException as exc:
-                if secret_touched:
-                    try:
+            if update_key:
+                secret_touched = True
+                self._set_account_secret(owner, OPENAI_API_KEY_SECRET, key)
+
+        try:
+            # Never enter SQLite while holding the secret lock.
+            database.set_settings(public)
+        except BaseException as exc:
+            if secret_touched:
+                try:
+                    with lock:
                         self._set_account_secret(
-                            owner,
-                            OPENAI_API_KEY_SECRET,
-                            previous_key,
+                            owner, OPENAI_API_KEY_SECRET, previous_key
                         )
-                    except Exception as rollback_exc:
-                        raise RuntimeError(
-                            "Настройки OpenAI не сохранены; откат API-ключа "
-                            f"также завершился ошибкой: {rollback_exc}"
-                        ) from exc
-                raise
+                except Exception as rollback_exc:
+                    raise RuntimeError(
+                        "Настройки OpenAI не сохранены; откат API-ключа "
+                        f"также завершился ошибкой: {rollback_exc}"
+                    ) from exc
+            raise
 
         effective_key = key if update_key else previous_key
         return self._openai_configuration_result(

@@ -325,17 +325,9 @@ def main() -> int:
     exit_code = 1
     try:
         if not instance.acquire():
-            # The primary window has been asked to come forward. Say so anyway:
-            # a launch that appears to do nothing is what made operators start
-            # the program again and again.
+            # SingleInstance already activates the primary process. Exit silently:
+            # every losing process must not create another visible popup window.
             log.info("Another LansetSpBot instance is already running")
-            QMessageBox.information(
-                None,
-                APP_NAME,
-                "LansetSpBot уже запущен.\n\n"
-                "Открыто существующее окно — второй копии не будет: две копии "
-                "работали бы с одной базой и одной Telegram-сессией.",
-            )
             return 0
 
         config = Config()

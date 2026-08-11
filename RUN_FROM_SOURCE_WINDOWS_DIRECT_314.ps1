@@ -44,6 +44,30 @@ if (-not (Test-Path -LiteralPath $PyLauncher -PathType Leaf)) {
     $PyLauncher = [string]$command.Source
 }
 
+
+$fastHashes = @(
+    (Get-FileHash -Algorithm SHA256 -LiteralPath $RuntimeLock).Hash,
+    (Get-FileHash -Algorithm SHA256 -LiteralPath $BootstrapLock).Hash,
+    (Get-FileHash -Algorithm SHA256 -LiteralPath $OpenAILock).Hash
+)
+if ((Test-Path -LiteralPath $VenvPythonw -PathType Leaf) -and
+    (Test-Path -LiteralPath $MarkerPath -PathType Leaf)) {
+    $markerLines = @(Get-Content -LiteralPath $MarkerPath)
+    $fastMarkerValid = (
+        $markerLines.Count -ge 4 -and
+        $markerLines[0].Trim() -eq $fastHashes[0].Trim() -and
+        $markerLines[1].Trim() -eq $fastHashes[1].Trim() -and
+        $markerLines[2].Trim() -eq $fastHashes[2].Trim() -and
+        $markerLines[3].Trim() -eq 'windows-direct-python-314-v1'
+    )
+    if ($fastMarkerValid) {
+        Write-Step "Starting LansetSpBot"
+        $quotedMain = '"' + $MainScript + '"'
+        Start-Process -FilePath $VenvPythonw -ArgumentList $quotedMain -WorkingDirectory $ProjectRoot
+        exit 0
+    }
+}
+
 Write-Step "Using the installed Python Launcher directly: py -3.14"
 & $PyLauncher -3.14 --version
 Assert-LastExitCode "Python 3.14 could not be started."

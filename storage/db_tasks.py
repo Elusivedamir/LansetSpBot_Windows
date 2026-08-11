@@ -814,6 +814,7 @@ class TaskRepositoryMixin:
         safe_types = (
             "noop",
             "sync_channels",
+            "sync_new_channels",
             "sync_saved_dialogs",
             "link_channels",
             "import",
@@ -826,7 +827,7 @@ class TaskRepositoryMixin:
                         SET status='pending', error='Recovered after unclean shutdown',
                             status_text=NULL, updated_at=CURRENT_TIMESTAMP
                         WHERE status IN ('running','processing')
-                          AND type IN (?,?,?,?,?,?)""",
+                          AND type IN (?,?,?,?,?,?,?)""",
                     safe_types,
                 ).rowcount
                 uncertain = conn.execute(
@@ -835,7 +836,7 @@ class TaskRepositoryMixin:
                             error='Interrupted with uncertain external result; review before retry',
                             status_text=NULL, updated_at=CURRENT_TIMESTAMP
                         WHERE status IN ('running','processing')
-                          AND type NOT IN (?,?,?,?,?,?)""",
+                          AND type NOT IN (?,?,?,?,?,?,?)""",
                     safe_types,
                 ).rowcount
             if requeued:

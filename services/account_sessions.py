@@ -731,6 +731,24 @@ def _restore_account_snapshot(database, secret_store, payload: dict[str, Any]) -
         database.select_telegram_account(selected)
 
 
+def restore_selected_account_after_registration_rollback(
+    database,
+    selected_before: int,
+) -> None:
+    """Rebuild selected-account compatibility state after deleting a new account."""
+
+    database.clear_selected_account_selection()
+    preferred = int(selected_before or 0)
+    if preferred > 0 and database.get_telegram_account(preferred):
+        database.select_telegram_account(preferred, allow_unauthorized=True)
+        return
+    accounts = list(database.list_telegram_accounts())
+    if accounts:
+        fallback = int(accounts[0].get("telegram_account_id") or 0)
+        if fallback > 0:
+            database.select_telegram_account(fallback, allow_unauthorized=True)
+
+
 def _delete_account_secrets(secret_store, owner: int, keys: list[str]) -> None:
     from services.account_context import account_secret_key
 
@@ -791,6 +809,10 @@ def recover_account_lifecycle(
                     "Interrupted registration owns durable account data; "
                     "automatic rollback was refused"
                 )
+            restore_selected_account_after_registration_rollback(
+                database,
+                int(payload.get("selected_before") or 0),
+            )
             _delete_account_secrets(
                 secret_store,
                 owner,

@@ -19,6 +19,8 @@ from services.account_sessions import (
     finalize_pending_session,
     replace_pending_session,
     rollback_finalized_session,
+    restore_selected_account_after_registration_rollback,
+    _restore_account_snapshot,
     stage_account_session_removal,
     update_account_lifecycle_journal,
     validate_session_name,
@@ -164,20 +166,26 @@ class AccountsAPIMixin(_MixinHost):
                 for key, value in secret_updates.items():
                     touched.append(key)
                     self._set_account_secret(owner, key, value)
-                if public:
-                    writer = getattr(
-                        self.database,
-                        "set_account_settings_with_selected_projection",
-                        None,
+            except BaseException:
+                for key in reversed(touched):
+                    self._set_account_secret(owner, key, snapshots[key])
+                raise
+
+        try:
+            if public:
+                writer = getattr(
+                    self.database,
+                    "set_account_settings_with_selected_projection",
+                    None,
+                )
+                if not callable(writer):
+                    raise RuntimeError(
+                        "Database does not support atomic account settings projection"
                     )
-                    if not callable(writer):
-                        raise RuntimeError(
-                            "Database does not support atomic account settings "
-                            "projection"
-                        )
-                    writer(owner, public)
-            except BaseException as exc:
-                rollback_errors: list[str] = []
+                writer(owner, public)
+        except BaseException as exc:
+            rollback_errors: list[str] = []
+            with self._secret_lock:
                 for key in reversed(touched):
                     try:
                         self._set_account_secret(owner, key, snapshots[key])
@@ -185,12 +193,12 @@ class AccountsAPIMixin(_MixinHost):
                         rollback_errors.append(
                             f"{key}: {type(rollback_exc).__name__}: {rollback_exc}"
                         )
-                if rollback_errors:
-                    raise RuntimeError(
-                        "Account settings failed and secret rollback was incomplete: "
-                        + "; ".join(rollback_errors)
-                    ) from exc
-                raise
+            if rollback_errors:
+                raise RuntimeError(
+                    "Account settings failed and secret rollback was incomplete: "
+                    + "; ".join(rollback_errors)
+                ) from exc
+            raise
 
     def save_account_settings(
         self,
@@ -281,6 +289,9 @@ class AccountsAPIMixin(_MixinHost):
                 journal = update_account_lifecycle_journal(
                     self.secret_store, journal, phase="session_swapped"
                 )
+                with self._secret_lock:
+                    for key, value in secret_updates.items():
+                        self._set_account_secret(telegram_id, key, value)
                 with self.database.get_connection():
                     self.database.register_telegram_account(
                         telegram_account_id=telegram_id,
@@ -290,21 +301,12 @@ class AccountsAPIMixin(_MixinHost):
                             or existing.get("display_name")
                             or "Telegram Account"
                         ),
-                        username=(
-                            str(account.get("username") or "").strip() or None
-                        ),
+                        username=(str(account.get("username") or "").strip() or None),
                         phone=str(account.get("phone") or ""),
                         authorized=True,
                     )
-                    self.database.update_account_session_name(
-                        telegram_id, final_name
-                    )
-                    self.database.replace_account_settings(
-                        telegram_id, public
-                    )
-                    with self._secret_lock:
-                        for key, value in secret_updates.items():
-                            self._set_account_secret(telegram_id, key, value)
+                    self.database.update_account_session_name(telegram_id, final_name)
+                    self.database.replace_account_settings(telegram_id, public)
                     self.database.resume_account_work(telegram_id)
                     selected = cast(
                         dict[str, Any],
@@ -316,34 +318,18 @@ class AccountsAPIMixin(_MixinHost):
         except BaseException:
             rollback_error = None
             try:
-                self.database.replace_account_settings(
-                    telegram_id, old_public
-                )
-            except Exception as exc:
-                rollback_error = exc
-            try:
-                with self._secret_lock:
-                    for key, value in old_secrets.items():
-                        self._set_account_secret(telegram_id, key, value)
-                discard_pending_session(
-                    self.config.telegram.session_dir, pending
-                )
-            except Exception as exc:
-                if rollback_error is None:
-                    rollback_error = exc
+                _restore_account_snapshot(self.database, self.secret_store, journal)
+                discard_pending_session(self.config.telegram.session_dir, pending)
+            except Exception as restore_exc:
+                rollback_error = restore_exc
             if rollback_error is None:
-                clear_account_lifecycle_journal(
-                    self.secret_store, telegram_id
-                )
+                clear_account_lifecycle_journal(self.secret_store, telegram_id)
                 raise
             raise RuntimeError(
-                "Telegram account rollback is incomplete; "
-                "startup recovery journal was retained"
+                "Telegram account rollback is incomplete; startup recovery journal was retained"
             ) from rollback_error
 
         clear_account_lifecycle_journal(self.secret_store, telegram_id)
-        # stop_telegram_account() installs an account cancellation barrier.
-        # A successful re-login must release it.
         self._clear_account_cancellation(telegram_id, self.queue_worker)
         selected["created"] = False
         selected["duplicate"] = True
@@ -364,6 +350,7 @@ class AccountsAPIMixin(_MixinHost):
             discard_pending_session(self.config.telegram.session_dir, pending)
             raise ValueError(str(check["message"]))
 
+        selected_before = self.get_selected_account_id()
         final_name = f"account_{telegram_id}"
         journal = write_account_lifecycle_journal(
             self.secret_store,
@@ -371,7 +358,7 @@ class AccountsAPIMixin(_MixinHost):
             operation="register",
             pending_session_name=pending,
             final_session_name=final_name,
-            selected_before=self.get_selected_account_id(),
+            selected_before=selected_before,
             secret_keys=sorted(secret_updates),
         )
         moved = False
@@ -387,6 +374,9 @@ class AccountsAPIMixin(_MixinHost):
             journal = update_account_lifecycle_journal(
                 self.secret_store, journal, phase="session_moved"
             )
+            with self._secret_lock:
+                for key, value in secret_updates.items():
+                    self._set_account_secret(telegram_id, key, value)
             with self.database.get_connection():
                 _row, created = self.database.register_telegram_account(
                     telegram_account_id=telegram_id,
@@ -396,13 +386,8 @@ class AccountsAPIMixin(_MixinHost):
                     phone=str(account.get("phone") or ""),
                     authorized=True,
                 )
-                self.database.update_account_session_name(
-                    telegram_id, final_name
-                )
+                self.database.update_account_session_name(telegram_id, final_name)
                 self.database.replace_account_settings(telegram_id, public)
-                with self._secret_lock:
-                    for key, value in secret_updates.items():
-                        self._set_account_secret(telegram_id, key, value)
                 selected = cast(
                     dict[str, Any],
                     self.database.select_telegram_account(telegram_id),
@@ -414,22 +399,33 @@ class AccountsAPIMixin(_MixinHost):
             selected["created"] = created
             return selected
         except BaseException:
-            if created:
-                self.database.rollback_new_telegram_account(
-                    telegram_id, expected_session_name=final_name
+            try:
+                if created:
+                    rolled_back = self.database.rollback_new_telegram_account(
+                        telegram_id, expected_session_name=final_name
+                    )
+                    if not rolled_back:
+                        raise RuntimeError(
+                            "New Telegram account owns durable work; rollback refused"
+                        )
+                restore_selected_account_after_registration_rollback(
+                    self.database, selected_before
                 )
-            with self._secret_lock:
-                for key in secret_updates:
-                    self._set_account_secret(telegram_id, key, None)
-            if moved:
-                rollback_finalized_session(
-                    self.config.telegram.session_dir,
-                    pending_session_name=pending,
-                    telegram_account_id=telegram_id,
-                )
-            discard_pending_session(
-                self.config.telegram.session_dir, pending
-            )
+                with self._secret_lock:
+                    for key in secret_updates:
+                        self._set_account_secret(telegram_id, key, None)
+                if moved:
+                    rollback_finalized_session(
+                        self.config.telegram.session_dir,
+                        pending_session_name=pending,
+                        telegram_account_id=telegram_id,
+                    )
+                discard_pending_session(self.config.telegram.session_dir, pending)
+            except Exception as rollback_exc:
+                raise RuntimeError(
+                    "Telegram account registration rollback is incomplete; "
+                    "startup recovery journal was retained"
+                ) from rollback_exc
             clear_account_lifecycle_journal(self.secret_store, telegram_id)
             raise
 
@@ -611,7 +607,7 @@ class AccountsAPIMixin(_MixinHost):
             secret_keys=[],
         )
 
-        cleanup_state: dict[str, object]
+        lifecycle_warning = ""
         try:
             with stage_account_session_removal(
                 self.config.telegram.session_dir,
@@ -619,32 +615,47 @@ class AccountsAPIMixin(_MixinHost):
                 tombstone_name=tombstone_name,
             ) as cleanup_state:
                 journal = update_account_lifecycle_journal(
-                    self.secret_store,
-                    journal,
-                    phase="session_staged",
+                    self.secret_store, journal, phase="session_staged"
                 )
                 self.database.mark_account_authorization_required(owner)
-                journal = update_account_lifecycle_journal(
-                    self.secret_store,
-                    journal,
-                    phase="committed",
-                )
+                try:
+                    journal = update_account_lifecycle_journal(
+                        self.secret_store, journal, phase="committed"
+                    )
+                except Exception as exc:
+                    # SQLite is already authoritative. Exit the tombstone context
+                    # normally so revoked authorization material is not restored.
+                    lifecycle_warning = (
+                        "Состояние выхода сохранено; lifecycle-журнал будет "
+                        f"дочищен при следующем запуске: {type(exc).__name__}: {exc}"
+                    )
         except BaseException:
             clear_account_lifecycle_journal(self.secret_store, owner)
             raise
 
-        clear_account_lifecycle_journal(self.secret_store, owner)
+        if not lifecycle_warning:
+            try:
+                clear_account_lifecycle_journal(self.secret_store, owner)
+            except Exception as exc:
+                lifecycle_warning = (
+                    "Состояние выхода сохранено; lifecycle-журнал будет "
+                    f"дочищен при следующем запуске: {type(exc).__name__}: {exc}"
+                )
         result = dict(self.database.get_telegram_account(owner) or {})
         warning = str(cleanup_state.get("warning") or "")
         result["session_cleanup_warning"] = warning
+        result["lifecycle_recovery_warning"] = lifecycle_warning
         result["message"] = (
             "Выход выполнен. Локальная Telegram-сессия удалена; "
             "настройки, каналы, история и данные аккаунта сохранены. "
             "Теперь можно изменить proxy и войти заново."
             + (
                 " Остаточный скрытый session-файл будет очищен при следующем запуске."
-                if warning
-                else ""
+                if warning else ""
+            )
+            + (
+                " Lifecycle-журнал будет безопасно дочищен при следующем запуске."
+                if lifecycle_warning else ""
             )
         )
         return result
@@ -701,9 +712,17 @@ class AccountsAPIMixin(_MixinHost):
                     dict[str, Any],
                     self.database.delete_telegram_account_data(owner),
                 )
-                journal = update_account_lifecycle_journal(
-                    self.secret_store, journal, phase="committed"
-                )
+                try:
+                    journal = update_account_lifecycle_journal(
+                        self.secret_store, journal, phase="committed"
+                    )
+                except Exception as exc:
+                    # The DB deletion already committed. Retain the old journal
+                    # as startup evidence; never resurrect session/secrets.
+                    cleanup_state["lifecycle_warning"] = (
+                        "Account deletion committed; lifecycle journal retained "
+                        f"for startup cleanup: {type(exc).__name__}: {exc}"
+                    )
         except BaseException:
             with self._secret_lock:
                 for key, value in secret_snapshots.items():
@@ -718,19 +737,31 @@ class AccountsAPIMixin(_MixinHost):
         result: dict[str, Any],
         cleanup_state: dict[str, object],
     ) -> dict[str, Any]:
-        clear_account_lifecycle_journal(self.secret_store, owner)
+        lifecycle_warning = str(cleanup_state.get("lifecycle_warning") or "")
+        if not lifecycle_warning:
+            try:
+                clear_account_lifecycle_journal(self.secret_store, owner)
+            except Exception as exc:
+                lifecycle_warning = (
+                    "Account deletion committed; lifecycle journal retained "
+                    f"for startup cleanup: {type(exc).__name__}: {exc}"
+                )
         worker = self.queue_worker
         if worker is not None:
             worker.clear_scope_cancellation("account", owner)
         warning = str(cleanup_state.get("warning") or "")
         result["session_cleanup_warning"] = warning
+        result["lifecycle_recovery_warning"] = lifecycle_warning
         result["message"] = (
             "Аккаунт и все его локальные данные безвозвратно удалены."
             + (
                 " Остаточный скрытый файл session не удалось удалить; "
                 "перезапустите приложение и повторите очистку профиля."
-                if warning
-                else ""
+                if warning else ""
+            )
+            + (
+                " Lifecycle-журнал будет безопасно дочищен при следующем запуске."
+                if lifecycle_warning else ""
             )
         )
         return result

@@ -247,6 +247,36 @@ class AccountRegistryRepositoryMixin:
             raise DatabaseError(
                 f"Failed to rollback new Telegram account: {exc}"
             ) from exc
+    def clear_selected_account_selection(self) -> None:
+        """Clear selected-account compatibility state after a rolled-back add."""
+
+        try:
+            with self.get_connection() as conn:
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
+                for key in ("ui.selected_account_id", "ui.previous_selected_account_id"):
+                    conn.execute(
+                        """INSERT INTO settings(key, value, updated_at)
+                           VALUES(?, '', CURRENT_TIMESTAMP)
+                           ON CONFLICT(key) DO UPDATE SET
+                               value='', updated_at=CURRENT_TIMESTAMP""",
+                        (key,),
+                    )
+                conn.execute(
+                    """DELETE FROM settings
+                       WHERE key LIKE 'telegram.%'
+                          OR key LIKE 'automation.%'
+                          OR key LIKE 'commenting.%'
+                          OR key LIKE 'openai.%'
+                          OR key LIKE 'scheduler.%'"""
+                )
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError(
+                f"Failed to clear selected Telegram account projection: {exc}"
+            ) from exc
+
     def set_account_runtime_state(
         self,
         account_id: object,

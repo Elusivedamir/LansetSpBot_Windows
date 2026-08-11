@@ -253,8 +253,29 @@ def create_worker_handlers(
         if activity:
             publish_activity(prefix, level=level)
 
+    def terminal_account_error(code: str, message: str) -> None:
+        account_id = int(
+            getattr(settings, "expected_account_id", 0)
+            or getattr(settings, "account_id", 0)
+            or 0
+        )
+        if account_id <= 0:
+            return
+        cancellation = getattr(self.queue_worker, "request_scope_cancellation", None)
+        if callable(cancellation):
+            # Publish the in-process barrier even if the durable write below
+            # encounters an independent SQLite fault.
+            cancellation("account", account_id)
+        worker_db.mark_account_authorization_required(
+            account_id,
+            error=f"{code}: {message}",
+        )
+
     telegram = TelegramService(
-        settings, limiter, status_callback=publish_runtime_status
+        settings,
+        limiter,
+        status_callback=publish_runtime_status,
+        terminal_account_error_callback=terminal_account_error,
     )
     linked = LinkedChatService(telegram)
     class _DatabaseActivitySchedule:

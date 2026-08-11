@@ -173,7 +173,7 @@ class AccountTransferRepositoryMixin:
                     )
                 source_rows = conn.execute(
                     """SELECT channel_id, username, title, target_kind, comment_mode,
-                              linked_chat_id, linked_chat_title, access_hash, peer_type
+                              linked_chat_id, linked_chat_title, peer_type
                        FROM channels
                        WHERE account_id=? AND target_kind IN ('channel','group')
                        ORDER BY id""",
@@ -206,7 +206,7 @@ class AccountTransferRepositoryMixin:
                                created_at)
                            VALUES(?, ?, ?, ?, ?, 'pending', ?, ?,
                                   'Импортировано; требуется повторная проверка доступа',
-                                  NULL, NULL, NULL, ?, ?, NULL, NULL,
+                                  NULL, NULL, NULL, NULL, ?, NULL, NULL,
                                   NULL, NULL, NULL, CURRENT_TIMESTAMP)""",
                         (
                             target,
@@ -216,7 +216,6 @@ class AccountTransferRepositoryMixin:
                             row["target_kind"],
                             row["linked_chat_id"],
                             row["linked_chat_title"],
-                            row["access_hash"],
                             row["peer_type"],
                         ),
                     )

@@ -280,6 +280,15 @@ class AccountViewSettingsMixin:
             QMessageBox.warning(self, "Проверьте расписание", str(exc))
             return
 
+        owner = int(self.adapter.get_selected_account_id() or 0)
+        if owner <= 0:
+            QMessageBox.warning(
+                self,
+                "Расписание не сохранено",
+                "Сначала выберите Telegram-аккаунт",
+            )
+            return
+
         self.save_schedule_button.setEnabled(False)
 
         def saved(_result) -> None:
@@ -300,7 +309,10 @@ class AccountViewSettingsMixin:
             )
 
         self._run_background(
-            lambda: self.adapter.save_settings(values),
+            lambda owner=owner: self.adapter.save_account_settings(
+                values,
+                account_id=owner,
+            ),
             on_success=saved,
             on_error=failed,
         )

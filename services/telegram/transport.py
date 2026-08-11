@@ -71,6 +71,15 @@ from services.telegram_transport_decisions import (
 
 log = logging.getLogger(__name__)
 
+_TERMINAL_ACCOUNT_AUTH_CODES = frozenset(
+    {
+        "authorization_required",
+        "auth_key_invalid",
+        "telegram_auth_key_rejected",
+        "account_deactivated",
+    }
+)
+
 
 if TYPE_CHECKING:
     from core.mixin_host import MixinHost as _MixinHost
@@ -171,6 +180,20 @@ class TelegramTransportMixin(_MixinHost):
                     task.result()
             raise
 
+    def _notify_terminal_account_error(self, code: str, message: str) -> None:
+        normalized = str(code or "").strip().lower()
+        if normalized not in _TERMINAL_ACCOUNT_AUTH_CODES:
+            return
+        self._connected = False
+        callback = getattr(self, "_terminal_account_error_callback", None)
+        if not callable(callback):
+            return
+        try:
+            callback(normalized, str(message or ""))
+        except Exception:
+            # Never hide the original Telegram terminal error.
+            log.exception("Could not persist terminal Telegram account state")
+
     async def _report_status(self, text: str) -> None:
         callback = getattr(self, "_status_callback", None)
         if callback is None:
@@ -261,6 +284,10 @@ class TelegramTransportMixin(_MixinHost):
             )
             if not authorized:
                 await asyncio.wait_for(self.client.disconnect(), timeout=10.0)
+                self._notify_terminal_account_error(
+                    "authorization_required",
+                    "Telegram session is not authorized. Authorize it before starting the queue.",
+                )
                 raise NonRetryableTelegramError(
                     "Telegram session is not authorized. Authorize it before starting the queue.",
                     code="authorization_required",
@@ -268,6 +295,10 @@ class TelegramTransportMixin(_MixinHost):
             me = await self._await_interruptible(self.client.get_me(), timeout=40.0)
             if me is None:
                 await asyncio.wait_for(self.client.disconnect(), timeout=10.0)
+                self._notify_terminal_account_error(
+                    "authorization_required",
+                    "Telegram session is not authorized. Authorize it before starting the queue.",
+                )
                 raise NonRetryableTelegramError(
                     "Telegram session is not authorized. Authorize it before starting the queue.",
                     code="authorization_required",
@@ -307,6 +338,10 @@ class TelegramTransportMixin(_MixinHost):
             raise TelegramOperationError("Telegram connection timed out") from exc
         except UnauthorizedError as exc:
             self._connected = False
+            self._notify_terminal_account_error(
+                "authorization_required",
+                "Telegram session is no longer authorized. Authorize it again.",
+            )
             raise NonRetryableTelegramError(
                 "Telegram session is no longer authorized. Authorize it again.",
                 code="authorization_required",
@@ -408,6 +443,10 @@ class TelegramTransportMixin(_MixinHost):
         await self.ensure_connected()
         identity = getattr(self, "_authorized_user", None)
         if identity is None:
+            self._notify_terminal_account_error(
+                "authorization_required",
+                "Telegram session identity is unavailable",
+            )
             raise NonRetryableTelegramError(
                 "Telegram session identity is unavailable",
                 code="authorization_required",
@@ -681,8 +720,10 @@ class TelegramTransportMixin(_MixinHost):
             "auth_key_invalid",
             "authorization_required",
             "telegram_auth_key_rejected",
+            "account_deactivated",
         }:
             self._connected = False
+        self._notify_terminal_account_error(result.code, result.message)
         raise NonRetryableTelegramError(
             result.message,
             code=result.code,

@@ -254,6 +254,7 @@ class JoinSlotRunner:
         join_kwargs = {
             "username": self.context.get("username"),
             "invite_link": self.context.get("invite_link"),
+            "expected_peer_id": self.peer_id,
         }
         join_barrier = self.create_dispatch_barrier()
         if join_barrier is not None:

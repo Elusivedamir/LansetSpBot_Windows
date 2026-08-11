@@ -84,16 +84,10 @@ class SettingsAPIMixin(_MixinHost):
 
         if QUIET_START_KEY in public or QUIET_END_KEY in public:
             stored = target_db.get_settings(SCHEDULE_SETTINGS_PREFIX)
-            enabled_raw = public.get(
-                SCHEDULE_ENABLED_KEY, stored.get(SCHEDULE_ENABLED_KEY)
-            )
+            enabled_raw = public.get(SCHEDULE_ENABLED_KEY, stored.get(SCHEDULE_ENABLED_KEY))
             if normalize_bool(enabled_raw):
-                start_value = public.get(
-                    QUIET_START_KEY, stored.get(QUIET_START_KEY)
-                )
-                end_value = public.get(
-                    QUIET_END_KEY, stored.get(QUIET_END_KEY)
-                )
+                start_value = public.get(QUIET_START_KEY, stored.get(QUIET_START_KEY))
+                end_value = public.get(QUIET_END_KEY, stored.get(QUIET_END_KEY))
                 start = parse_clock(start_value, default="22:00")
                 end = parse_clock(end_value, default="07:00")
                 if start == end:
@@ -108,23 +102,21 @@ class SettingsAPIMixin(_MixinHost):
             for key in self.SECRET_SETTING_KEYS
             if key in public
         }
-        identity_keys = {
+        for key in {
             "telegram.account_id",
             "telegram.account_name",
             "telegram.account_username",
             "telegram.authorized",
             "telegram.session_name",
             "telegram.runtime_state",
-        }
-        for key in identity_keys:
+        }:
             public.pop(key, None)
 
         if not secret_updates:
             if public:
-                target_db.set_settings(public)
                 if owner > 0:
-                    # Current global keys remain a selected-account compatibility
-                    # mirror; workers never read them directly after v31.
+                    self.database.set_account_settings_with_selected_projection(owner, public)
+                else:
                     self.database.set_settings(public)
             return
 
@@ -135,25 +127,36 @@ class SettingsAPIMixin(_MixinHost):
             }
             touched: list[str] = []
             try:
-                with self.database.get_connection():
-                    for key, value in secret_updates.items():
-                        touched.append(key)
-                        if owner > 0:
-                            self._set_account_secret(owner, key, value)
-                        else:
-                            self.secret_store.set(key, value)
-                            self.database.delete_setting(key)
-                    if public:
-                        target_db.set_settings(public)
-                        if owner > 0:
-                            self.database.set_settings(public)
-                if not any(
-                    self.database.get_setting(key, "")
-                    for key in self.SECRET_SETTING_KEYS
-                ):
-                    self._secret_migration_required.clear()
-            except BaseException as exc:
-                rollback_errors: list[str] = []
+                for key, value in secret_updates.items():
+                    touched.append(key)
+                    if owner > 0:
+                        self._set_account_secret(owner, key, value)
+                    else:
+                        self.secret_store.set(key, value)
+            except BaseException:
+                for key in reversed(touched):
+                    self._restore_secret_snapshot(
+                        key, snapshots[key], account_id=owner or None
+                    )
+                raise
+
+        try:
+            if owner <= 0:
+                for key in secret_updates:
+                    self.database.delete_setting(key)
+            if public:
+                if owner > 0:
+                    self.database.set_account_settings_with_selected_projection(owner, public)
+                else:
+                    self.database.set_settings(public)
+            if not any(
+                self.database.get_setting(key, "")
+                for key in self.SECRET_SETTING_KEYS
+            ):
+                self._secret_migration_required.clear()
+        except BaseException as exc:
+            rollback_errors: list[str] = []
+            with self._secret_lock:
                 for key in reversed(touched):
                     try:
                         self._restore_secret_snapshot(
@@ -161,12 +164,12 @@ class SettingsAPIMixin(_MixinHost):
                         )
                     except Exception as rollback_exc:
                         rollback_errors.append(f"{key}: {rollback_exc}")
-                if rollback_errors:
-                    raise RuntimeError(
-                        f"Настройки не сохранены: {exc}; откат защищённых данных "
-                        f"также завершился ошибкой: {'; '.join(rollback_errors)}"
-                    ) from exc
-                raise
+            if rollback_errors:
+                raise RuntimeError(
+                    f"Настройки не сохранены: {exc}; откат защищённых данных "
+                    f"также завершился ошибкой: {'; '.join(rollback_errors)}"
+                ) from exc
+            raise
 
     def get_current_account_id(self) -> int:
         getter = getattr(self.database, "get_selected_account_id", None)

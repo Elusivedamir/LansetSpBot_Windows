@@ -44,6 +44,7 @@ class TelegramService(
         settings,
         limiter,
         status_callback: Callable[[str], Any] | None = None,
+        terminal_account_error_callback: Callable[[str, str], Any] | None = None,
     ):
         self.settings = settings
         self.limiter = limiter
@@ -83,6 +84,7 @@ class TelegramService(
         self._last_authorization_check = 0.0
         self._authorized_user = None
         self._status_callback = status_callback
+        self._terminal_account_error_callback = terminal_account_error_callback
         self._peer_references: dict[int, Any] = {}
 
     @staticmethod

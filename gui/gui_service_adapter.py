@@ -124,6 +124,9 @@ class GUIServiceAdapter:
     def save_settings(self, values):
         return self.api.save_settings(values)
 
+    def save_account_settings(self, values, *, account_id=None):
+        return self.api.save_account_settings(values, account_id=account_id)
+
     def get_current_account_id(self):
         return self.api.get_current_account_id()
 

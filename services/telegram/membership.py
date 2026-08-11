@@ -143,32 +143,95 @@ class TelegramMembershipMixin(_MixinHost):
         return None
 
     async def join_saved_dialog(
-        self, *, username=None, invite_link=None, dispatch_barrier=None
+        self,
+        *,
+        username=None,
+        invite_link=None,
+        expected_peer_id=None,
+        dispatch_barrier=None,
     ) -> bool:
-        """Join a saved dialog and report whether a new membership was created."""
+        """Join only after verifying the durable Telegram peer identity."""
+
+        expected = int(expected_peer_id or 0)
         invite_hash = self._invite_hash(invite_link or "")
+        public_username = str(username or "").lstrip("@").strip()
+
         if invite_hash:
-            execute_kwargs = {
-                "retry_network": False,
-                "unknown_result_code": "join_result_unknown",
-            }
-            if dispatch_barrier is not None:
-                execute_kwargs["dispatch_barrier"] = dispatch_barrier
-            result = await self.execute(
-                self.client,
-                functions.messages.ImportChatInviteRequest(invite_hash),
-                **execute_kwargs,
-            )
-            return result is not False
-        username = str(username or "").lstrip("@").strip()
-        if not username:
+            if expected:
+                checked = await self.execute(
+                    self.client,
+                    functions.messages.CheckChatInviteRequest(invite_hash),
+                    retry_network=True,
+                    dispatch_barrier=dispatch_barrier,
+                )
+                checked_chat = getattr(checked, "chat", None)
+                if checked_chat is None:
+                    if public_username:
+                        invite_hash = None
+                    else:
+                        raise NonRetryableTelegramError(
+                            "Telegram invite target identity cannot be verified before JOIN",
+                            code="join_target_identity_unverifiable",
+                        )
+                else:
+                    resolved = int(utils.get_peer_id(checked_chat))
+                    if resolved != expected:
+                        raise NonRetryableTelegramError(
+                            "Telegram invite now points to a different peer",
+                            code="join_target_identity_mismatch",
+                            details={
+                                "expected_peer_id": expected,
+                                "resolved_peer_id": resolved,
+                            },
+                        )
+            if invite_hash:
+                execute_kwargs = {
+                    "retry_network": False,
+                    "unknown_result_code": "join_result_unknown",
+                }
+                if dispatch_barrier is not None:
+                    execute_kwargs["dispatch_barrier"] = dispatch_barrier
+                result = await self.execute(
+                    self.client,
+                    functions.messages.ImportChatInviteRequest(invite_hash),
+                    **execute_kwargs,
+                )
+                return result is not False
+
+        if not public_username:
             raise NonRetryableTelegramError(
-                "У сохранённого чата нет публичного username или инвайт-ссылки",
+                "У сохранённого чата нет публичного username или проверяемой инвайт-ссылки",
                 code="join_target_unavailable",
             )
+
+        target = public_username
+        if expected:
+            target = await self.execute(
+                self.client.get_input_entity,
+                public_username,
+                retry_network=True,
+                dispatch_barrier=dispatch_barrier,
+            )
+            try:
+                resolved = int(utils.get_peer_id(target))
+            except Exception as exc:
+                raise NonRetryableTelegramError(
+                    "Telegram peer identity could not be resolved",
+                    code="join_target_identity_unverifiable",
+                ) from exc
+            if resolved != expected:
+                raise NonRetryableTelegramError(
+                    "Telegram username now belongs to a different peer",
+                    code="join_target_identity_mismatch",
+                    details={
+                        "expected_peer_id": expected,
+                        "resolved_peer_id": resolved,
+                    },
+                )
+
         if dispatch_barrier is None:
-            return await self.join(username)
-        return await self.join(username, dispatch_barrier=dispatch_barrier)
+            return await self.join(target)
+        return await self.join(target, dispatch_barrier=dispatch_barrier)
 
     async def get_linked_chat(self, channel, *, dispatch_barrier=None) -> int | None:
         channel_ref = self._resolve_peer_reference(channel)

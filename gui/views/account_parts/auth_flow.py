@@ -260,20 +260,9 @@ class AccountViewAuthFlowMixin:
         self.status_label.setText("Сохранение изолированного аккаунта…")
 
         def persist_and_register():
-            # Persist the authorization snapshot and returned identity as one
-            # blocking operation. Account actions must remain locked until the
-            # selected account id is durable, even if final session catalog
-            # registration subsequently reports an error.
-            durable_settings = dict(settings)
-            durable_settings.update(
-                {
-                    "telegram.account_id": str(int(account["id"])),
-                    "telegram.account_name": str(account.get("name") or "Telegram Account"),
-                    "telegram.account_username": str(account.get("username") or ""),
-                    "telegram.authorized": "1",
-                }
-            )
-            self.adapter.save_settings(durable_settings)
+            # Registration itself owns persistence for the newly authorized
+            # Telegram identity. Never route B's snapshot through whichever
+            # account is still selected in the GUI (which may be A).
             return self.adapter.register_authorized_account(
                 account,
                 settings,
