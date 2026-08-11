@@ -177,6 +177,45 @@ class _Host(WarmupAPIMixin):
         return [dict(item) for item in self._accounts]
 
 
+def test_warmup_selector_snapshot_does_not_read_proxy_secrets() -> None:
+    host = _Host()
+    host._accounts = [
+        {
+            "telegram_account_id": 101,
+            "display_name": "A",
+            "authorized": True,
+            "stopped": False,
+        },
+        {
+            "telegram_account_id": 102,
+            "display_name": "B",
+            "authorized": False,
+            "stopped": True,
+        },
+    ]
+    host.database.states = [
+        {
+            "account_id": 101,
+            "status": "active",
+            "active_pair_id": 7,
+            "weeks_completed": 0,
+        }
+    ]
+
+    def forbidden_proxy_read(_account_id: int):
+        raise AssertionError("selector snapshot must not read proxy/secret settings")
+
+    host._warmup_proxy_summary = forbidden_proxy_read  # type: ignore[method-assign]
+
+    rows = host.get_warmup_selector_accounts()
+
+    assert [int(item["telegram_account_id"]) for item in rows] == [101, 102]
+    assert rows[0]["warmup_status"] == "active"
+    assert int(rows[0]["active_pair_id"]) == 7
+    assert rows[1]["warmup_status"] == "available"
+    assert rows[1]["active_pair_id"] is None
+
+
 def test_proxy_summary_rejects_invalid_and_out_of_range_ports() -> None:
     host = _Host()
 

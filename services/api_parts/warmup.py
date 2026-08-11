@@ -82,7 +82,9 @@ class WarmupAPIMixin(_MixinHost):
             return f"@{text.lstrip('@')}"
         raise ValueError("Некорректная ссылка или @username группы")
 
-    def get_warmup_overview(self) -> dict[str, Any]:
+    def get_warmup_selector_accounts(self) -> list[dict[str, Any]]:
+        """Return selector state without proxy/secret reads or pair rendering work."""
+
         accounts = [dict(item) for item in self.list_telegram_accounts()]
         states = {
             int(item["account_id"]): dict(item)
@@ -94,6 +96,12 @@ class WarmupAPIMixin(_MixinHost):
             account["warmup_status"] = str(state.get("status") or "available")
             account["active_pair_id"] = state.get("active_pair_id")
             account["weeks_completed"] = int(state.get("weeks_completed") or 0)
+        return accounts
+
+    def get_warmup_overview(self) -> dict[str, Any]:
+        accounts = self.get_warmup_selector_accounts()
+        for account in accounts:
+            account_id = int(account["telegram_account_id"])
             account["proxy"] = self._warmup_proxy_summary(account_id)
             account["warmup_eligible"] = bool(
                 account.get("authorized")

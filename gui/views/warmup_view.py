@@ -40,6 +40,9 @@ class WarmupView(QWidget):
         self._compact = False
         self._refresh_in_flight = False
         self._refresh_pending = False
+        self._selector_accounts: list[dict[str, Any]] = []
+        self._selector_refresh_in_flight = False
+        self._selector_refresh_pending = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(30, 28, 30, 30)
@@ -209,17 +212,26 @@ class WarmupView(QWidget):
     def _warmup_accounts_for_selectors(
         accounts: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """Keep active-pair accounts visible; visibility is not create eligibility."""
+        """Show every registered account; eligibility is enforced separately."""
 
-        return [
-            dict(item)
-            for item in accounts
-            if item.get("authorized") and not item.get("stopped")
-        ]
+        result: list[dict[str, Any]] = []
+        for raw in accounts:
+            item = dict(raw)
+            try:
+                account_id = int(item.get("telegram_account_id") or 0)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if account_id > 0:
+                result.append(item)
+        return result
 
     @staticmethod
     def _warmup_choice_label(account: dict[str, Any]) -> str:
         label = WarmupView._account_label(account)
+        if not account.get("authorized"):
+            label += " · требуется авторизация"
+        elif account.get("stopped"):
+            label += " · остановлен"
         active_pair_id = account.get("active_pair_id")
         if active_pair_id is not None:
             label += f" · в связке #{int(active_pair_id)}"
@@ -244,9 +256,14 @@ class WarmupView(QWidget):
             return False
         if account_a <= 0 or account_b <= 0 or account_a == account_b:
             return False
+        selector_source = list(
+            getattr(self, "_selector_accounts", None)
+            or self._overview.get("accounts")
+            or []
+        )
         state_map = {
             int(item.get("telegram_account_id") or 0): dict(item)
-            for item in self._overview.get("accounts") or []
+            for item in selector_source
         }
         return all(
             account_id in state_map
@@ -255,16 +272,25 @@ class WarmupView(QWidget):
         )
 
     def _set_busy(self, active: bool) -> None:
-        """Derive action availability from the last durable overview."""
+        """Derive actions from the lightweight selector snapshot when available."""
 
         self._busy = bool(active)
-        accounts = [dict(item) for item in self._overview.get("accounts") or []]
-        connected = WarmupView._warmup_accounts_for_selectors(accounts)
+        selector_source = list(
+            getattr(self, "_selector_accounts", None)
+            or self._overview.get("accounts")
+            or []
+        )
+        accounts = WarmupView._warmup_accounts_for_selectors(
+            [dict(item) for item in selector_source]
+        )
         idle = not self._busy
         self.create_button.setEnabled(
             idle and WarmupView._selected_pair_is_creatable(self)
         )
-        self.load_groups_button.setEnabled(idle and bool(connected))
+        # Loading synced targets is a local SQLite operation. It must remain
+        # available even for an account that is stopped, already warming up, or
+        # waiting for re-authorization.
+        self.load_groups_button.setEnabled(idle and bool(accounts))
         self.add_group_button.setEnabled(idle)
 
     def _finish_mutation(self, *, refresh_after: bool) -> None:
@@ -309,7 +335,47 @@ class WarmupView(QWidget):
         )
         QThreadPool.globalInstance().start(job)
 
+    def refresh_selectors(self, *, force: bool = False) -> None:
+        if self._selector_refresh_in_flight:
+            self._selector_refresh_pending = (
+                self._selector_refresh_pending or bool(force)
+            )
+            return
+        self._selector_refresh_in_flight = True
+        job = BackgroundCall(
+            self.adapter.get_warmup_selector_accounts,
+            cleanup=self.adapter.close_thread_connection,
+        )
+
+        def succeeded(owner: "WarmupView", value: Any) -> None:
+            owner._apply_selector_accounts(
+                [dict(item) for item in (value or [])]
+            )
+
+        def failed(owner: "WarmupView", message: str) -> None:
+            owner.existing_account_hint.setText(
+                f"Не удалось обновить список аккаунтов: {message}"
+            )
+
+        def finished(owner: "WarmupView") -> None:
+            owner._selector_refresh_in_flight = False
+            if owner._selector_refresh_pending:
+                owner._selector_refresh_pending = False
+                owner.refresh_selectors(force=True)
+
+        connect_lifecycle_safe(
+            job,
+            self,
+            succeeded=succeeded,
+            failed=failed,
+            finished=finished,
+        )
+        QThreadPool.globalInstance().start(job)
+
     def refresh(self, *, force: bool = False) -> None:
+        # A/B selectors and "Получить мои каналы" must not wait for the full
+        # overview, which also reads encrypted proxy settings and renders pairs.
+        self.refresh_selectors(force=force)
         if self._busy and not force:
             return
         if self._refresh_in_flight:
@@ -338,19 +404,18 @@ class WarmupView(QWidget):
         )
         QThreadPool.globalInstance().start(job)
 
-    def _apply_overview(self, overview: dict[str, Any]) -> None:
-        self._overview = overview
-        accounts = [dict(item) for item in overview.get("accounts") or []]
-        state_map = {
-            int(item["telegram_account_id"]): item for item in accounts
-        }
+    def _apply_selector_accounts(self, accounts: list[dict[str, Any]]) -> None:
+        self._selector_accounts = [dict(item) for item in accounts]
+        visible_accounts = WarmupView._warmup_accounts_for_selectors(
+            self._selector_accounts
+        )
+
         previous_existing = self.existing_account_selector.currentData()
         self.existing_account_selector.blockSignals(True)
         self.existing_account_selector.clear()
-        connected = [item for item in accounts if item.get("authorized")]
-        for account in connected:
+        for account in visible_accounts:
             self.existing_account_selector.addItem(
-                self._account_label(account),
+                WarmupView._warmup_choice_label(account),
                 int(account["telegram_account_id"]),
             )
         preferred_existing = previous_existing
@@ -369,18 +434,19 @@ class WarmupView(QWidget):
 
         selected_a = self.account_a.currentData()
         selected_b = self.account_b.currentData()
+        self.account_a.blockSignals(True)
+        self.account_b.blockSignals(True)
         self.account_a.clear()
         self.account_b.clear()
-        # A/B are durable-state selectors, not a filtered "create candidates"
-        # list. Accounts already in a warmup pair stay visible after restart;
-        # creation eligibility is enforced separately and again in SQLite.
-        visible_accounts = WarmupView._warmup_accounts_for_selectors(accounts)
         for account in visible_accounts:
             account_id = int(account["telegram_account_id"])
             label = WarmupView._warmup_choice_label(account)
             self.account_a.addItem(label, account_id)
             self.account_b.addItem(label, account_id)
-        for combo, previous in ((self.account_a, selected_a), (self.account_b, selected_b)):
+        for combo, previous in (
+            (self.account_a, selected_a),
+            (self.account_b, selected_b),
+        ):
             index = combo.findData(previous)
             if index >= 0:
                 combo.setCurrentIndex(index)
@@ -389,7 +455,18 @@ class WarmupView(QWidget):
             and self.account_b.currentData() == self.account_a.currentData()
         ):
             self.account_b.setCurrentIndex(1)
+        self.account_a.blockSignals(False)
+        self.account_b.blockSignals(False)
         self._existing_account_selected()
+        self._set_busy(self._busy)
+
+    def _apply_overview(self, overview: dict[str, Any]) -> None:
+        self._overview = overview
+        accounts = [dict(item) for item in overview.get("accounts") or []]
+        state_map = {
+            int(item["telegram_account_id"]): item for item in accounts
+        }
+        self._apply_selector_accounts(accounts)
         active_count = int(overview.get("active_account_count") or 0)
         limit = int(overview.get("account_limit") or 40)
         self.limit_label.setText(f"Аккаунтов в прогреве: {active_count} из {limit}")

@@ -266,9 +266,11 @@ def test_live_07_warmup_ab_keeps_active_pair_accounts_visible_after_restart():
 
     visible = WarmupView._warmup_accounts_for_selectors(accounts)
 
-    assert [int(item["telegram_account_id"]) for item in visible] == [101, 202]
+    assert [int(item["telegram_account_id"]) for item in visible] == [101, 202, 303]
     assert "в связке #7" in WarmupView._warmup_choice_label(visible[0])
+    assert "остановлен" in WarmupView._warmup_choice_label(visible[2])
     assert WarmupView._warmup_account_creatable(visible[0]) is False
+    assert WarmupView._warmup_account_creatable(visible[2]) is False
 
 
 def test_live_08_load_groups_stays_enabled_with_cached_groups():
@@ -347,6 +349,42 @@ def test_live_09_warmup_buttons_derive_from_durable_overview_not_busy_flag_only(
     assert create.enabled is False
     assert load.enabled is False
     assert manual.enabled is False
+
+
+def test_live_12_warmup_selector_snapshot_keeps_group_loading_available():
+    create = _Widget()
+    load = _Widget()
+    manual = _Widget()
+    selector_accounts = [
+        {
+            "telegram_account_id": 101,
+            "authorized": True,
+            "stopped": False,
+            "active_pair_id": 7,
+        },
+        {
+            "telegram_account_id": 202,
+            "authorized": True,
+            "stopped": False,
+            "active_pair_id": 7,
+        },
+    ]
+    view = SimpleNamespace(
+        _busy=False,
+        _overview={"accounts": []},
+        _selector_accounts=selector_accounts,
+        account_a=_Widget(101),
+        account_b=_Widget(202),
+        create_button=create,
+        load_groups_button=load,
+        add_group_button=manual,
+    )
+
+    WarmupView._set_busy(view, False)
+
+    assert create.enabled is False
+    assert load.enabled is True
+    assert manual.enabled is True
 
 
 def test_live_10_warmup_mutation_finish_always_requests_authoritative_refresh():

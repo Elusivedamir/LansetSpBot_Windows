@@ -302,6 +302,9 @@ class GUIServiceAdapter:
         )
 
 
+    def get_warmup_selector_accounts(self):
+        return self.api.get_warmup_selector_accounts()
+
     def get_warmup_overview(self):
         return self.api.get_warmup_overview()
 
