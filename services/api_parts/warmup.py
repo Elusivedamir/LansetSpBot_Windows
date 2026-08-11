@@ -248,6 +248,76 @@ class WarmupAPIMixin(_MixinHost):
             dict[str, Any], self.database.add_warmup_group(normalized, normalized)
         )
 
+    @staticmethod
+    def _synced_warmup_group_candidate(
+        dialog: dict[str, Any],
+    ) -> tuple[str, str] | None:
+        """Return a durable warmup locator only for a joined Telegram group."""
+
+        kind = str(dialog.get("kind") or "").strip().lower()
+        if kind not in {"group", "supergroup"}:
+            return None
+        membership = str(dialog.get("membership_status") or "").strip().lower()
+        if membership != "member":
+            return None
+
+        username = str(dialog.get("username") or "").strip().lstrip("@")
+        invite_link = str(dialog.get("invite_link") or "").strip()
+        if username:
+            chat_ref = f"@{username}"
+        elif invite_link:
+            chat_ref = invite_link
+        else:
+            # A raw peer id is not sufficient after restart because the worker
+            # may no longer have an InputPeer/access_hash cached for that chat.
+            return None
+
+        title = str(dialog.get("title") or chat_ref).strip() or chat_ref
+        return chat_ref, title[:160]
+
+    def populate_warmup_groups_from_synced(
+        self,
+        account_id: int,
+    ) -> dict[str, Any]:
+        """Randomly copy 3-4 already-synchronised groups into warmup targets."""
+
+        owner = int(account_id)
+        if owner <= 0:
+            raise ValueError("Сначала выберите Telegram-аккаунт")
+
+        candidates: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for raw in self.database.get_saved_dialogs(owner):
+            prepared = self._synced_warmup_group_candidate(dict(raw))
+            if prepared is None:
+                continue
+            chat_ref, title = prepared
+            normalized = self._normalize_group_ref(chat_ref)
+            key = normalized.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append((normalized, title))
+
+        if len(candidates) < 3:
+            raise ValueError(
+                "В синхронизированном списке найдено меньше 3 подходящих групп. "
+                "Сначала выполните «Полную синхронизацию» во вкладке «Каналы»."
+            )
+
+        selected_count = 3 + (secrets.randbelow(2) if len(candidates) >= 4 else 0)
+        selected = secrets.SystemRandom().sample(candidates, selected_count)
+        persisted = [
+            dict(self.database.add_warmup_group(chat_ref, title))
+            for chat_ref, title in selected
+        ]
+        return {
+            "account_id": owner,
+            "candidate_count": len(candidates),
+            "selected_count": len(selected),
+            "groups": persisted,
+        }
+
     def remove_warmup_group(self, group_id: int) -> bool:
         return bool(self.database.remove_warmup_group(group_id))
 

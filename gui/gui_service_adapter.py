@@ -311,6 +311,9 @@ class GUIServiceAdapter:
     def add_warmup_group(self, chat_ref):
         return self.api.add_warmup_group(chat_ref)
 
+    def populate_warmup_groups_from_synced(self, account_id):
+        return self.api.populate_warmup_groups_from_synced(account_id)
+
     def remove_warmup_group(self, group_id):
         return self.api.remove_warmup_group(group_id)
 

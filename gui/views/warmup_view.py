@@ -126,20 +126,29 @@ class WarmupView(QWidget):
         groups_header = QHBoxLayout()
         groups_title = QLabel("Группы прогрева")
         groups_title.setObjectName("cardTitle")
-        self.add_group_button = QPushButton("Добавить группу для прогрева")
+        self.load_groups_button = QPushButton("Получить мои каналы")
+        self.load_groups_button.setObjectName("primaryButton")
+        self.load_groups_button.clicked.connect(self._load_synced_groups)
+        self.add_group_button = QPushButton("Добавить вручную")
         self.add_group_button.setObjectName("secondaryButton")
         self.add_group_button.clicked.connect(self._add_group)
         groups_header.addWidget(groups_title)
         groups_header.addStretch(1)
+        groups_header.addWidget(self.load_groups_button)
         groups_header.addWidget(self.add_group_button)
         groups_layout.addLayout(groups_header)
         groups_hint = QLabel(
-            "Добавляются только указанные вами Telegram-группы. Частоту посещений, "
-            "число читаемых постов и реакций программа задаёт автоматически."
+            "«Получить мои каналы» берёт уже синхронизированные Telegram-группы "
+            "выбранного аккаунта и случайно подбирает 3–4 для прогрева. "
+            "Частоту посещений, число читаемых постов и реакций программа задаёт автоматически."
         )
         groups_hint.setObjectName("mutedText")
         groups_hint.setWordWrap(True)
         groups_layout.addWidget(groups_hint)
+        self.groups_status = QLabel("")
+        self.groups_status.setObjectName("mutedText")
+        self.groups_status.setWordWrap(True)
+        groups_layout.addWidget(self.groups_status)
         self.groups_box = QVBoxLayout()
         self.groups_box.setSpacing(8)
         groups_layout.addLayout(self.groups_box)
@@ -156,6 +165,7 @@ class WarmupView(QWidget):
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(5_000)
         self.refresh_timer.timeout.connect(self.refresh)
+        self._set_busy(False)
         QTimer.singleShot(0, self.refresh)
 
     def _existing_account_selected(self, _index: int = -1) -> None:
@@ -194,9 +204,34 @@ class WarmupView(QWidget):
         return f"{name}{suffix}"
 
     def _set_busy(self, active: bool) -> None:
+        """Derive action availability from the last durable overview."""
+
         self._busy = bool(active)
-        self.create_button.setEnabled(not active)
-        self.add_group_button.setEnabled(not active)
+        accounts = [dict(item) for item in self._overview.get("accounts") or []]
+        selectable = [
+            item
+            for item in accounts
+            if item.get("authorized")
+            and not item.get("stopped")
+            and item.get("active_pair_id") is None
+        ]
+        connected = [
+            item
+            for item in accounts
+            if item.get("authorized") and not item.get("stopped")
+        ]
+        idle = not self._busy
+        self.create_button.setEnabled(idle and len(selectable) >= 2)
+        self.load_groups_button.setEnabled(idle and bool(connected))
+        self.add_group_button.setEnabled(idle)
+
+    def _finish_mutation(self, *, refresh_after: bool) -> None:
+        self._set_busy(False)
+        if refresh_after:
+            # Always re-read authoritative SQLite state after both success and
+            # failure. This prevents stale buttons after a backend invariant
+            # rejected a duplicate/invalid operation.
+            self.refresh(force=True)
 
     def _run(
         self,
@@ -216,14 +251,12 @@ class WarmupView(QWidget):
         def succeeded(owner: "WarmupView", value: Any) -> None:
             if success is not None:
                 success(value)
-            if refresh_after:
-                owner.refresh(force=True)
 
         def failed(owner: "WarmupView", message: str) -> None:
             QMessageBox.warning(owner, "Прогрев", message)
 
         def finished(owner: "WarmupView") -> None:
-            owner._set_busy(False)
+            owner._finish_mutation(refresh_after=refresh_after)
 
         connect_lifecycle_safe(
             job,
@@ -326,12 +359,12 @@ class WarmupView(QWidget):
         active_count = int(overview.get("active_account_count") or 0)
         limit = int(overview.get("account_limit") or 40)
         self.limit_label.setText(f"Аккаунтов в прогреве: {active_count} из {limit}")
-        self.create_button.setEnabled(not self._busy and len(selectable) >= 2)
 
         self._render_groups([dict(item) for item in overview.get("groups") or []])
         self._render_pairs(
             [dict(item) for item in overview.get("pairs") or []], state_map
         )
+        self._set_busy(self._busy)
 
     def _render_groups(self, groups: list[dict[str, Any]]) -> None:
         self._clear_layout(self.groups_box)
@@ -589,6 +622,30 @@ class WarmupView(QWidget):
             QMessageBox.warning(self, "Прогрев", "Выберите два разных аккаунта")
             return
         self._run(lambda: self.adapter.create_warmup_pair(account_a, account_b))
+
+    def _load_synced_groups(self) -> None:
+        account_id = int(self.existing_account_selector.currentData() or 0)
+        if account_id <= 0:
+            QMessageBox.warning(
+                self,
+                "Прогрев",
+                "Сначала выберите подключённый Telegram-аккаунт",
+            )
+            return
+        self.groups_status.setText("Подбираем 3–4 группы из синхронизированного списка…")
+
+        def applied(value: Any) -> None:
+            result = dict(value or {})
+            selected = int(result.get("selected_count") or 0)
+            available = int(result.get("candidate_count") or 0)
+            self.groups_status.setText(
+                f"Подобрано групп: {selected} · доступно для выбора: {available}"
+            )
+
+        self._run(
+            lambda: self.adapter.populate_warmup_groups_from_synced(account_id),
+            success=applied,
+        )
 
     def _add_group(self) -> None:
         value, accepted = QInputDialog.getText(

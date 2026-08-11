@@ -11,6 +11,8 @@ from gui.theme import TELEGRAM_PREMIUM_QSS
 from gui.views.account_parts.auth_flow import AccountViewAuthFlowMixin
 from gui.views.audience_parser_view import AudienceParserView
 from gui.views.commenting_parts.profile import CommentingProfileMixin
+from gui.gui_service_adapter import GUIServiceAdapter
+from gui.views.warmup_view import WarmupView
 from storage.database import Database
 from workers.queue_task_decisions import TaskExecutionContext
 from workers.queue_worker import QueueWorker
@@ -281,3 +283,69 @@ def test_warmup_backend_campaign_exclusion_guard_is_preserved():
     assert "_active_campaign_in_transaction" in source
     assert "CAMPAIGN_WARMUP_CONFLICT_MESSAGE" in source
     assert "acquire_account_activity_lease" in source
+
+
+def test_live_09_warmup_buttons_derive_from_durable_overview_not_busy_flag_only():
+    create = _Widget()
+    load = _Widget()
+    manual = _Widget()
+    view = SimpleNamespace(
+        _busy=False,
+        _overview={
+            "accounts": [
+                {
+                    "telegram_account_id": 101,
+                    "authorized": True,
+                    "stopped": False,
+                    "active_pair_id": 7,
+                },
+                {
+                    "telegram_account_id": 202,
+                    "authorized": True,
+                    "stopped": False,
+                    "active_pair_id": 7,
+                },
+            ]
+        },
+        create_button=create,
+        load_groups_button=load,
+        add_group_button=manual,
+    )
+
+    WarmupView._set_busy(view, False)
+
+    assert create.enabled is False
+    assert load.enabled is True
+    assert manual.enabled is True
+
+    WarmupView._set_busy(view, True)
+    assert create.enabled is False
+    assert load.enabled is False
+    assert manual.enabled is False
+
+
+def test_live_10_warmup_mutation_finish_always_requests_authoritative_refresh():
+    events = []
+    view = SimpleNamespace(
+        _set_busy=lambda active: events.append(("busy", bool(active))),
+        refresh=lambda *, force=False: events.append(("refresh", bool(force))),
+    )
+
+    WarmupView._finish_mutation(view, refresh_after=True)
+
+    assert events == [("busy", False), ("refresh", True)]
+
+
+def test_live_11_adapter_exposes_synced_warmup_group_population():
+    calls = []
+
+    class API:
+        @staticmethod
+        def populate_warmup_groups_from_synced(account_id):
+            calls.append(int(account_id))
+            return {"selected_count": 3}
+
+    result = GUIServiceAdapter(API()).populate_warmup_groups_from_synced(101)
+
+    assert result == {"selected_count": 3}
+    assert calls == [101]

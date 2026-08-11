@@ -34,6 +34,8 @@ class _DB:
         self.groups: list[dict[str, Any]] = []
         self.states: list[dict[str, Any]] = []
         self.pairs: list[dict[str, Any]] = []
+        self.saved_dialogs: list[dict[str, Any]] = []
+        self.added_groups: list[tuple[str, str]] = []
 
     def acquire_account_activity_lease(
         self,
@@ -104,8 +106,16 @@ class _DB:
     def list_warmup_groups(self):
         return [dict(item) for item in self.groups]
 
+    def get_saved_dialogs(self, account_id=None):
+        return [dict(item) for item in self.saved_dialogs]
+
     def add_warmup_group(self, chat_ref: str, title: str):
-        return {"id": 1, "chat_ref": chat_ref, "title": title}
+        self.added_groups.append((chat_ref, title))
+        return {
+            "id": len(self.added_groups),
+            "chat_ref": chat_ref,
+            "title": title,
+        }
 
     def remove_warmup_group(self, group_id: int):
         return group_id == 1
@@ -213,6 +223,105 @@ def test_group_reference_normalization_accepts_telegram_only() -> None:
         normalize("https://t.me/")
     with pytest.raises(ValueError):
         normalize("bad group!")
+
+
+def test_populate_warmup_groups_from_synced_selects_three_or_four_unique_groups() -> None:
+    host = _Host()
+    host.database.saved_dialogs = [
+        {
+            "peer_id": -1001,
+            "title": "Alpha",
+            "username": "alpha_group",
+            "kind": "supergroup",
+            "membership_status": "member",
+        },
+        {
+            "peer_id": -1002,
+            "title": "Beta",
+            "username": "beta_group",
+            "kind": "group",
+            "membership_status": "member",
+        },
+        {
+            "peer_id": -1003,
+            "title": "Gamma",
+            "invite_link": "https://t.me/+GammaInvite",
+            "kind": "group",
+            "membership_status": "member",
+        },
+        {
+            "peer_id": -1004,
+            "title": "Delta",
+            "username": "delta_group",
+            "kind": "supergroup",
+            "membership_status": "member",
+        },
+        {
+            "peer_id": -1005,
+            "title": "Epsilon",
+            "username": "epsilon_group",
+            "kind": "group",
+            "membership_status": "member",
+        },
+        {
+            "peer_id": -2001,
+            "title": "Broadcast",
+            "username": "broadcast_channel",
+            "kind": "channel",
+            "membership_status": "member",
+        },
+        {
+            "peer_id": -2002,
+            "title": "Left group",
+            "username": "left_group",
+            "kind": "group",
+            "membership_status": "left",
+        },
+        {
+            "peer_id": -2003,
+            "title": "Private without locator",
+            "kind": "group",
+            "membership_status": "member",
+        },
+    ]
+
+    result = host.populate_warmup_groups_from_synced(101)
+
+    assert result["candidate_count"] == 5
+    assert 3 <= result["selected_count"] <= 4
+    assert len(host.database.added_groups) == result["selected_count"]
+    refs = [item[0] for item in host.database.added_groups]
+    assert len(refs) == len(set(refs))
+    assert set(refs) <= {
+        "@alpha_group",
+        "@beta_group",
+        "https://t.me/+GammaInvite",
+        "@delta_group",
+        "@epsilon_group",
+    }
+
+
+def test_populate_warmup_groups_requires_at_least_three_synced_groups() -> None:
+    host = _Host()
+    host.database.saved_dialogs = [
+        {
+            "title": "One",
+            "username": "one_group",
+            "kind": "group",
+            "membership_status": "member",
+        },
+        {
+            "title": "Two",
+            "username": "two_group",
+            "kind": "supergroup",
+            "membership_status": "member",
+        },
+    ]
+
+    with pytest.raises(ValueError, match="меньше 3"):
+        host.populate_warmup_groups_from_synced(101)
+
+    assert host.database.added_groups == []
 
 
 def test_pair_lease_acquisition_rolls_back_partial_success() -> None:
