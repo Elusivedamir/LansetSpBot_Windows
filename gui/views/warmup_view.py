@@ -96,8 +96,10 @@ class WarmupView(QWidget):
         selectors.setSpacing(10)
         self.account_a = QComboBox()
         self.account_a.setMinimumWidth(220)
+        self.account_a.currentIndexChanged.connect(self._pair_selection_changed)
         self.account_b = QComboBox()
         self.account_b.setMinimumWidth(220)
+        self.account_b.currentIndexChanged.connect(self._pair_selection_changed)
         account_a_box = QVBoxLayout()
         account_a_label = QLabel("Аккаунт A")
         account_a_label.setObjectName("mutedText")
@@ -203,25 +205,65 @@ class WarmupView(QWidget):
         suffix = f" @{username}" if username else (f" · {phone}" if phone else "")
         return f"{name}{suffix}"
 
+    @staticmethod
+    def _warmup_accounts_for_selectors(
+        accounts: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Keep active-pair accounts visible; visibility is not create eligibility."""
+
+        return [
+            dict(item)
+            for item in accounts
+            if item.get("authorized") and not item.get("stopped")
+        ]
+
+    @staticmethod
+    def _warmup_choice_label(account: dict[str, Any]) -> str:
+        label = WarmupView._account_label(account)
+        active_pair_id = account.get("active_pair_id")
+        if active_pair_id is not None:
+            label += f" · в связке #{int(active_pair_id)}"
+        return label
+
+    @staticmethod
+    def _warmup_account_creatable(account: dict[str, Any]) -> bool:
+        return bool(
+            account.get("authorized")
+            and not account.get("stopped")
+            and account.get("active_pair_id") is None
+        )
+
+    def _pair_selection_changed(self, _index: int = -1) -> None:
+        self._set_busy(self._busy)
+
+    def _selected_pair_is_creatable(self) -> bool:
+        try:
+            account_a = int(self.account_a.currentData() or 0)
+            account_b = int(self.account_b.currentData() or 0)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        if account_a <= 0 or account_b <= 0 or account_a == account_b:
+            return False
+        state_map = {
+            int(item.get("telegram_account_id") or 0): dict(item)
+            for item in self._overview.get("accounts") or []
+        }
+        return all(
+            account_id in state_map
+            and WarmupView._warmup_account_creatable(state_map[account_id])
+            for account_id in (account_a, account_b)
+        )
+
     def _set_busy(self, active: bool) -> None:
         """Derive action availability from the last durable overview."""
 
         self._busy = bool(active)
         accounts = [dict(item) for item in self._overview.get("accounts") or []]
-        selectable = [
-            item
-            for item in accounts
-            if item.get("authorized")
-            and not item.get("stopped")
-            and item.get("active_pair_id") is None
-        ]
-        connected = [
-            item
-            for item in accounts
-            if item.get("authorized") and not item.get("stopped")
-        ]
+        connected = WarmupView._warmup_accounts_for_selectors(accounts)
         idle = not self._busy
-        self.create_button.setEnabled(idle and len(selectable) >= 2)
+        self.create_button.setEnabled(
+            idle and WarmupView._selected_pair_is_creatable(self)
+        )
         self.load_groups_button.setEnabled(idle and bool(connected))
         self.add_group_button.setEnabled(idle)
 
@@ -329,21 +371,13 @@ class WarmupView(QWidget):
         selected_b = self.account_b.currentData()
         self.account_a.clear()
         self.account_b.clear()
-        # Selection and execution eligibility are different concerns. A running
-        # campaign or missing proxy may make create_warmup_pair() reject the
-        # operation, but the connected account must still be assignable in A/B
-        # so the UI does not silently ignore the user's selection. Accounts that
-        # are stopped or already belong to an active warmup pair remain excluded.
-        selectable = [
-            item
-            for item in accounts
-            if item.get("authorized")
-            and not item.get("stopped")
-            and item.get("active_pair_id") is None
-        ]
-        for account in selectable:
+        # A/B are durable-state selectors, not a filtered "create candidates"
+        # list. Accounts already in a warmup pair stay visible after restart;
+        # creation eligibility is enforced separately and again in SQLite.
+        visible_accounts = WarmupView._warmup_accounts_for_selectors(accounts)
+        for account in visible_accounts:
             account_id = int(account["telegram_account_id"])
-            label = self._account_label(account)
+            label = WarmupView._warmup_choice_label(account)
             self.account_a.addItem(label, account_id)
             self.account_b.addItem(label, account_id)
         for combo, previous in ((self.account_a, selected_a), (self.account_b, selected_b)):
@@ -632,15 +666,25 @@ class WarmupView(QWidget):
                 "Сначала выберите подключённый Telegram-аккаунт",
             )
             return
-        self.groups_status.setText("Подбираем 3–4 группы из синхронизированного списка…")
+        self.groups_status.setText(
+            "Подбираем 3–4 канала/группы из синхронизированного списка…"
+        )
 
         def applied(value: Any) -> None:
             result = dict(value or {})
             selected = int(result.get("selected_count") or 0)
             available = int(result.get("candidate_count") or 0)
-            self.groups_status.setText(
-                f"Подобрано групп: {selected} · доступно для выбора: {available}"
-            )
+            message = str(result.get("message") or "").strip()
+            if message:
+                self.groups_status.setText(message)
+            elif bool(result.get("limited")):
+                self.groups_status.setText(
+                    f"Найдено только {available}; добавлено всё доступное: {selected}"
+                )
+            else:
+                self.groups_status.setText(
+                    f"Подобрано каналов/групп: {selected} · доступно для выбора: {available}"
+                )
 
         self._run(
             lambda: self.adapter.populate_warmup_groups_from_synced(account_id),

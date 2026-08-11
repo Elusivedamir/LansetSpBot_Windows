@@ -287,8 +287,10 @@ def test_populate_warmup_groups_from_synced_selects_three_or_four_unique_groups(
 
     result = host.populate_warmup_groups_from_synced(101)
 
-    assert result["candidate_count"] == 5
+    assert result["candidate_count"] == 6
     assert 3 <= result["selected_count"] <= 4
+    assert result["limited"] is False
+    assert result["message"] == ""
     assert len(host.database.added_groups) == result["selected_count"]
     refs = [item[0] for item in host.database.added_groups]
     assert len(refs) == len(set(refs))
@@ -298,10 +300,11 @@ def test_populate_warmup_groups_from_synced_selects_three_or_four_unique_groups(
         "https://t.me/+GammaInvite",
         "@delta_group",
         "@epsilon_group",
+        "@broadcast_channel",
     }
 
 
-def test_populate_warmup_groups_requires_at_least_three_synced_groups() -> None:
+def test_populate_warmup_groups_keeps_one_or_two_available_targets() -> None:
     host = _Host()
     host.database.saved_dialogs = [
         {
@@ -318,9 +321,40 @@ def test_populate_warmup_groups_requires_at_least_three_synced_groups() -> None:
         },
     ]
 
-    with pytest.raises(ValueError, match="меньше 3"):
-        host.populate_warmup_groups_from_synced(101)
+    result = host.populate_warmup_groups_from_synced(101)
 
+    assert result["candidate_count"] == 2
+    assert result["selected_count"] == 2
+    assert result["limited"] is True
+    assert result["message"] == ""
+    assert {item[0] for item in host.database.added_groups} == {
+        "@one_group",
+        "@two_group",
+    }
+
+
+def test_populate_warmup_groups_returns_status_instead_of_throwing_when_empty() -> None:
+    host = _Host()
+    host.database.saved_dialogs = [
+        {
+            "title": "Private without locator",
+            "kind": "group",
+            "membership_status": "member",
+        },
+        {
+            "title": "Left public channel",
+            "username": "left_public",
+            "kind": "channel",
+            "membership_status": "left",
+        },
+    ]
+
+    result = host.populate_warmup_groups_from_synced(101)
+
+    assert result["candidate_count"] == 0
+    assert result["selected_count"] == 0
+    assert result["limited"] is True
+    assert "не найдено доступных" in result["message"]
     assert host.database.added_groups == []
 
 

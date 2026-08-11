@@ -239,13 +239,36 @@ def test_live_06_campaign_history_reconstructs_finalized_slot_when_history_row_m
     assert rows[0]["status"] == "slot_skipped_no_discussion"
 
 
-def test_live_07_warmup_ab_population_no_longer_depends_on_warmup_eligible():
-    source = (ROOT / "gui" / "views" / "warmup_view.py").read_text(encoding="utf-8")
-    assert "selectable = [" in source
-    assert 'if item.get("authorized")' in source
-    assert 'and not item.get("stopped")' in source
-    assert 'and item.get("active_pair_id") is None' in source
-    assert "for account in selectable:" in source
+def test_live_07_warmup_ab_keeps_active_pair_accounts_visible_after_restart():
+    accounts = [
+        {
+            "telegram_account_id": 101,
+            "display_name": "A",
+            "authorized": True,
+            "stopped": False,
+            "active_pair_id": 7,
+        },
+        {
+            "telegram_account_id": 202,
+            "display_name": "B",
+            "authorized": True,
+            "stopped": False,
+            "active_pair_id": 7,
+        },
+        {
+            "telegram_account_id": 303,
+            "display_name": "Stopped",
+            "authorized": True,
+            "stopped": True,
+            "active_pair_id": None,
+        },
+    ]
+
+    visible = WarmupView._warmup_accounts_for_selectors(accounts)
+
+    assert [int(item["telegram_account_id"]) for item in visible] == [101, 202]
+    assert "в связке #7" in WarmupView._warmup_choice_label(visible[0])
+    assert WarmupView._warmup_account_creatable(visible[0]) is False
 
 
 def test_live_08_load_groups_stays_enabled_with_cached_groups():
@@ -307,6 +330,8 @@ def test_live_09_warmup_buttons_derive_from_durable_overview_not_busy_flag_only(
                 },
             ]
         },
+        account_a=_Widget(101),
+        account_b=_Widget(202),
         create_button=create,
         load_groups_button=load,
         add_group_button=manual,

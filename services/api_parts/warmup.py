@@ -252,10 +252,10 @@ class WarmupAPIMixin(_MixinHost):
     def _synced_warmup_group_candidate(
         dialog: dict[str, Any],
     ) -> tuple[str, str] | None:
-        """Return a durable warmup locator only for a joined Telegram group."""
+        """Return a durable warmup locator for a joined Telegram channel or group."""
 
         kind = str(dialog.get("kind") or "").strip().lower()
-        if kind not in {"group", "supergroup"}:
+        if kind not in {"channel", "group", "supergroup"}:
             return None
         membership = str(dialog.get("membership_status") or "").strip().lower()
         if membership != "member":
@@ -279,7 +279,7 @@ class WarmupAPIMixin(_MixinHost):
         self,
         account_id: int,
     ) -> dict[str, Any]:
-        """Randomly copy 3-4 already-synchronised groups into warmup targets."""
+        """Randomly copy up to 3-4 synchronised channels/groups into warmup."""
 
         owner = int(account_id)
         if owner <= 0:
@@ -299,13 +299,22 @@ class WarmupAPIMixin(_MixinHost):
             seen.add(key)
             candidates.append((normalized, title))
 
-        if len(candidates) < 3:
-            raise ValueError(
-                "В синхронизированном списке найдено меньше 3 подходящих групп. "
-                "Сначала выполните «Полную синхронизацию» во вкладке «Каналы»."
-            )
+        if not candidates:
+            return {
+                "account_id": owner,
+                "candidate_count": 0,
+                "selected_count": 0,
+                "limited": True,
+                "message": (
+                    "В синхронизированном списке не найдено доступных каналов или групп "
+                    "с Telegram-ссылкой/@username. Выполните «Полную синхронизацию» "
+                    "во вкладке «Каналы»."
+                ),
+                "groups": [],
+            }
 
-        selected_count = 3 + (secrets.randbelow(2) if len(candidates) >= 4 else 0)
+        desired_count = 3 + (secrets.randbelow(2) if len(candidates) >= 4 else 0)
+        selected_count = min(len(candidates), desired_count)
         selected = secrets.SystemRandom().sample(candidates, selected_count)
         persisted = [
             dict(self.database.add_warmup_group(chat_ref, title))
@@ -315,6 +324,8 @@ class WarmupAPIMixin(_MixinHost):
             "account_id": owner,
             "candidate_count": len(candidates),
             "selected_count": len(selected),
+            "limited": len(candidates) < 3,
+            "message": "",
             "groups": persisted,
         }
 
