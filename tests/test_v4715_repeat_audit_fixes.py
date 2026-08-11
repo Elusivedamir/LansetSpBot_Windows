@@ -68,7 +68,9 @@ async def test_join_slot_accepts_real_negative_telethon_marked_peer_id() -> None
 
     db.mark_join_slot_running.assert_called_once_with(5, 11)
     telegram.join_saved_dialog.assert_awaited_once_with(
-        username="real_channel", invite_link=None
+        username="real_channel",
+        invite_link=None,
+        expected_peer_id=-1001234567890,
     )
     db.record_join_event.assert_called_once_with(
         -1001234567890,

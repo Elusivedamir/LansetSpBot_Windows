@@ -401,13 +401,15 @@ class AccountsAPIMixin(_MixinHost):
         except BaseException:
             try:
                 if created:
-                    rolled_back = self.database.rollback_new_telegram_account(
-                        telegram_id, expected_session_name=final_name
-                    )
-                    if not rolled_back:
-                        raise RuntimeError(
-                            "New Telegram account owns durable work; rollback refused"
+                    current = self.database.get_telegram_account(telegram_id)
+                    if current is not None:
+                        rolled_back = self.database.rollback_new_telegram_account(
+                            telegram_id, expected_session_name=final_name
                         )
+                        if not rolled_back:
+                            raise RuntimeError(
+                                "New Telegram account owns durable work; rollback refused"
+                            )
                 restore_selected_account_after_registration_rollback(
                     self.database, selected_before
                 )

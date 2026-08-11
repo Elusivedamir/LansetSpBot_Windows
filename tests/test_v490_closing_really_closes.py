@@ -134,13 +134,24 @@ def test_the_close_shortcut_goes_through_the_prompt() -> None:
     assert "self._close_shortcut.activated.connect(self.hide)" not in source
 
 
-def test_a_second_instance_is_told_rather_than_silently_dropped() -> None:
-    source = (ROOT / "main.py").read_text(encoding="utf-8")
-    # The self-test builds its own guard earlier in the file; the one that
-    # matters is the application's.
-    start = source.index("instance = SingleInstance()")
-    guard = source[source.index("if not instance.acquire():", start) :][:900]
-    assert "уже запущен" in guard, "a launch that does nothing invites another one"
+def test_a_second_instance_activates_primary_then_exits_without_popup() -> None:
+    main_source = (ROOT / "main.py").read_text(encoding="utf-8")
+    start = main_source.index("instance = SingleInstance()")
+    guard = main_source[main_source.index("if not instance.acquire():", start) :][:900]
+
+    single_source = (ROOT / "core" / "single_instance.py").read_text(encoding="utf-8")
+    acquire = single_source[
+        single_source.index("    def acquire(self) -> bool:") :
+        single_source.index("    def _notify_primary(self) -> None:")
+    ]
+    notify = single_source[
+        single_source.index("    def _notify_primary(self) -> None:") :
+        single_source.index("    def _release_notification_socket(")
+    ]
+
+    assert "self._notify_primary()" in acquire
+    assert 'probe.write(b"activate")' in notify
+    assert "QMessageBox" not in guard
     assert "return 0" in guard
 
 

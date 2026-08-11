@@ -429,18 +429,16 @@ def test_continuous_successor_fails_closed_without_settings_snapshot() -> None:
         ROOT / "services/api_parts/comments.py"
     ).read_text(encoding="utf-8")
 
-    start = source.index(
-        "        try:\n"
-        "            self.database.save_campaign_comment_settings("
-    )
-    end = source.index("        QTimer.singleShot(0, self._campaign_tick)", start)
+    start = source.index("    def _start_next_continuous_comment_cycle(")
+    end = source.index("    def resume_comment_campaign(", start)
     block = source[start:end]
 
-    assert "except Exception:" in block
-    assert "self.database.pause_comment_campaign(" in block
-    assert "successor_id," in block
-    assert "не удалось сохранить настройки комментариев" in block
-    assert block.rstrip().endswith("raise")
+    guard = block.index('if bool(source_settings.get("snapshot_missing")):')
+    create = block.index("self.database.create_comment_campaign(")
+    assert guard < create
+    assert "return False" in block[guard:create]
+    assert "comment_settings_snapshot=self._comment_settings_snapshot(" in block
+    assert "save_campaign_comment_settings(" not in block
 
 
 def test_reconciliation_trusts_uncertain_delivery_state_after_crash() -> None:

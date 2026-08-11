@@ -151,8 +151,21 @@ class OpenAICommentAPIMixin(_MixinHost):
             )
             secret_touched = False
             if update_key:
+                try:
+                    self._set_account_secret(owner, OPENAI_API_KEY_SECRET, key)
+                except BaseException as exc:
+                    try:
+                        self._set_account_secret(
+                            owner, OPENAI_API_KEY_SECRET, previous_key
+                        )
+                    except BaseException as rollback_exc:
+                        raise RuntimeError(
+                            "Не удалось обновить API-ключ OpenAI; "
+                            "откат предыдущего ключа также завершился ошибкой: "
+                            f"{rollback_exc}"
+                        ) from exc
+                    raise
                 secret_touched = True
-                self._set_account_secret(owner, OPENAI_API_KEY_SECRET, key)
 
         try:
             # Never enter SQLite while holding the secret lock.

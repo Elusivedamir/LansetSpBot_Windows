@@ -261,8 +261,14 @@ class _JoinBoundaryTelegram:
         self.rpc_calls = 0
 
     async def join_saved_dialog(
-        self, *, username=None, invite_link=None, dispatch_barrier=None
+        self,
+        *,
+        username=None,
+        invite_link=None,
+        expected_peer_id=None,
+        dispatch_barrier=None,
     ):
+        assert int(expected_peer_id or 0) == 7001
         # Simulate a restriction committed by another worker at the exact
         # dispatch boundary without also stopping this campaign.  This isolates
         # the explicit RESTRICTED barrier from the campaign-status barrier.

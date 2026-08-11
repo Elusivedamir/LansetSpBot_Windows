@@ -152,9 +152,21 @@ def test_p05_no_database_write_is_nested_under_secret_lock() -> None:
     persist = accounts[accounts.index("    def _persist_saved_account_settings("):accounts.index("    def save_account_settings(")]
     generic = settings[settings.index("    def save_settings("):settings.index("    def get_current_account_id(")]
     ai = openai[openai.index("    def save_openai_configuration("):openai.index("    def submit_openai_test(")]
-    assert "\n                writer(owner, public)" not in persist
-    assert "\n                self.database.set_account_settings_with_selected_projection" not in generic
-    assert "\n                database.set_settings(public)" not in ai
+    def initial_secret_block(method: str, marker: str) -> str:
+        start = method.index(marker)
+        end = method.index("\n\n        try:", start)
+        return method[start:end]
+
+    persist_secret = initial_secret_block(persist, "        with self._secret_lock:")
+    generic_secret = initial_secret_block(generic, "        with self._secret_lock:")
+    ai_secret = initial_secret_block(ai, "        with lock:")
+
+    assert "writer(owner, public)" not in persist_secret
+    assert "set_account_settings_with_selected_projection" not in generic_secret
+    assert "database.set_settings(public)" not in ai_secret
+    assert "writer(owner, public)" in persist
+    assert "set_account_settings_with_selected_projection" in generic
+    assert "database.set_settings(public)" in ai
 
 
 def test_p06_warmup_classifies_normalized_transport_codes() -> None:
