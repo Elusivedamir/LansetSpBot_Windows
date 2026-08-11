@@ -107,22 +107,84 @@ class CommentHistoryMixin(_MixinHost):
     ):
         try:
             owner_account_id = resolve_account_id(self, account_id)
+            history_limit = max(0, int(limit))
+            if history_limit <= 0:
+                return []
             with self.get_connection() as conn:
                 if campaign_id is not None:
+                    campaign_key = int(campaign_id)
                     rows = conn.execute(
                         """SELECT id, account_id, task_id, campaign_id, slot_id, channel_id, post_id,
                                   comment_text, sent_at, status
                            FROM comment_history
                            WHERE account_id=? AND campaign_id=? ORDER BY id ASC LIMIT ?""",
-                        (owner_account_id, int(campaign_id), int(limit)),
+                        (owner_account_id, campaign_key, history_limit),
                     ).fetchall()
+                    history = [dict(row) for row in rows]
+                    seen_slots = {
+                        int(item["slot_id"])
+                        for item in history
+                        if item.get("slot_id") is not None
+                    }
+                    if len(history) < history_limit:
+                        # comment_schedule is the authoritative durable slot
+                        # ledger. Reconstruct only rows that are missing from the
+                        # presentation history; never duplicate an existing
+                        # comment_history record.
+                        finalized = conn.execute(
+                            """SELECT s.id AS slot_id, s.task_id, s.channel_id, s.post_id,
+                                      s.selected_text AS comment_text,
+                                      s.executed_at AS sent_at, s.result,
+                                      s.status AS slot_status
+                               FROM comment_schedule s
+                               JOIN comment_campaigns c ON c.id=s.campaign_id
+                               WHERE c.account_id=? AND s.campaign_id=?
+                                 AND s.executed_at IS NOT NULL
+                                 AND s.status IN (
+                                     'sent','skipped','failed','uncertain',
+                                     'missed','cancelled'
+                                 )
+                               ORDER BY s.slot_index ASC
+                               LIMIT ?""",
+                            (owner_account_id, campaign_key, history_limit),
+                        ).fetchall()
+                        for row in finalized:
+                            slot_id = int(row["slot_id"])
+                            if slot_id in seen_slots:
+                                continue
+                            history.append(
+                                {
+                                    "id": None,
+                                    "account_id": owner_account_id,
+                                    "task_id": row["task_id"],
+                                    "campaign_id": campaign_key,
+                                    "slot_id": slot_id,
+                                    "channel_id": row["channel_id"],
+                                    "post_id": row["post_id"],
+                                    "comment_text": row["comment_text"],
+                                    "sent_at": row["sent_at"],
+                                    "status": str(
+                                        row["result"] or row["slot_status"] or ""
+                                    ),
+                                }
+                            )
+                            seen_slots.add(slot_id)
+                            if len(history) >= history_limit:
+                                break
+                    history.sort(
+                        key=lambda item: (
+                            int(item.get("slot_id") or 9_223_372_036_854_775_807),
+                            int(item.get("id") or 9_223_372_036_854_775_807),
+                        )
+                    )
+                    return history[:history_limit]
                 elif task_id is None:
                     rows = conn.execute(
                         """SELECT id, account_id, task_id, campaign_id, slot_id, channel_id, post_id,
                                   comment_text, sent_at, status
                            FROM comment_history
                            WHERE account_id=? ORDER BY id DESC LIMIT ?""",
-                        (owner_account_id, int(limit)),
+                        (owner_account_id, history_limit),
                     ).fetchall()
                 else:
                     rows = conn.execute(
@@ -130,7 +192,7 @@ class CommentHistoryMixin(_MixinHost):
                                   comment_text, sent_at, status
                            FROM comment_history
                            WHERE account_id=? AND task_id=? ORDER BY id ASC LIMIT ?""",
-                        (owner_account_id, int(task_id), int(limit)),
+                        (owner_account_id, int(task_id), history_limit),
                     ).fetchall()
                 return [dict(row) for row in rows]
         except DatabaseError:

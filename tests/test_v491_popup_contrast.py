@@ -115,6 +115,9 @@ def test_the_stylesheet_covers_popup_surfaces_and_toggle_states() -> None:
         "QMenu::item",
         "QMenu::item:selected",
         "QComboBox QAbstractItemView",
+        "QMessageBox {",
+        "QMessageBox QLabel",
+        "QMessageBox QPushButton",
         "QToolTip",
     ):
         assert selector in TELEGRAM_PREMIUM_QSS, f"{selector} is not styled"

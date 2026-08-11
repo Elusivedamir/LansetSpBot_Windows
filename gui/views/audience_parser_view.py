@@ -482,7 +482,10 @@ class AudienceParserView(QWidget):
             if workflow_relevant:
                 relevant.append(row)
 
-        selected = relevant or authorized
+        # Parsing is account-scoped and may run independently of campaigns on
+        # other accounts. Workflow relevance changes badges/sort order only; it
+        # must never hide another authorized Telegram account.
+        selected = authorized
         selected.sort(
             key=lambda row: (
                 0
@@ -744,7 +747,7 @@ class AudienceParserView(QWidget):
 
         if account_id <= 0:
             self.summary.setText(
-                "Нет подключённых аккаунтов в кампании или прогреве"
+                "Нет подключённых авторизованных аккаунтов"
             )
         elif stopped:
             self.summary.setText(
@@ -803,8 +806,7 @@ class AudienceParserView(QWidget):
         self.exclude_admins.setEnabled(idle)
         self.exclude_scam_fake.setEnabled(idle)
         self.activity_filter.setEnabled(idle)
-        if not enabled:
-            self.load_groups_button.setEnabled(False)
+        self.load_groups_button.setEnabled(idle)
 
     @staticmethod
     def _normalize_cached_groups(result: dict[str, Any]) -> tuple[bool, list[dict[str, Any]]]:
@@ -970,7 +972,6 @@ class AudienceParserView(QWidget):
             self._source_guard = False
         self.load_groups_button.setEnabled(
             self._account_id > 0
-            and not loaded
             and not syncing
             and self.current_task_id is None
         )

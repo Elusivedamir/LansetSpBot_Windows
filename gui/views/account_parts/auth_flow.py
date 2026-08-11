@@ -39,6 +39,20 @@ if TYPE_CHECKING:
     from gui.views.account_view import AccountView
 
 class AccountViewAuthFlowMixin:
+    def _set_auth_runtime_text(
+        self, title: str, details: str | None = None
+    ) -> None:
+        """Keep the new-account information card static during auth runtime."""
+
+        if (
+            bool(getattr(self, "_adding_account", False))
+            and int(getattr(self, "_reauthorizing_account_id", 0) or 0) <= 0
+        ):
+            return
+        self.status_label.setText(str(title))
+        if details is not None:
+            self.account_label.setText(str(details))
+
     def _reauthorize_account(self, account_id: int) -> None:
         owner = int(account_id or 0)
         if owner <= 0:
@@ -154,7 +168,7 @@ class AccountViewAuthFlowMixin:
         self._auth_settings_snapshot = dict(settings)
         self.connect_button.setEnabled(False)
         self._show_pending_code_request()
-        self.status_label.setText("Запрос кода Telegram…")
+        self._set_auth_runtime_text("Запрос кода Telegram…")
         self._start_worker("request_code", settings)
     def confirm_login(self):
         if self.auth_worker is not None and self.auth_worker.isRunning():
@@ -179,16 +193,18 @@ class AccountViewAuthFlowMixin:
         self._active_auth_mode = str(mode)
         self.adapter.set_auth_in_progress(True)
         self._set_account_controls_busy(True)
-        self.status_label.setText("Подключение к Telegram…")
-        self.account_label.setText(
-            "Авторизация нового аккаунта не останавливает остальные кампании"
+        self._set_auth_runtime_text(
+            "Подключение к Telegram…",
+            "Авторизация нового аккаунта не останавливает остальные кампании",
         )
         self._launch_auth_worker(mode, settings, **kwargs)
     def _launch_auth_worker(self, mode, settings, **kwargs):
         self.connect_button.setEnabled(False)
         self.confirm_button.setEnabled(False)
-        self.status_label.setText("Подключение к Telegram…")
-        self.account_label.setText("Не закрывайте программу во время авторизации")
+        self._set_auth_runtime_text(
+            "Подключение к Telegram…",
+            "Не закрывайте программу во время авторизации",
+        )
         self.auth_worker = TelegramAuthWorker(
             mode=mode,
             settings=settings,
@@ -210,8 +226,9 @@ class AccountViewAuthFlowMixin:
         self.phone_code_hash = phone_code_hash
         self._set_code_card_visible(True, focus_widget=self.code)
         self._activate_code_entry()
-        self.status_label.setText("Код отправлен")
-        self.account_label.setText("Введите код, который пришёл в Telegram")
+        self._set_auth_runtime_text(
+            "Код отправлен", "Введите код, который пришёл в Telegram"
+        )
         self.code.setFocus()
     def _clear_temporary_auth_fields(self) -> None:
         """Remove one-time Telegram credentials after success or terminal failure."""
@@ -257,7 +274,7 @@ class AccountViewAuthFlowMixin:
                 self.load_settings()
             self.account_changed.emit()
 
-        self.status_label.setText("Сохранение изолированного аккаунта…")
+        self._set_auth_runtime_text("Сохранение изолированного аккаунта…")
 
         def persist_and_register():
             # Registration itself owns persistence for the newly authorized

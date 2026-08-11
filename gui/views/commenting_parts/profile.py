@@ -77,6 +77,12 @@ class CommentingProfileMixin:
         self.save_status.setVisible(True)
         self.openai_card.setVisible(not prepared)
         if not self._loading_openai_settings:
+            account_getter = getattr(self, "_current_account_id", None)
+            if callable(account_getter) and account_getter() <= 0:
+                # The combo emits while the page is being constructed before an
+                # account is selected. UI state may change, but there is no
+                # account-scoped setting to persist yet.
+                return
             try:
                 self.adapter.save_openai_configuration(
                     {"comment_source": source}

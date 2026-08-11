@@ -1110,9 +1110,25 @@ class QueueWorker(QueueWorkerStateMixin, QueueWorkerCooldownMixin, QThread):
             return
         if not changed:
             current = self.get_db().get_task(context.task_id) or {}
-            if str(current.get("status") or "") == "completed":
+            current_status = str(current.get("status") or "")
+            if current_status == "completed":
                 self.processed_count += 1
                 self.task_completed.emit(context.task_id)
+                return
+            if (
+                context.task_type == "link_channels"
+                and current_status == "pending"
+                and current.get("not_before")
+            ):
+                # link_channels intentionally persists its checkpoint and moves
+                # itself back to pending when the per-account JOIN guard requires
+                # a durable continuation. The handler then returns normally; this
+                # is neither completion nor an anomalous state transition.
+                log.debug(
+                    "Link task %s checkpointed and deferred until %s",
+                    context.task_id,
+                    current.get("not_before"),
+                )
                 return
             log.warning(
                 "Task %s finished but was no longer in running state",

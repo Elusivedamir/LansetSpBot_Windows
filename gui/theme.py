@@ -254,6 +254,24 @@ QMenu::separator {
     background: #292C33;
     margin: 6px 8px;
 }
+QMessageBox {
+    background: #15171B;
+    color: #F7FAFD;
+}
+QMessageBox QLabel {
+    background: transparent;
+    color: #F7FAFD;
+}
+QMessageBox QPushButton {
+    background: #202329;
+    color: #F7FAFD;
+    border: 1px solid #596270;
+    min-width: 96px;
+}
+QMessageBox QPushButton:hover {
+    background: #292D34;
+    border: 1px solid #7B8798;
+}
 QToolTip {
     background: #15171B;
     border: 1px solid #343942;

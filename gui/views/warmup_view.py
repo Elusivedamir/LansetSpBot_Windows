@@ -170,8 +170,8 @@ class WarmupView(QWidget):
             )
         else:
             self.existing_account_hint.setText(
-                "Аккаунт подключён, но сейчас не готов к прогреву: проверьте proxy "
-                "и отсутствие другой активной кампании."
+                "Аккаунт подключён, но сейчас остановлен или уже назначен "
+                "на активный прогрев."
             )
 
     @staticmethod
@@ -296,8 +296,19 @@ class WarmupView(QWidget):
         selected_b = self.account_b.currentData()
         self.account_a.clear()
         self.account_b.clear()
-        eligible = [item for item in accounts if item.get("warmup_eligible")]
-        for account in eligible:
+        # Selection and execution eligibility are different concerns. A running
+        # campaign or missing proxy may make create_warmup_pair() reject the
+        # operation, but the connected account must still be assignable in A/B
+        # so the UI does not silently ignore the user's selection. Accounts that
+        # are stopped or already belong to an active warmup pair remain excluded.
+        selectable = [
+            item
+            for item in accounts
+            if item.get("authorized")
+            and not item.get("stopped")
+            and item.get("active_pair_id") is None
+        ]
+        for account in selectable:
             account_id = int(account["telegram_account_id"])
             label = self._account_label(account)
             self.account_a.addItem(label, account_id)
@@ -315,7 +326,7 @@ class WarmupView(QWidget):
         active_count = int(overview.get("active_account_count") or 0)
         limit = int(overview.get("account_limit") or 40)
         self.limit_label.setText(f"Аккаунтов в прогреве: {active_count} из {limit}")
-        self.create_button.setEnabled(not self._busy and len(eligible) >= 2)
+        self.create_button.setEnabled(not self._busy and len(selectable) >= 2)
 
         self._render_groups([dict(item) for item in overview.get("groups") or []])
         self._render_pairs(

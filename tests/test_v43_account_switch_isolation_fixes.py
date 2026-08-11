@@ -220,8 +220,8 @@ def test_operator_requested_ui_ux_contracts_are_wired():
         DEFAULT_LINK_CHECK_DELAY_MIN_SECONDS,
     )
 
-    assert DEFAULT_LINK_CHECK_DELAY_MIN_SECONDS == 7
-    assert DEFAULT_LINK_CHECK_DELAY_MAX_SECONDS == 12
+    assert DEFAULT_LINK_CHECK_DELAY_MIN_SECONDS == 105
+    assert DEFAULT_LINK_CHECK_DELAY_MAX_SECONDS == 135
 
     account = _read_sources(
         "gui/views/account_view.py",

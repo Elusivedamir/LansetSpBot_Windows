@@ -399,14 +399,22 @@ class AccountViewSettingsMixin:
     def _settings_save_failed(self, message: str) -> None:
         if not self.phone_code_hash:
             self._set_code_card_visible(False)
-        self.status_label.setText("Не удалось сохранить настройки")
-        self.account_label.setText(message)
+        setter = getattr(self, "_set_auth_runtime_text", None)
+        if callable(setter):
+            setter("Не удалось сохранить настройки", message)
+        else:
+            self.status_label.setText("Не удалось сохранить настройки")
+            self.account_label.setText(message)
         QMessageBox.warning(self, "Настройки", message)
     def _password_required(self):
         self._set_code_card_visible(True, focus_widget=self.two_fa)
         self._activate_code_entry()
-        self.status_label.setText("Нужен пароль 2FA")
-        self.account_label.setText("Введите пароль двухэтапной аутентификации")
+        setter = getattr(self, "_set_auth_runtime_text", None)
+        if callable(setter):
+            setter("Нужен пароль 2FA", "Введите пароль двухэтапной аутентификации")
+        else:
+            self.status_label.setText("Нужен пароль 2FA")
+            self.account_label.setText("Введите пароль двухэтапной аутентификации")
         self.two_fa.setFocus()
     def _set_status_dot(self, online: bool) -> None:
         self.status_dot.setObjectName(
@@ -432,6 +440,10 @@ class AccountViewSettingsMixin:
         ):
             self._temporary_failed(message)
             return
-        self.status_label.setText("Не удалось подключиться")
-        self.account_label.setText(message)
+        setter = getattr(self, "_set_auth_runtime_text", None)
+        if callable(setter):
+            setter("Не удалось подключиться", message)
+        else:
+            self.status_label.setText("Не удалось подключиться")
+            self.account_label.setText(message)
         QMessageBox.warning(self, "Telegram", message)
