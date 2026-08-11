@@ -137,7 +137,9 @@ def test_the_close_shortcut_goes_through_the_prompt() -> None:
 def test_a_second_instance_activates_primary_then_exits_without_popup() -> None:
     main_source = (ROOT / "main.py").read_text(encoding="utf-8")
     start = main_source.index("instance = SingleInstance()")
-    guard = main_source[main_source.index("if not instance.acquire():", start) :][:900]
+    guard_start = main_source.index("if not instance.acquire():", start)
+    guard_end = main_source.index("\n        config = Config()", guard_start)
+    guard = main_source[guard_start:guard_end]
 
     single_source = (ROOT / "core" / "single_instance.py").read_text(encoding="utf-8")
     acquire = single_source[
