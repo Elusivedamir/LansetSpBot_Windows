@@ -79,7 +79,7 @@ async def test_failed_connect_closes_partial_telethon_transport() -> None:
         async def connect(self) -> None:
             self.connected = True
 
-        async def is_user_authorized(self) -> bool:
+        async def get_me(self):
             raise asyncio.TimeoutError
 
         async def disconnect(self) -> None:

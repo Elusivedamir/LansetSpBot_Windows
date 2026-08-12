@@ -227,9 +227,15 @@ def test_p08_terminal_transport_callback_fires() -> None:
     assert transport._connected is False
     assert seen == [("authorization_required", "revoked")]
     wiring = (ROOT / "workers/handler_registry.py").read_text(encoding="utf-8")
+    callback = wiring[
+        wiring.index("    def terminal_account_error(") : wiring.index(
+            "    telegram = TelegramService("
+        )
+    ]
+    assert "mark_account_authorization_required(" in callback
+    assert 'cancellation("account", account_id)' in callback
+    assert "worker_db.insert_log(" in callback
     assert "terminal_account_error_callback=terminal_account_error" in wiring
-    assert "mark_account_authorization_required(" in wiring
-    assert 'cancellation("account", account_id)' in wiring
 
 
 def test_p09_snapshot_is_atomic_and_scheduler_fails_closed(tmp_path: Path) -> None:

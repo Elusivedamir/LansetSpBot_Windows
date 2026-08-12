@@ -399,10 +399,17 @@ class TelegramTransportMixin(_MixinHost):
             if callable(identity_probe) and (identity_missing or probe_due):
                 me = await self._await_interruptible(identity_probe(), timeout=40.0)
                 if me is None:
+                    message = (
+                        "Telegram session is not authorized. "
+                        "Authorize it before starting the queue."
+                    )
                     self._connected = False
+                    self._notify_terminal_account_error(
+                        "authorization_required", message
+                    )
                     await self.disconnect()
                     raise NonRetryableTelegramError(
-                        "Telegram session is not authorized. Authorize it before starting the queue.",
+                        message,
                         code="authorization_required",
                     )
                 actual_account_id = int(getattr(me, "id", 0) or 0)

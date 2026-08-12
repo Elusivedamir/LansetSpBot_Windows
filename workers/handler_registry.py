@@ -270,6 +270,16 @@ def create_worker_handlers(
             account_id,
             error=f"{code}: {message}",
         )
+        try:
+            worker_db.insert_log(
+                "ERROR",
+                "[Аккаунт] Авторизация Telegram остановлена · "
+                f"source=telegram_transport · code={code} · {message}",
+                account_id=account_id,
+            )
+        except Exception:
+            # Account state is authoritative; incident journaling is best-effort.
+            log.exception("Could not persist terminal Telegram account incident")
 
     telegram = TelegramService(
         settings,

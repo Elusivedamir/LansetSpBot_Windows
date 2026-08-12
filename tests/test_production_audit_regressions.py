@@ -13,7 +13,7 @@ import pytest
 from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication
 from telethon import TelegramClient
-from telethon.errors import AuthKeyUnregisteredError
+from telethon.errors import AuthKeyUnregisteredError, FloodWaitError
 from telethon.tl.functions.messages import SendMessageRequest
 from telethon.tl.types import InputPeerSelf
 
@@ -161,6 +161,60 @@ async def test_connect_transient_identity_probe_failure_does_not_revoke_account(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "probe_error",
+    [
+        ConnectionError("connection reset by peer"),
+        asyncio.TimeoutError(),
+        OSError("database is locked"),
+        OSError("proxy authorization required"),
+        RuntimeError("server returned 500"),
+        RuntimeError("failed to save session file"),
+        FloodWaitError(None, capture=30),
+    ],
+    ids=[
+        "connection-reset",
+        "timeout",
+        "sqlite-locked",
+        "proxy-auth",
+        "server-500",
+        "session-save",
+        "flood-wait",
+    ],
+)
+async def test_transient_identity_probe_errors_never_revoke_account(
+    probe_error: BaseException,
+) -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.connected = False
+
+        def is_connected(self) -> bool:
+            return self.connected
+
+        async def connect(self) -> None:
+            self.connected = True
+
+        async def get_me(self):
+            raise probe_error
+
+        async def disconnect(self) -> None:
+            self.connected = False
+
+    service = _transport_service()
+    service.client = Client()
+    service.settings = _configured_transport_settings()
+    service._terminal_account_error_callback = MagicMock()
+
+    with pytest.raises(TelegramOperationError):
+        await service.connect()
+
+    service._terminal_account_error_callback.assert_not_called()
+    assert service._connected is False
+    assert service.client.connected is False
+
+
+@pytest.mark.asyncio
 async def test_pre_dispatch_non_retryable_error_is_not_reclassified() -> None:
     service = _transport_service()
     preflight_calls = 0
@@ -298,6 +352,7 @@ async def test_revoked_session_rpc_is_mapped_to_authorization_required() -> None
     service = _transport_service()
     service.ensure_connected = lambda: asyncio.sleep(0)
     disconnected = False
+    service._terminal_account_error_callback = MagicMock()
 
     async def disconnect() -> None:
         nonlocal disconnected
@@ -313,6 +368,10 @@ async def test_revoked_session_rpc_is_mapped_to_authorization_required() -> None
 
     assert raised.value.code == "authorization_required"
     assert disconnected is True
+    service._terminal_account_error_callback.assert_called_once()
+    assert service._terminal_account_error_callback.call_args.args[0] == (
+        "authorization_required"
+    )
 
 
 @pytest.mark.asyncio
@@ -335,6 +394,7 @@ async def test_periodic_auth_check_uses_fresh_identity_rpc() -> None:
     service = _transport_service()
     service.client = Client()
     service.settings = SimpleNamespace(expected_account_id=123)
+    service._terminal_account_error_callback = MagicMock()
     # Make the probe deterministically due even in a freshly started CI
     # container whose monotonic clock is still below the recheck interval.
     service._last_authorization_check = (
@@ -347,6 +407,10 @@ async def test_periodic_auth_check_uses_fresh_identity_rpc() -> None:
     assert raised.value.code == "authorization_required"
     assert service.client.get_me_calls == 1
     assert service.client.connected is False
+    service._terminal_account_error_callback.assert_called_once()
+    assert service._terminal_account_error_callback.call_args.args[0] == (
+        "authorization_required"
+    )
 
 
 @pytest.mark.asyncio

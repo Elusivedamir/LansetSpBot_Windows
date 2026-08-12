@@ -748,8 +748,8 @@ async def test_unauthorized_session_does_not_start_interactive_auth():
         async def connect(self):
             return None
 
-        async def is_user_authorized(self):
-            return False
+        async def get_me(self):
+            return None
 
         async def disconnect(self):
             self.disconnect_calls += 1
