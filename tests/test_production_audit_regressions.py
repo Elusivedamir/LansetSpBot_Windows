@@ -75,6 +75,121 @@ def _transport_service() -> TelegramService:
     return service
 
 
+def _configured_transport_settings(account_id: int = 123) -> SimpleNamespace:
+    return SimpleNamespace(
+        configured=True,
+        expected_account_id=account_id,
+        proxy_password=None,
+        proxy_secret=None,
+        api_hash=None,
+        phone=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_connect_uses_identity_probe_instead_of_cached_authorization_flag() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.connected = False
+            self.get_me_calls = 0
+            self.authorization_flag_calls = 0
+
+        def is_connected(self) -> bool:
+            return self.connected
+
+        async def connect(self) -> None:
+            self.connected = True
+
+        async def is_user_authorized(self) -> bool:
+            self.authorization_flag_calls += 1
+            raise AssertionError("connect() must not use Telethon's cached auth flag")
+
+        async def get_me(self):
+            self.get_me_calls += 1
+            return SimpleNamespace(id=123)
+
+        async def disconnect(self) -> None:
+            self.connected = False
+
+    service = _transport_service()
+    service.client = Client()
+    service.settings = _configured_transport_settings()
+    service._terminal_account_error_callback = MagicMock()
+
+    await service.connect()
+
+    assert service._connected is True
+    assert service.client.connected is True
+    assert service.client.get_me_calls == 1
+    assert service.client.authorization_flag_calls == 0
+    service._terminal_account_error_callback.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_connect_transient_identity_probe_failure_does_not_revoke_account() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.connected = False
+
+        def is_connected(self) -> bool:
+            return self.connected
+
+        async def connect(self) -> None:
+            self.connected = True
+
+        async def get_me(self):
+            raise RuntimeError("temporary identity probe failure")
+
+        async def disconnect(self) -> None:
+            self.connected = False
+
+    service = _transport_service()
+    service.client = Client()
+    service.settings = _configured_transport_settings()
+    terminal_errors: list[tuple[str, str]] = []
+    service._terminal_account_error_callback = (
+        lambda code, message: terminal_errors.append((code, message))
+    )
+
+    with pytest.raises(TelegramOperationError) as raised:
+        await service.connect()
+
+    assert "temporary identity probe failure" in str(raised.value)
+    assert terminal_errors == []
+    assert service._connected is False
+    assert service.client.connected is False
+
+
+@pytest.mark.asyncio
+async def test_pre_dispatch_non_retryable_error_is_not_reclassified() -> None:
+    service = _transport_service()
+    preflight_calls = 0
+    operation_calls = 0
+    original = NonRetryableTelegramError(
+        "Telegram session is not authorized",
+        code="authorization_required",
+    )
+
+    async def fail_preflight() -> None:
+        nonlocal preflight_calls
+        preflight_calls += 1
+        raise original
+
+    async def operation() -> None:
+        nonlocal operation_calls
+        operation_calls += 1
+
+    service.ensure_connected = fail_preflight
+
+    with pytest.raises(NonRetryableTelegramError) as raised:
+        await service.execute(operation)
+
+    assert raised.value is original
+    assert raised.value.code == "authorization_required"
+    assert preflight_calls == 1
+    assert operation_calls == 0
+
+
 @pytest.mark.asyncio
 async def test_mutating_preflight_failure_never_becomes_unknown_delivery() -> None:
     service = _transport_service()

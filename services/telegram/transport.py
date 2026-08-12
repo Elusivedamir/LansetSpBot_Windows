@@ -279,19 +279,10 @@ class TelegramTransportMixin(_MixinHost):
         try:
             if not self.client.is_connected():
                 await self._await_interruptible(self.client.connect(), timeout=30.0)
-            authorized = await self._await_interruptible(
-                self.client.is_user_authorized(), timeout=40.0
-            )
-            if not authorized:
-                await asyncio.wait_for(self.client.disconnect(), timeout=10.0)
-                self._notify_terminal_account_error(
-                    "authorization_required",
-                    "Telegram session is not authorized. Authorize it before starting the queue.",
-                )
-                raise NonRetryableTelegramError(
-                    "Telegram session is not authorized. Authorize it before starting the queue.",
-                    code="authorization_required",
-                )
+            # Do not use Telethon.is_user_authorized() as a terminal gate here.
+            # A transient RPC failure can make that helper report a cached False.
+            # get_me() below preserves unrelated failures while still proving both
+            # authorization and the exact Telegram account identity.
             me = await self._await_interruptible(self.client.get_me(), timeout=40.0)
             if me is None:
                 await asyncio.wait_for(self.client.disconnect(), timeout=10.0)
@@ -861,6 +852,8 @@ class TelegramTransportMixin(_MixinHost):
                     unknown_result_code=unknown_result_code,
                 )
             except DeferredTelegramError:
+                raise
+            except NonRetryableTelegramError:
                 raise
             except TelegramOperationError as exc:
                 network_attempts = await self._retry_after_operation_failure(
