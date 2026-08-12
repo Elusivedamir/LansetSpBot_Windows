@@ -2,15 +2,118 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 from core.composition import ApplicationContainer
 from core.config import Config
 from gui.app import MarlenApp
+from gui.views.warmup_view import WarmupView
 
 
 def _app():
     return QApplication.instance() or QApplication([])
+
+
+class _WarmupAdapter:
+    def close_thread_connection(self):
+        return None
+
+    def get_warmup_selector_accounts(self):
+        return []
+
+    def get_warmup_overview(self):
+        return {}
+
+
+def _warmup_overview(*, status="running", focus_status="pending", groups=()):
+    accounts = [
+        {
+            "telegram_account_id": 101,
+            "display_name": "Alpha",
+            "username": "alpha",
+            "authorized": True,
+            "stopped": False,
+            "warmup_status": "active",
+            "proxy": {},
+        },
+        {
+            "telegram_account_id": 102,
+            "display_name": "Beta",
+            "username": "beta",
+            "authorized": True,
+            "stopped": False,
+            "warmup_status": "active",
+            "proxy": {},
+        },
+    ]
+    activity = {
+        "last": {
+            "sequence_no": 1,
+            "action": "ensure_contact",
+            "status": "done",
+            "actor_name": "Alpha",
+            "actor_username": "alpha",
+            "target_name": "Beta",
+            "target_username": "beta",
+            "completed_at": "2026-08-12 00:00:30",
+        },
+        "focus": {
+            "sequence_no": 2,
+            "action": "message",
+            "status": focus_status,
+            "actor_name": "Beta",
+            "actor_username": "beta",
+            "target_name": "Alpha",
+            "target_username": "alpha",
+            "message_text": "Привет! Как проходит день?",
+            "typing_seconds": 7,
+            "scheduled_at": "2099-08-12 06:28:00",
+            "result_text": (
+                "Telegram session is not authorized"
+                if focus_status == "failed"
+                else None
+            ),
+        },
+        "upcoming": {
+            "sequence_no": 3,
+            "action": "group_visit",
+            "status": "pending",
+            "actor_name": "Alpha",
+            "actor_username": "alpha",
+            "posts_to_read": 3,
+            "should_react": True,
+            "scheduled_at": "2099-08-12 06:35:00",
+        },
+    }
+    pair = {
+        "id": 1,
+        "status": status,
+        "account_a_id": 101,
+        "account_b_id": 102,
+        "account_a_name": "Alpha",
+        "account_b_name": "Beta",
+        "week_number": 1,
+        "current_step": 1,
+        "finished_steps": 1,
+        "total_steps": 86,
+        "progress_percent": 1,
+        "dialogue_windows": 3,
+        "reply_min_seconds": 120,
+        "reply_max_seconds": 840,
+        "typing_min_seconds": 5,
+        "typing_max_seconds": 9,
+        "failed_steps": int(focus_status == "failed"),
+        "uncertain_steps": 0,
+        "day_titles": [],
+        "activity": activity,
+    }
+    return {
+        "accounts": accounts,
+        "pairs": [pair],
+        "groups": list(groups),
+        "active_account_count": 2,
+        "account_limit": 40,
+    }
 
 
 def test_main_gui_has_eight_user_pages(monkeypatch, tmp_path):
@@ -21,10 +124,10 @@ def test_main_gui_has_eight_user_pages(monkeypatch, tmp_path):
     window = MarlenApp(container.adapter, container.queue_worker, config)
     assert [window.menu.item(i).text() for i in range(window.menu.count())] == [
         "Аккаунт",
-        "Прогрев",
-        "Каналы",
-        "Связки",
-        "Комментирование",
+        "    ↳  Прогрев",
+        "    ↳  Каналы",
+        "    ↳  Связки",
+        "    ↳  Комментирование",
         "Поиск ЦА",
         "Парсинг аудитории",
         "Инструкция",
@@ -40,6 +143,73 @@ def test_main_gui_has_eight_user_pages(monkeypatch, tmp_path):
     window.deleteLater()
     app.processEvents()
     container.shutdown()
+
+
+def test_warmup_groups_show_two_then_expand_and_stay_expanded_after_refresh():
+    app = _app()
+    groups = [
+        {
+            "id": index,
+            "title": f"Group {index}",
+            "chat_ref": f"@group_{index}",
+            "assigned_account_ids": "101",
+        }
+        for index in range(1, 7)
+    ]
+    overview = _warmup_overview(groups=groups)
+    view = WarmupView(_WarmupAdapter())
+    view.refresh_timer.stop()
+    view.journal_timer.stop()
+
+    view._apply_overview(overview)
+    assert view.groups_box.count() == 3
+    toggle = view.groups_box.itemAt(2).widget()
+    assert isinstance(toggle, QPushButton)
+    assert toggle.text() == "Показать ещё 4"
+
+    toggle.click()
+    assert view.groups_box.count() == 7
+    assert view.groups_box.itemAt(6).widget().text() == "Свернуть"
+
+    view._apply_overview(overview)
+    assert view.groups_box.count() == 7
+    view.groups_box.itemAt(6).widget().click()
+    assert view.groups_box.count() == 3
+    assert view.groups_box.itemAt(2).widget().text() == "Показать ещё 4"
+
+    view.close()
+    view.deleteLater()
+    app.processEvents()
+
+
+def test_warmup_live_journal_describes_timing_actions_and_safe_failure():
+    app = _app()
+    view = WarmupView(_WarmupAdapter())
+    view.refresh_timer.stop()
+    view.journal_timer.stop()
+
+    view._apply_overview(_warmup_overview())
+    journal = view._journal_views[1]
+    assert journal["badge"].text() == "Ожидание"
+    assert "Beta @beta" in journal["current"].text()
+    assert "печатает 7 сек" in journal["current"].text()
+    assert journal["countdown"].text().startswith(
+        "До следующего действия через"
+    )
+    assert "прочитать 3 поста" in journal["following"].text()
+    assert "Последнее выполненное" in journal["previous"].text()
+
+    view._apply_overview(
+        _warmup_overview(status="paused", focus_status="failed")
+    )
+    failed = view._journal_views[1]
+    assert failed["badge"].text() == "Ошибка — безопасный повтор"
+    assert "только после нажатия кнопки" in failed["countdown"].text()
+    assert "Аккаунт не авторизован" in failed["reason"].text()
+
+    view.close()
+    view.deleteLater()
+    app.processEvents()
 
 
 def test_settings_links_and_comment_history_are_persisted(tmp_path):

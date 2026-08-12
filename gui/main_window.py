@@ -51,6 +51,13 @@ class MainWindow(QMainWindow):
     SIDEBAR_MAX_WIDTH = 360
     SUPPORT_CONTACT = "@lansetp"
     SUPPORT_URL = "https://t.me/lansetp"
+    ACCOUNT_SUBPAGE_INDEXES = frozenset({1, 2, 3, 4})
+
+    @classmethod
+    def _navigation_label(cls, index: int, label: str) -> str:
+        if index in cls.ACCOUNT_SUBPAGE_INDEXES:
+            return f"    ↳  {label}"
+        return label
 
     @staticmethod
     def _asset_icon(name: str) -> QIcon:
@@ -153,9 +160,20 @@ class MainWindow(QMainWindow):
             "Парсинг",
             "Инструкция",
         ]
-        for label, icon_name in zip(self._menu_full, self.MENU_ICONS):
-            item = QListWidgetItem(self._asset_icon(icon_name), label)
+        for index, (label, icon_name) in enumerate(
+            zip(self._menu_full, self.MENU_ICONS)
+        ):
+            item = QListWidgetItem(
+                self._asset_icon(icon_name),
+                self._navigation_label(index, label),
+            )
             item.setToolTip(label)
+            item.setData(
+                Qt.ItemDataRole.UserRole,
+                "account_subpage"
+                if index in self.ACCOUNT_SUBPAGE_INDEXES
+                else "top_level",
+            )
             self.menu.addItem(item)
         self.menu.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sidebar_layout.addWidget(self.menu, 1)
@@ -367,6 +385,7 @@ class MainWindow(QMainWindow):
             self.activity_panel.timer,
             self.activity_panel.countdown_timer,
             self.warmup_view.refresh_timer,
+            self.warmup_view.journal_timer,
             self.channels_view.timer,
             self.channels_view.watcher.timer,
             self.links_view.watcher.timer,
@@ -454,7 +473,9 @@ class MainWindow(QMainWindow):
         )
         labels = self._menu_compact if compact else self._menu_full
         for index, label in enumerate(labels):
-            self.menu.item(index).setText(label)
+            self.menu.item(index).setText(
+                self._navigation_label(index, label)
+            )
         self.activity_panel.set_compact(compact)
         for view in (
             self.account_view,

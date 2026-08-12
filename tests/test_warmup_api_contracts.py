@@ -34,8 +34,10 @@ class _DB:
         self.groups: list[dict[str, Any]] = []
         self.states: list[dict[str, Any]] = []
         self.pairs: list[dict[str, Any]] = []
+        self.activity: list[dict[str, Any]] = []
         self.saved_dialogs: list[dict[str, Any]] = []
         self.added_groups: list[tuple[str, str]] = []
+        self.assigned_groups: list[tuple[int, int, str]] = []
 
     def acquire_account_activity_lease(
         self,
@@ -103,6 +105,9 @@ class _DB:
     def list_warmup_pairs(self):
         return [dict(item) for item in self.pairs]
 
+    def list_warmup_pair_activity(self):
+        return [dict(item) for item in self.activity]
+
     def list_warmup_groups(self):
         return [dict(item) for item in self.groups]
 
@@ -119,6 +124,16 @@ class _DB:
 
     def remove_warmup_group(self, group_id: int):
         return group_id == 1
+
+    def assign_warmup_group_to_account(
+        self, group_id: int, account_id: int, *, membership_state: str
+    ) -> None:
+        self.assigned_groups.append((group_id, account_id, membership_state))
+
+    def remove_warmup_group_from_account(
+        self, group_id: int, account_id: int
+    ) -> bool:
+        return group_id == 1 and account_id == 101
 
 
 class _Worker:
@@ -331,6 +346,10 @@ def test_populate_warmup_groups_from_synced_selects_three_or_four_unique_groups(
     assert result["limited"] is False
     assert result["message"] == ""
     assert len(host.database.added_groups) == result["selected_count"]
+    assert host.database.assigned_groups == [
+        (group_id, 101, "joined")
+        for group_id in range(1, result["selected_count"] + 1)
+    ]
     refs = [item[0] for item in host.database.added_groups]
     assert len(refs) == len(set(refs))
     assert set(refs) <= {
@@ -412,19 +431,14 @@ def test_pair_lease_acquisition_rolls_back_partial_success() -> None:
     assert host.database.release_calls == [(101, "a")]
 
 
-def test_require_warmup_account_checks_proxy_and_phone() -> None:
+def test_require_warmup_account_allows_missing_proxy_but_requires_phone() -> None:
     host = _Host()
+    host._settings[101]["telegram.proxy_enabled"] = "0"
     host._require_warmup_account(101)
 
-    host._settings[101]["telegram.proxy_enabled"] = "0"
-    with pytest.raises(ValueError, match="прокси"):
-        host._require_warmup_account(101)
-
-    host._settings[101] = host._valid_proxy("proxy-a.example", "1080")
     host._phones[101] = ""
-    with pytest.raises(ValueError, match="телефон"):
+    with pytest.raises(ValueError):
         host._require_warmup_account(101)
-
 
 def test_create_and_extend_pair_schedule_steps_and_queue() -> None:
     host = _Host()
@@ -489,6 +503,16 @@ def test_resume_and_retry_noop_do_not_queue() -> None:
     assert host.queue_starts == 0
 
 
+def test_resume_uses_safe_failed_step_retry() -> None:
+    host = _Host()
+    host.database.resume_changed = False
+    host.database.retry_changed = True
+
+    assert host.resume_warmup_pair(7) is True
+    assert host.database.enqueue_calls == [7]
+    assert host.queue_starts == 1
+
+
 def test_overview_marks_only_proxy_ready_available_accounts_eligible() -> None:
     host = _Host()
     host._accounts = [
@@ -527,12 +551,22 @@ def test_overview_marks_only_proxy_ready_available_accounts_eligible() -> None:
             "total_steps": 10,
         }
     ]
+    host.database.activity = [
+        {
+            "pair_id": 7,
+            "snapshot_kind": "focus",
+            "sequence_no": 6,
+            "action": "message",
+            "status": "pending",
+        }
+    ]
 
     overview = host.get_warmup_overview()
 
     assert overview["accounts"][0]["warmup_eligible"] is True
     assert overview["accounts"][1]["warmup_eligible"] is False
     assert overview["pairs"][0]["progress_percent"] == 50
+    assert overview["pairs"][0]["activity"]["focus"]["action"] == "message"
     assert overview["active_account_count"] == 1
     assert overview["account_limit"] == 40
 
@@ -561,7 +595,8 @@ def test_bootstrap_recovers_once_and_lease_tick_queues_running_pairs() -> None:
 
 def test_add_and_remove_group_delegate_normalized_values() -> None:
     host = _Host()
-    group = host.add_warmup_group("t.me/group_name")
+    group = host.add_warmup_group("t.me/group_name", 101)
     assert group["chat_ref"] == "https://t.me/group_name"
-    assert host.remove_warmup_group(1) is True
-    assert host.remove_warmup_group(2) is False
+    assert host.database.assigned_groups == [(1, 101, "unknown")]
+    assert host.remove_warmup_group(1, 101) is True
+    assert host.remove_warmup_group(2, 101) is False

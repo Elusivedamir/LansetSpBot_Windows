@@ -229,6 +229,46 @@ def test_pair_creation_is_serialized_per_account(tmp_path: Path) -> None:
     conn.close()
 
 
+def test_pair_activity_returns_last_current_and_following_steps(tmp_path: Path) -> None:
+    path = tmp_path / "activity.db"
+    _base_database(path)
+    migration = _load_migration()
+    migration.migrate_warmup_workflows_v36(
+        path, sqlite_timeout_seconds=5.0, busy_timeout_ms=5000
+    )
+    repository = _Repository(path)
+    profile, steps = _profile_and_steps(101, 102, "3" * 32)
+    pair = repository.create_warmup_pair(
+        account_a_id=101,
+        account_b_id=102,
+        profile=profile,
+        steps=steps,
+        owner_token_a="a" * 32,
+        owner_token_b="b" * 32,
+        started_at=steps[0]["scheduled_at"],
+        ends_at=steps[-1]["scheduled_at"],
+    )
+    pair_id = int(pair["id"])
+
+    initial = repository.list_warmup_pair_activity()
+    assert [row["snapshot_kind"] for row in initial] == ["focus", "upcoming"]
+    assert [row["sequence_no"] for row in initial] == [1, 2]
+
+    with repository.get_connection() as conn:
+        conn.execute(
+            """UPDATE warmup_steps
+               SET status='done', completed_at=CURRENT_TIMESTAMP
+               WHERE pair_id=? AND sequence_no=1""",
+            (pair_id,),
+        )
+    advanced = repository.list_warmup_pair_activity()
+    by_kind = {row["snapshot_kind"]: row for row in advanced}
+    assert int(by_kind["last"]["sequence_no"]) == 1
+    assert int(by_kind["focus"]["sequence_no"]) == 2
+    assert int(by_kind["upcoming"]["sequence_no"]) == 3
+    assert by_kind["focus"]["actor_name"] in {"A", "B"}
+
+
 def test_gui_has_no_json_editor_and_reuses_theme_object_names() -> None:
     source = (ROOT / "gui" / "views" / "warmup_view.py").read_text(encoding="utf-8")
     assert "QPlainTextEdit" not in source
@@ -551,3 +591,100 @@ def test_defer_warmup_step_preserves_or_clears_queue_task_as_requested(
 
     assert row[0] == "pending"
     assert row[1] is None
+
+
+def test_group_selection_is_explicitly_account_scoped(tmp_path: Path) -> None:
+    path = tmp_path / "account-groups.db"
+    _base_database(path)
+    migration = _load_migration()
+    migration.migrate_warmup_workflows_v36(
+        path, sqlite_timeout_seconds=5.0, busy_timeout_ms=5000
+    )
+    repository = _Repository(path)
+    group_a = repository.add_warmup_group("@group_a", "Group A")
+    group_b = repository.add_warmup_group("@group_b", "Group B")
+    repository.assign_warmup_group_to_account(
+        int(group_a["id"]), 101, membership_state="joined"
+    )
+    repository.assign_warmup_group_to_account(
+        int(group_b["id"]), 102, membership_state="joined"
+    )
+
+    assert repository.choose_warmup_group_for_account(101)["chat_ref"] == "@group_a"
+    assert repository.choose_warmup_group_for_account(102)["chat_ref"] == "@group_b"
+    assert repository.choose_warmup_group_for_account(103) is None
+
+    assert repository.remove_warmup_group_from_account(int(group_a["id"]), 101)
+    assert repository.choose_warmup_group_for_account(101) is None
+    assert repository.choose_warmup_group_for_account(102)["chat_ref"] == "@group_b"
+
+
+def test_failed_step_can_retry_but_uncertain_step_cannot(tmp_path: Path) -> None:
+    path = tmp_path / "retry-safety.db"
+    _base_database(path)
+    migration = _load_migration()
+    migration.migrate_warmup_workflows_v36(
+        path, sqlite_timeout_seconds=5.0, busy_timeout_ms=5000
+    )
+    repository = _Repository(path)
+    pair, queued = _create_running_first_step(repository, "4f" * 16)
+    pair_id = int(pair["id"])
+
+    repository.fail_warmup_step(
+        int(queued["id"]), message="definite failure", uncertain=False
+    )
+    assert repository.resume_warmup_pair(pair_id) is False
+    assert repository.retry_failed_warmup_step(pair_id) is True
+
+    with repository.get_connection() as conn:
+        conn.execute(
+            "UPDATE warmup_steps SET status='uncertain' WHERE id=?",
+            (int(queued["id"]),),
+        )
+        conn.execute(
+            "UPDATE warmup_pairs SET status='paused' WHERE id=?", (pair_id,)
+        )
+    assert repository.resume_warmup_pair(pair_id) is False
+    assert repository.retry_failed_warmup_step(pair_id) is False
+
+
+def test_archiving_paused_pair_cancels_pending_steps_and_frees_accounts(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "archive-pair.db"
+    _base_database(path)
+    migration = _load_migration()
+    migration.migrate_warmup_workflows_v36(
+        path, sqlite_timeout_seconds=5.0, busy_timeout_ms=5000
+    )
+    repository = _Repository(path)
+    pair, _queued = _create_running_first_step(repository, "5f" * 16)
+    pair_id = int(pair["id"])
+    assert repository.pause_warmup_pair(pair_id, "operator pause")
+
+    result = repository.archive_paused_warmup_pair(pair_id)
+    assert result == {
+        "pair_id": pair_id,
+        "status": "archived",
+        "account_ids": [101, 102],
+    }
+
+    with repository.get_connection() as conn:
+        pair_status = conn.execute(
+            "SELECT status FROM warmup_pairs WHERE id=?", (pair_id,)
+        ).fetchone()[0]
+        account_rows = conn.execute(
+            "SELECT status,active_pair_id FROM warmup_accounts ORDER BY account_id"
+        ).fetchall()
+        unfinished = conn.execute(
+            """SELECT COUNT(*) FROM warmup_steps
+               WHERE pair_id=?
+                 AND status IN ('pending','running','failed','uncertain')""",
+            (pair_id,),
+        ).fetchone()[0]
+    assert pair_status == "archived"
+    assert [(row[0], row[1]) for row in account_rows] == [
+        ("available", None),
+        ("available", None),
+    ]
+    assert int(unfinished) == 0

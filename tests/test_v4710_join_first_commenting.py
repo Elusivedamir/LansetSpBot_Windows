@@ -181,7 +181,7 @@ def test_join_requested_is_excluded_by_durable_comment_membership_gate():
 
 
 @pytest.mark.asyncio
-async def test_links_preparation_joins_missing_discussions_with_15_25_second_gap(
+async def test_links_preparation_joins_missing_discussions_with_45_70_second_gap(
     monkeypatch,
 ):
     db = MagicMock()
@@ -206,7 +206,7 @@ async def test_links_preparation_joins_missing_discussions_with_15_25_second_gap
 
     assert telegram.join_calls == [20, 30]
     assert len(worker.sleep_calls) == 1
-    assert 15 <= worker.sleep_calls[0] <= 25
+    assert 45 <= worker.sleep_calls[0] <= 70
     assert db.record_join_event.call_args_list[0].args == (20, "joined")
     assert db.record_join_event.call_args_list[0].kwargs == {"account_id": 77}
     assert db.record_join_event.call_args_list[1].args == (30, "joined")

@@ -828,11 +828,21 @@ class QueueWorker(QueueWorkerStateMixin, QueueWorkerCooldownMixin, QThread):
             "restricted",
         }:
             return False
-        self._fail_without_retry(
-            context.task_id,
+        message = (
             "account_unavailable_before_execution: Telegram RPC blocked "
-            f"for account {context.account_id} in state {runtime_state}",
+            f"for account {context.account_id} in state {runtime_state}"
         )
+        if context.task_type == "warmup_step":
+            step_id = int(context.payload.get("step_id") or 0)
+            if step_id > 0:
+                # No handler (and therefore no Telegram RPC) has run yet, so
+                # this is a definite failed step, never an uncertain action.
+                self.get_db().fail_warmup_step(
+                    step_id,
+                    message=message,
+                    uncertain=False,
+                )
+        self._fail_without_retry(context.task_id, message)
         return True
 
     def _fail_without_retry(self, task_id: int, message: str) -> None:

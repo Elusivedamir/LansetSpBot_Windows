@@ -44,6 +44,16 @@ def test_user_build_wrapper_still_points_to_the_release_script() -> None:
     assert r"build\build_windows_x64.ps1" in wrapper
     assert "exit /b %MARLEN_EXIT%" in wrapper
 
+
+def test_user_build_wrapper_bootstraps_required_windows_tools_and_manifest() -> None:
+    wrapper = (ROOT / "BUILD_WINDOWS_X64.cmd").read_text(encoding="utf-8")
+    assert "winget.exe" in wrapper
+    assert "Git.Git" in wrapper
+    assert "Python.Launcher" in wrapper
+    assert "Python.Python.3.13" in wrapper
+    assert "-3.13-64" in wrapper
+    assert r"tools\generate_manifest.py" in wrapper
+
 def test_checkout_is_verified_before_ci_evidence_is_created() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     clean_check = text.index("git status --porcelain=v1 --untracked-files=all")

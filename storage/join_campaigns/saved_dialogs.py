@@ -199,9 +199,9 @@ class SavedDialogRepositoryMixin(_MixinHost):
                 else:
                     rows = conn.execute(
                         """SELECT d.*, m.status AS membership_status, m.last_error AS membership_error
-                           FROM saved_dialogs d
-                           LEFT JOIN saved_dialog_memberships m
-                             ON m.saved_dialog_id=d.id AND m.account_id=?
+                           FROM saved_dialog_memberships m
+                           JOIN saved_dialogs d ON d.id=m.saved_dialog_id
+                           WHERE m.account_id=?
                            ORDER BY lower(d.title)""",
                         (int(account_id),),
                     ).fetchall()

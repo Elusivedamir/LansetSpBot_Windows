@@ -16,15 +16,18 @@ class _BlockingAdapter:
         self.started = threading.Event()
         self.release = threading.Event()
 
-    def get_comment_campaign_state(self):
+    def get_comment_campaign_state(self, *, account_id=None):
+        del account_id
         self.started.set()
         assert self.release.wait(timeout=5)
         return None
 
-    def get_join_campaign_state(self):
+    def get_join_campaign_state(self, *, account_id=None):
+        del account_id
         return None
 
-    def get_account_restriction_state(self):
+    def get_account_restriction_state(self, *, account_id=None):
+        del account_id
         return {}
 
     def get_tasks(self, limit=100):
@@ -43,13 +46,16 @@ class _BlockingAdapter:
 
 
 class _ImmediateAdapter:
-    def get_comment_campaign_state(self):
+    def get_comment_campaign_state(self, *, account_id=None):
+        del account_id
         return None
 
-    def get_join_campaign_state(self):
+    def get_join_campaign_state(self, *, account_id=None):
+        del account_id
         return None
 
-    def get_account_restriction_state(self):
+    def get_account_restriction_state(self, *, account_id=None):
+        del account_id
         return {"active": True, "code": "test_restricted"}
 
     def get_tasks(self, limit=100):

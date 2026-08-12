@@ -312,7 +312,8 @@ def test_warmup_backend_campaign_exclusion_guard_is_preserved():
 
 def test_live_09_warmup_buttons_derive_from_durable_overview_not_busy_flag_only():
     create = _Widget()
-    load = _Widget()
+    load_a = _Widget()
+    load_b = _Widget()
     manual = _Widget()
     view = SimpleNamespace(
         _busy=False,
@@ -335,25 +336,30 @@ def test_live_09_warmup_buttons_derive_from_durable_overview_not_busy_flag_only(
         account_a=_Widget(101),
         account_b=_Widget(202),
         create_button=create,
-        load_groups_button=load,
+        load_groups_a_button=load_a,
+        load_groups_b_button=load_b,
         add_group_button=manual,
+        _selected_pair=lambda: {"id": 7},
     )
 
     WarmupView._set_busy(view, False)
 
     assert create.enabled is False
-    assert load.enabled is True
+    assert load_a.enabled is True
+    assert load_b.enabled is True
     assert manual.enabled is True
 
     WarmupView._set_busy(view, True)
     assert create.enabled is False
-    assert load.enabled is False
+    assert load_a.enabled is False
+    assert load_b.enabled is False
     assert manual.enabled is False
 
 
 def test_live_12_warmup_selector_snapshot_keeps_group_loading_available():
     create = _Widget()
-    load = _Widget()
+    load_a = _Widget()
+    load_b = _Widget()
     manual = _Widget()
     selector_accounts = [
         {
@@ -376,14 +382,17 @@ def test_live_12_warmup_selector_snapshot_keeps_group_loading_available():
         account_a=_Widget(101),
         account_b=_Widget(202),
         create_button=create,
-        load_groups_button=load,
+        load_groups_a_button=load_a,
+        load_groups_b_button=load_b,
         add_group_button=manual,
+        _selected_pair=lambda: {"id": 7},
     )
 
     WarmupView._set_busy(view, False)
 
     assert create.enabled is False
-    assert load.enabled is True
+    assert load_a.enabled is True
+    assert load_b.enabled is True
     assert manual.enabled is True
 
 

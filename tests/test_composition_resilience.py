@@ -204,8 +204,8 @@ def _handlers(
         min_join_interval_seconds=45,
         post_join_delay_min_seconds=1,
         post_join_delay_max_seconds=1,
-        link_join_delay_min_seconds=15,
-        link_join_delay_max_seconds=25,
+        link_join_delay_min_seconds=45,
+        link_join_delay_max_seconds=70,
         link_check_delay_min_seconds=link_check_delay_min,
         link_check_delay_max_seconds=link_check_delay_max,
     )

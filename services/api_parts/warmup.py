@@ -109,8 +109,15 @@ class WarmupAPIMixin(_MixinHost):
                 and not account.get("campaign_active")
                 and account["warmup_status"] in {"available", "completed"}
                 and account["active_pair_id"] is None
-                and account["proxy"]["configured"]
             )
+
+        activity: dict[int, dict[str, dict[str, Any]]] = {}
+        for raw in self.database.list_warmup_pair_activity():
+            item = dict(raw)
+            pair_id = int(item.get("pair_id") or 0)
+            kind = str(item.get("snapshot_kind") or "")
+            if pair_id > 0 and kind in {"last", "focus", "upcoming"}:
+                activity.setdefault(pair_id, {})[kind] = item
 
         pairs = [dict(item) for item in self.database.list_warmup_pairs()]
         for pair in pairs:
@@ -127,6 +134,7 @@ class WarmupAPIMixin(_MixinHost):
                     / max(1, int(pair.get("total_steps") or 0))
                 )
             )
+            pair["activity"] = activity.get(int(pair["id"]), {})
         return {
             "accounts": accounts,
             "pairs": pairs,
@@ -138,11 +146,6 @@ class WarmupAPIMixin(_MixinHost):
         }
 
     def _require_warmup_account(self, account_id: int) -> None:
-        summary = self._warmup_proxy_summary(account_id)
-        if not summary["configured"]:
-            raise ValueError(
-                "Для каждого аккаунта прогрева должен быть включён и заполнен собственный прокси"
-            )
         with self._secret_lock:
             phone = self._strict_account_secret(int(account_id), "telegram.phone")
         if not str(phone or "").strip():
@@ -250,11 +253,21 @@ class WarmupAPIMixin(_MixinHost):
             "day_titles": list(day_order_titles(profile)),
         }
 
-    def add_warmup_group(self, chat_ref: str) -> dict[str, Any]:
+    def add_warmup_group(
+        self, chat_ref: str, account_id: int
+    ) -> dict[str, Any]:
         normalized = self._normalize_group_ref(chat_ref)
-        return cast(
+        owner = int(account_id)
+        if owner <= 0:
+            raise ValueError("Сначала выберите аккаунт связки")
+        group = cast(
             dict[str, Any], self.database.add_warmup_group(normalized, normalized)
         )
+        self.database.assign_warmup_group_to_account(
+            int(group["id"]), owner, membership_state="unknown"
+        )
+        group["account_id"] = owner
+        return group
 
     @staticmethod
     def _synced_warmup_group_candidate(
@@ -324,10 +337,14 @@ class WarmupAPIMixin(_MixinHost):
         desired_count = 3 + (secrets.randbelow(2) if len(candidates) >= 4 else 0)
         selected_count = min(len(candidates), desired_count)
         selected = secrets.SystemRandom().sample(candidates, selected_count)
-        persisted = [
-            dict(self.database.add_warmup_group(chat_ref, title))
-            for chat_ref, title in selected
-        ]
+        persisted: list[dict[str, Any]] = []
+        for chat_ref, title in selected:
+            group = dict(self.database.add_warmup_group(chat_ref, title))
+            self.database.assign_warmup_group_to_account(
+                int(group["id"]), owner, membership_state="joined"
+            )
+            group["account_id"] = owner
+            persisted.append(group)
         return {
             "account_id": owner,
             "candidate_count": len(candidates),
@@ -337,8 +354,10 @@ class WarmupAPIMixin(_MixinHost):
             "groups": persisted,
         }
 
-    def remove_warmup_group(self, group_id: int) -> bool:
-        return bool(self.database.remove_warmup_group(group_id))
+    def remove_warmup_group(self, group_id: int, account_id: int) -> bool:
+        return bool(
+            self.database.remove_warmup_group_from_account(group_id, account_id)
+        )
 
     def pause_warmup_pair(self, pair_id: int) -> bool:
         owner = int(pair_id)
@@ -354,6 +373,12 @@ class WarmupAPIMixin(_MixinHost):
     def resume_warmup_pair(self, pair_id: int) -> bool:
         owner = int(pair_id)
         changed = bool(self.database.resume_warmup_pair(owner))
+        if not changed:
+            # A failed step is safe to retry: the worker uses ``failed`` only
+            # when Telegram did not accept an uncertain mutation.  ``uncertain``
+            # steps remain blocked by both repository methods and are never
+            # replayed automatically.
+            changed = bool(self.database.retry_failed_warmup_step(owner))
         if not changed:
             return False
         worker = self.queue_worker
@@ -374,6 +399,24 @@ class WarmupAPIMixin(_MixinHost):
         self.database.enqueue_warmup_step(owner)
         self.start_queue()
         return True
+
+    def archive_paused_warmup_pair(self, pair_id: int) -> dict[str, Any]:
+        owner = int(pair_id)
+
+        def mutation() -> dict[str, Any]:
+            result = dict(self.database.archive_paused_warmup_pair(owner))
+            for account_id in result.get("account_ids") or []:
+                self._release_account_warmup_lease(int(account_id))
+            return result
+
+        worker = self.queue_worker
+        if worker is not None and worker.isRunning():
+            return dict(
+                worker.cancel_scopes_and_run(
+                    (("warmup_pair", owner),), mutation
+                )
+            )
+        return mutation()
 
     def extend_warmup_pair(self, pair_id: int) -> dict[str, Any]:
         pair = self.database.get_warmup_pair(pair_id)

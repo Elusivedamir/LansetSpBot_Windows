@@ -107,11 +107,11 @@ class LinkChannelsRunner:
             0.0, float(getattr(config, "min_join_interval_seconds", 45))
         )
         self.join_delay_min = max(
-            0.0, float(getattr(config, "link_join_delay_min_seconds", 15))
+            0.0, float(getattr(config, "link_join_delay_min_seconds", 45))
         )
         self.join_delay_max = max(
             self.join_delay_min,
-            float(getattr(config, "link_join_delay_max_seconds", 25)),
+            float(getattr(config, "link_join_delay_max_seconds", 70)),
         )
         self.check_delay_min = max(
             0.0, float(getattr(config, "link_check_delay_min_seconds", 7))

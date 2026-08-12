@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.campaign_schedule import from_db_time
+from core.countdown import countdown_label
 from gui.background import BackgroundCall, connect_lifecycle_safe
 
 
@@ -31,6 +33,8 @@ _STATUS_LABELS = {
 class WarmupView(QWidget):
     """Managed seven-day account-pair workflows with native controls."""
 
+    COLLAPSED_GROUP_LIMIT = 2
+
     def __init__(self, adapter) -> None:
         super().__init__()
         self.adapter = adapter
@@ -43,6 +47,10 @@ class WarmupView(QWidget):
         self._selector_accounts: list[dict[str, Any]] = []
         self._selector_refresh_in_flight = False
         self._selector_refresh_pending = False
+        self._background_jobs: set[BackgroundCall] = set()
+        self._selected_pair_id: int | None = None
+        self._journal_views: dict[int, dict[str, Any]] = {}
+        self._expanded_group_pairs: set[int] = set()
 
         root = QVBoxLayout(self)
         root.setContentsMargins(30, 28, 30, 30)
@@ -81,7 +89,9 @@ class WarmupView(QWidget):
         account_layout.addWidget(existing_title)
         account_layout.addWidget(self.existing_account_selector)
         account_layout.addWidget(self.existing_account_hint)
+        self.account_card = account_card
         root.addWidget(account_card)
+        account_card.hide()
 
         create_card = QFrame()
         create_card.setObjectName("card")
@@ -131,20 +141,29 @@ class WarmupView(QWidget):
         groups_header = QHBoxLayout()
         groups_title = QLabel("Группы прогрева")
         groups_title.setObjectName("cardTitle")
-        self.load_groups_button = QPushButton("Получить мои каналы")
-        self.load_groups_button.setObjectName("primaryButton")
-        self.load_groups_button.clicked.connect(self._load_synced_groups)
+        self.load_groups_a_button = QPushButton("Группы для аккаунта A")
+        self.load_groups_a_button.setObjectName("primaryButton")
+        self.load_groups_a_button.clicked.connect(
+            partial(self._load_pair_groups, "a")
+        )
+        self.load_groups_b_button = QPushButton("Группы для аккаунта B")
+        self.load_groups_b_button.setObjectName("primaryButton")
+        self.load_groups_b_button.clicked.connect(
+            partial(self._load_pair_groups, "b")
+        )
         self.add_group_button = QPushButton("Добавить вручную")
         self.add_group_button.setObjectName("secondaryButton")
         self.add_group_button.clicked.connect(self._add_group)
         groups_header.addWidget(groups_title)
         groups_header.addStretch(1)
-        groups_header.addWidget(self.load_groups_button)
+        groups_header.addWidget(self.load_groups_a_button)
+        groups_header.addWidget(self.load_groups_b_button)
         groups_header.addWidget(self.add_group_button)
         groups_layout.addLayout(groups_header)
         groups_hint = QLabel(
-            "«Получить мои каналы» берёт уже синхронизированные Telegram-группы "
-            "выбранного аккаунта и случайно подбирает 3–4 для прогрева. "
+            "У каждого аккаунта связки свой список. Нажмите отдельную кнопку "
+            "аккаунта: программа возьмёт его синхронизированные Telegram-группы "
+            "и случайно подберёт 3–4. "
             "Частоту посещений, число читаемых постов и реакций программа задаёт автоматически."
         )
         groups_hint.setObjectName("mutedText")
@@ -159,9 +178,16 @@ class WarmupView(QWidget):
         groups_layout.addLayout(self.groups_box)
         root.addWidget(groups_card)
 
+        pairs_header = QHBoxLayout()
         pairs_title = QLabel("Связки аккаунтов")
         pairs_title.setObjectName("sectionTitle")
-        root.addWidget(pairs_title)
+        self.pair_selector = QComboBox()
+        self.pair_selector.setMinimumWidth(320)
+        self.pair_selector.currentIndexChanged.connect(self._pair_selected)
+        pairs_header.addWidget(pairs_title)
+        pairs_header.addStretch(1)
+        pairs_header.addWidget(self.pair_selector)
+        root.addLayout(pairs_header)
         self.pairs_box = QVBoxLayout()
         self.pairs_box.setSpacing(14)
         root.addLayout(self.pairs_box)
@@ -170,6 +196,10 @@ class WarmupView(QWidget):
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(5_000)
         self.refresh_timer.timeout.connect(self.refresh)
+        self.journal_timer = QTimer(self)
+        self.journal_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self.journal_timer.setInterval(1_000)
+        self.journal_timer.timeout.connect(self._update_journal_countdowns)
         self._set_busy(False)
         QTimer.singleShot(0, self.refresh)
 
@@ -177,9 +207,7 @@ class WarmupView(QWidget):
         account_id = int(self.existing_account_selector.currentData() or 0)
         if account_id <= 0:
             return
-        target = self.account_a.findData(account_id)
-        if target >= 0:
-            self.account_a.setCurrentIndex(target)
+        if self.account_a.findData(account_id) >= 0:
             self.existing_account_hint.setText(
                 "Выбранный подключённый аккаунт подставлен как «Аккаунт A»."
             )
@@ -275,23 +303,15 @@ class WarmupView(QWidget):
         """Derive actions from the lightweight selector snapshot when available."""
 
         self._busy = bool(active)
-        selector_source = list(
-            getattr(self, "_selector_accounts", None)
-            or self._overview.get("accounts")
-            or []
-        )
-        accounts = WarmupView._warmup_accounts_for_selectors(
-            [dict(item) for item in selector_source]
-        )
         idle = not self._busy
         self.create_button.setEnabled(
             idle and WarmupView._selected_pair_is_creatable(self)
         )
-        # Loading synced targets is a local SQLite operation. It must remain
-        # available even for an account that is stopped, already warming up, or
-        # waiting for re-authorization.
-        self.load_groups_button.setEnabled(idle and bool(accounts))
-        self.add_group_button.setEnabled(idle)
+        pair = self._selected_pair()
+        pair_available = pair is not None
+        self.load_groups_a_button.setEnabled(idle and pair_available)
+        self.load_groups_b_button.setEnabled(idle and pair_available)
+        self.add_group_button.setEnabled(idle and pair_available)
 
     def _finish_mutation(self, *, refresh_after: bool) -> None:
         self._set_busy(False)
@@ -324,6 +344,7 @@ class WarmupView(QWidget):
             QMessageBox.warning(owner, "Прогрев", message)
 
         def finished(owner: "WarmupView") -> None:
+            owner._background_jobs.discard(job)
             owner._finish_mutation(refresh_after=refresh_after)
 
         connect_lifecycle_safe(
@@ -333,6 +354,7 @@ class WarmupView(QWidget):
             failed=failed,
             finished=finished,
         )
+        self._background_jobs.add(job)
         QThreadPool.globalInstance().start(job)
 
     def refresh_selectors(self, *, force: bool = False) -> None:
@@ -358,6 +380,7 @@ class WarmupView(QWidget):
             )
 
         def finished(owner: "WarmupView") -> None:
+            owner._background_jobs.discard(job)
             owner._selector_refresh_in_flight = False
             if owner._selector_refresh_pending:
                 owner._selector_refresh_pending = False
@@ -370,6 +393,7 @@ class WarmupView(QWidget):
             failed=failed,
             finished=finished,
         )
+        self._background_jobs.add(job)
         QThreadPool.globalInstance().start(job)
 
     def refresh(self, *, force: bool = False) -> None:
@@ -391,6 +415,7 @@ class WarmupView(QWidget):
             owner._apply_overview(dict(value or {}))
 
         def finished(owner: "WarmupView") -> None:
+            owner._background_jobs.discard(job)
             owner._refresh_in_flight = False
             if owner._refresh_pending:
                 owner._refresh_pending = False
@@ -402,6 +427,7 @@ class WarmupView(QWidget):
             succeeded=succeeded,
             finished=finished,
         )
+        self._background_jobs.add(job)
         QThreadPool.globalInstance().start(job)
 
     def _apply_selector_accounts(self, accounts: list[dict[str, Any]]) -> None:
@@ -457,7 +483,6 @@ class WarmupView(QWidget):
             self.account_b.setCurrentIndex(1)
         self.account_a.blockSignals(False)
         self.account_b.blockSignals(False)
-        self._existing_account_selected()
         self._set_busy(self._busy)
 
     def _apply_overview(self, overview: dict[str, Any]) -> None:
@@ -466,44 +491,117 @@ class WarmupView(QWidget):
         state_map = {
             int(item["telegram_account_id"]): item for item in accounts
         }
-        self._apply_selector_accounts(accounts)
         active_count = int(overview.get("active_account_count") or 0)
         limit = int(overview.get("account_limit") or 40)
         self.limit_label.setText(f"Аккаунтов в прогреве: {active_count} из {limit}")
 
-        self._render_groups([dict(item) for item in overview.get("groups") or []])
         self._render_pairs(
             [dict(item) for item in overview.get("pairs") or []], state_map
         )
+        self._render_groups([dict(item) for item in overview.get("groups") or []])
         self._set_busy(self._busy)
+
+    def _selected_pair(self) -> dict[str, Any] | None:
+        selected = int(self._selected_pair_id or 0)
+        for raw in self._overview.get("pairs") or []:
+            pair = dict(raw)
+            if int(pair.get("id") or 0) == selected:
+                return pair
+        return None
+
+    def _pair_selected(self, _index: int = -1) -> None:
+        selected = int(self.pair_selector.currentData() or 0)
+        self._selected_pair_id = selected if selected > 0 else None
+        if self._overview:
+            self._apply_overview(dict(self._overview))
+
+    @staticmethod
+    def _assigned_group_accounts(group: dict[str, Any]) -> set[int]:
+        raw = group.get("assigned_account_ids")
+        if isinstance(raw, (list, tuple, set)):
+            values = raw
+        else:
+            values = str(raw or "").split(",")
+        result: set[int] = set()
+        for value in values:
+            try:
+                account_id = int(value or 0)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if account_id > 0:
+                result.add(account_id)
+        return result
 
     def _render_groups(self, groups: list[dict[str, Any]]) -> None:
         self._clear_layout(self.groups_box)
-        if not groups:
-            empty = QLabel("Группы ещё не добавлены")
+        pair = self._selected_pair()
+        if pair is None:
+            empty = QLabel("Сначала создайте или выберите связку")
             empty.setObjectName("mutedText")
             self.groups_box.addWidget(empty)
             return
-        for group in groups:
+        account_names = {
+            int(pair["account_a_id"]): str(pair.get("account_a_name") or "Аккаунт A"),
+            int(pair["account_b_id"]): str(pair.get("account_b_name") or "Аккаунт B"),
+        }
+        assigned_rows = [
+            (group, account_id)
+            for group in groups
+            for account_id in account_names
+            if account_id in self._assigned_group_accounts(group)
+        ]
+        if not assigned_rows:
+            empty = QLabel("Для выбранной связки группы ещё не добавлены")
+            empty.setObjectName("mutedText")
+            self.groups_box.addWidget(empty)
+            return
+        pair_id = int(pair["id"])
+        expanded = pair_id in self._expanded_group_pairs
+        visible_rows = (
+            assigned_rows
+            if expanded
+            else assigned_rows[: self.COLLAPSED_GROUP_LIMIT]
+        )
+        for group, account_id in visible_rows:
             row_frame = QFrame()
             row_frame.setObjectName("statusCard")
             row = QHBoxLayout(row_frame)
             row.setContentsMargins(14, 10, 14, 10)
             text = QLabel(str(group.get("title") or group.get("chat_ref") or "Группа"))
             text.setObjectName("statusTitle")
-            details = QLabel(
-                f"Состоят аккаунтов: {int(group.get('joined_count') or 0)}"
-            )
+            details = QLabel(f"Для аккаунта: {account_names[account_id]}")
             details.setObjectName("mutedText")
             remove = QPushButton("Удалить")
             remove.setObjectName("dangerButton")
             remove.clicked.connect(
-                partial(self._remove_group, int(group["id"]))
+                partial(self._remove_group, int(group["id"]), account_id)
             )
             row.addWidget(text, 1)
             row.addWidget(details)
             row.addWidget(remove)
             self.groups_box.addWidget(row_frame)
+        hidden_count = max(0, len(assigned_rows) - self.COLLAPSED_GROUP_LIMIT)
+        if hidden_count > 0:
+            toggle = QPushButton(
+                "Свернуть"
+                if expanded
+                else f"Показать ещё {hidden_count}"
+            )
+            toggle.setObjectName("secondaryButton")
+            toggle.clicked.connect(
+                partial(self._toggle_group_list, pair_id)
+            )
+            self.groups_box.addWidget(toggle, 0, Qt.AlignmentFlag.AlignLeft)
+
+    def _toggle_group_list(self, pair_id: int) -> None:
+        owner = int(pair_id)
+        if owner in self._expanded_group_pairs:
+            self._expanded_group_pairs.discard(owner)
+        else:
+            self._expanded_group_pairs.add(owner)
+        self._render_groups(
+            [dict(item) for item in self._overview.get("groups") or []]
+        )
 
     def _proxy_widget(self, account: dict[str, Any]) -> QWidget:
         container = QWidget()
@@ -528,7 +626,7 @@ class WarmupView(QWidget):
             if proxy.get("username_masked"):
                 value += f" · логин {proxy['username_masked']}"
         else:
-            value = "Настройте отдельный прокси во вкладке «Аккаунт»"
+            value = "Рекомендуется настроить отдельный прокси во вкладке «Аккаунт»"
         label = QLabel(value)
         label.setObjectName("mutedText")
         label.setWordWrap(True)
@@ -592,6 +690,29 @@ class WarmupView(QWidget):
         state_map: dict[int, dict[str, Any]],
     ) -> None:
         self._clear_layout(self.pairs_box)
+        self._journal_views.clear()
+        previous_pair_id = int(
+            self._selected_pair_id or self.pair_selector.currentData() or 0
+        )
+        self.pair_selector.blockSignals(True)
+        self.pair_selector.clear()
+        for pair in pairs:
+            pair_id = int(pair["id"])
+            left = str(pair.get("account_a_name") or "Аккаунт A")
+            right = str(pair.get("account_b_name") or "Аккаунт B")
+            status = _STATUS_LABELS.get(
+                str(pair.get("status") or ""), str(pair.get("status") or "")
+            )
+            self.pair_selector.addItem(
+                f"Связка {pair_id}: {left} ↔ {right} · {status}", pair_id
+            )
+        pair_index = self.pair_selector.findData(previous_pair_id)
+        self.pair_selector.setCurrentIndex(
+            pair_index if pair_index >= 0 else (0 if pairs else -1)
+        )
+        selected_pair_id = int(self.pair_selector.currentData() or 0)
+        self._selected_pair_id = selected_pair_id if selected_pair_id > 0 else None
+        self.pair_selector.blockSignals(False)
         if not pairs:
             empty = QFrame()
             empty.setObjectName("card")
@@ -601,7 +722,21 @@ class WarmupView(QWidget):
             layout.addWidget(label)
             self.pairs_box.addWidget(empty)
             return
-        for pair in pairs:
+        selected_pair = next(
+            (
+                pair
+                for pair in pairs
+                if int(pair.get("id") or 0) == selected_pair_id
+            ),
+            pairs[0],
+        )
+        self.load_groups_a_button.setText(
+            f"Группы: {str(selected_pair.get('account_a_name') or 'Аккаунт A')[:24]}"
+        )
+        self.load_groups_b_button.setText(
+            f"Группы: {str(selected_pair.get('account_b_name') or 'Аккаунт B')[:24]}"
+        )
+        for pair in (selected_pair,):
             pair_id = int(pair["id"])
             status = str(pair.get("status") or "")
             card = QFrame()
@@ -652,11 +787,7 @@ class WarmupView(QWidget):
             profile.setObjectName("mutedText")
             profile.setWordWrap(True)
             layout.addWidget(profile)
-            if pair.get("last_error"):
-                error = QLabel(str(pair["last_error"]))
-                error.setObjectName("dangerText")
-                error.setWordWrap(True)
-                layout.addWidget(error)
+            layout.addWidget(self._journal_card(pair))
 
             accounts_row = QHBoxLayout()
             account_a = dict(state_map.get(int(pair["account_a_id"]), {}))
@@ -696,15 +827,14 @@ class WarmupView(QWidget):
                 uncertain_steps = int(pair.get("uncertain_steps") or 0)
                 failed_steps = int(pair.get("failed_steps") or 0)
                 if uncertain_steps <= 0:
-                    resume = QPushButton("Продолжить")
+                    resume = QPushButton(
+                        "Повторить ошибочный шаг и продолжить"
+                        if failed_steps > 0
+                        else "Продолжить"
+                    )
                     resume.setObjectName("primaryButton")
                     resume.clicked.connect(partial(self._resume_pair, pair_id))
                     actions.addWidget(resume)
-                if failed_steps > 0 and uncertain_steps <= 0:
-                    retry = QPushButton("Повторить безопасно завершившийся шаг")
-                    retry.setObjectName("secondaryButton")
-                    retry.clicked.connect(partial(self._retry_pair, pair_id))
-                    actions.addWidget(retry)
                 if uncertain_steps > 0:
                     uncertain_note = QLabel(
                         "Telegram не подтвердил результат. Автоматический повтор отключён."
@@ -712,6 +842,12 @@ class WarmupView(QWidget):
                     uncertain_note.setObjectName("dangerText")
                     uncertain_note.setWordWrap(True)
                     actions.addWidget(uncertain_note, 1)
+                archive = QPushButton(
+                    "Завершить связку и освободить аккаунты"
+                )
+                archive.setObjectName("dangerButton")
+                archive.clicked.connect(partial(self._archive_pair, pair_id))
+                actions.addWidget(archive)
             elif status == "completed":
                 both_completed = (
                     str(account_a.get("warmup_status") or "") == "completed"
@@ -726,6 +862,190 @@ class WarmupView(QWidget):
             layout.addLayout(actions)
             self.pairs_box.addWidget(card)
 
+    @staticmethod
+    def _journal_account(step: dict[str, Any], prefix: str) -> str:
+        name = str(step.get(f"{prefix}_name") or "Telegram-аккаунт")
+        username = str(step.get(f"{prefix}_username") or "").strip()
+        return f"{name} @{username}" if username else name
+
+    @classmethod
+    def _journal_action(cls, step: dict[str, Any] | None) -> str:
+        if not step:
+            return "Действий больше нет"
+        actor = cls._journal_account(step, "actor")
+        target = cls._journal_account(step, "target")
+        action = str(step.get("action") or "")
+        if action == "ensure_contact":
+            return f"{actor}: добавить {target} в контакты"
+        if action == "message":
+            typing = int(step.get("typing_seconds") or 0)
+            message = " ".join(str(step.get("message_text") or "").split())
+            preview = (
+                f" · «{message[:90]}{'…' if len(message) > 90 else ''}»"
+                if message
+                else ""
+            )
+            return f"{actor}: сообщение для {target} · печатает {typing} сек{preview}"
+        if action == "private_reaction":
+            return f"{actor}: реакция на сообщение {target}"
+        if action == "group_visit":
+            posts = max(1, int(step.get("posts_to_read") or 1))
+            reaction = " и поставить реакцию" if step.get("should_react") else ""
+            return f"{actor}: посетить группу, прочитать {posts} поста{reaction}"
+        return f"{actor}: {action or 'следующее действие'}"
+
+    @staticmethod
+    def _journal_reason(value: object) -> str:
+        text = " ".join(str(value or "").split())
+        lowered = text.casefold()
+        if "not authorized" in lowered or "authorization_required" in lowered:
+            return "Аккаунт не авторизован. Повторно войдите в Telegram во вкладке «Аккаунт»."
+        if "network unavailable" in lowered or "connection failed" in lowered:
+            return "Telegram-соединение было недоступно после трёх попыток."
+        return text
+
+    def _journal_card(self, pair: dict[str, Any]) -> QFrame:
+        pair_id = int(pair["id"])
+        activity = dict(pair.get("activity") or {})
+        focus = dict(activity.get("focus") or {})
+        upcoming = dict(activity.get("upcoming") or {})
+        last = dict(activity.get("last") or {})
+
+        card = QFrame()
+        card.setObjectName("infoCard")
+        journal = QVBoxLayout(card)
+        journal.setContentsMargins(16, 13, 16, 13)
+        journal.setSpacing(7)
+
+        header = QHBoxLayout()
+        title = QLabel("ЖИВОЙ ЖУРНАЛ")
+        title.setObjectName("activityTitle")
+        badge = QLabel()
+        badge.setObjectName("activityBadge")
+        header.addWidget(title)
+        header.addWidget(badge)
+        header.addStretch(1)
+        journal.addLayout(header)
+
+        current = QLabel()
+        current.setObjectName("statusTitle")
+        current.setWordWrap(True)
+        countdown = QLabel()
+        countdown.setObjectName("activityNext")
+        countdown.setWordWrap(True)
+        following = QLabel()
+        following.setObjectName("mutedText")
+        following.setWordWrap(True)
+        previous = QLabel()
+        previous.setObjectName("mutedText")
+        previous.setWordWrap(True)
+        reason = QLabel()
+        reason.setObjectName("dangerText")
+        reason.setWordWrap(True)
+
+        journal.addWidget(current)
+        journal.addWidget(countdown)
+        journal.addWidget(following)
+        journal.addWidget(previous)
+        journal.addWidget(reason)
+        self._journal_views[pair_id] = {
+            "pair": dict(pair),
+            "focus": focus,
+            "upcoming": upcoming,
+            "last": last,
+            "badge": badge,
+            "current": current,
+            "countdown": countdown,
+            "following": following,
+            "previous": previous,
+            "reason": reason,
+        }
+        self._update_journal_view(pair_id)
+        return card
+
+    def _update_journal_view(self, pair_id: int) -> None:
+        view = self._journal_views.get(int(pair_id))
+        if not view:
+            return
+        pair = dict(view["pair"])
+        focus = dict(view["focus"])
+        upcoming = dict(view["upcoming"])
+        last = dict(view["last"])
+        pair_status = str(pair.get("status") or "")
+        step_status = str(focus.get("status") or "")
+
+        if pair_status == "completed":
+            badge_text = "Завершено"
+            current_text = "Сейчас: недельный сценарий завершён"
+        elif step_status == "running":
+            badge_text = "Выполняется сейчас"
+            current_text = "Сейчас: " + self._journal_action(focus)
+        elif step_status == "failed":
+            badge_text = "Ошибка — безопасный повтор"
+            current_text = "Ошибочный шаг: " + self._journal_action(focus)
+        elif step_status == "uncertain":
+            badge_text = "Нужно решение"
+            current_text = "Неподтверждённый шаг: " + self._journal_action(focus)
+        elif pair_status == "paused":
+            badge_text = "На паузе"
+            current_text = "Сейчас: связка ожидает продолжения"
+        else:
+            badge_text = "Ожидание"
+            current_text = "Следующее действие: " + self._journal_action(focus)
+        view["badge"].setText(badge_text)
+        view["current"].setText(current_text)
+
+        deadline = focus.get("task_not_before") or focus.get("scheduled_at")
+        if step_status == "running":
+            countdown_text = "Таймер: действие выполняется сейчас"
+        elif step_status == "failed":
+            countdown_text = "Таймер: повтор начнётся только после нажатия кнопки"
+        elif step_status == "uncertain":
+            countdown_text = "Таймер: автоматический повтор отключён"
+        elif pair_status == "paused":
+            countdown_text = "Таймер остановлен до продолжения связки"
+        elif focus:
+            countdown_text = countdown_label(
+                "До следующего действия",
+                deadline,
+                include_deadline=True,
+                include_date=True,
+                due_text="готовится к запуску…",
+            )
+        else:
+            countdown_text = "Следующих действий нет"
+        view["countdown"].setText(countdown_text)
+
+        view["following"].setText(
+            "После него: " + self._journal_action(upcoming)
+            if upcoming
+            else "После него: действий пока нет"
+        )
+        if last:
+            completed_at = from_db_time(last.get("completed_at"))
+            completed = (
+                completed_at.astimezone().strftime("%d.%m %H:%M:%S")
+                if completed_at is not None
+                else "время не записано"
+            )
+            view["previous"].setText(
+                f"Последнее выполненное: {self._journal_action(last)} · {completed}"
+            )
+        else:
+            view["previous"].setText("Последнее выполненное: действий ещё не было")
+
+        reason = self._journal_reason(
+            focus.get("result_text")
+            or focus.get("task_error")
+            or pair.get("last_error")
+        )
+        view["reason"].setText(f"Причина остановки: {reason}" if reason else "")
+        view["reason"].setVisible(bool(reason) and pair_status == "paused")
+
+    def _update_journal_countdowns(self) -> None:
+        for pair_id in tuple(self._journal_views):
+            self._update_journal_view(pair_id)
+
     def _create_pair(self) -> None:
         account_a = int(self.account_a.currentData() or 0)
         account_b = int(self.account_b.currentData() or 0)
@@ -734,8 +1054,18 @@ class WarmupView(QWidget):
             return
         self._run(lambda: self.adapter.create_warmup_pair(account_a, account_b))
 
-    def _load_synced_groups(self) -> None:
-        account_id = int(self.existing_account_selector.currentData() or 0)
+    def _load_pair_groups(self, side: str) -> None:
+        pair = self._selected_pair()
+        if pair is None:
+            QMessageBox.warning(self, "Прогрев", "Сначала выберите связку")
+            return
+        key = "account_a_id" if side == "a" else "account_b_id"
+        name_key = "account_a_name" if side == "a" else "account_b_name"
+        account_id = int(pair.get(key) or 0)
+        account_name = str(pair.get(name_key) or ("Аккаунт A" if side == "a" else "Аккаунт B"))
+        self._load_synced_groups(account_id, account_name)
+
+    def _load_synced_groups(self, account_id: int, account_name: str) -> None:
         if account_id <= 0:
             QMessageBox.warning(
                 self,
@@ -744,7 +1074,7 @@ class WarmupView(QWidget):
             )
             return
         self.groups_status.setText(
-            "Подбираем 3–4 канала/группы из синхронизированного списка…"
+            f"Подбираем 3–4 группы для аккаунта {account_name}…"
         )
 
         def applied(value: Any) -> None:
@@ -756,11 +1086,11 @@ class WarmupView(QWidget):
                 self.groups_status.setText(message)
             elif bool(result.get("limited")):
                 self.groups_status.setText(
-                    f"Найдено только {available}; добавлено всё доступное: {selected}"
+                    f"{account_name}: найдено только {available}; добавлено: {selected}"
                 )
             else:
                 self.groups_status.setText(
-                    f"Подобрано каналов/групп: {selected} · доступно для выбора: {available}"
+                    f"{account_name}: подобрано {selected} · доступно: {available}"
                 )
 
         self._run(
@@ -769,31 +1099,84 @@ class WarmupView(QWidget):
         )
 
     def _add_group(self) -> None:
+        pair = self._selected_pair()
+        if pair is None:
+            QMessageBox.warning(self, "Прогрев", "Сначала выберите связку")
+            return
+        choices = [
+            (
+                str(pair.get("account_a_name") or "Аккаунт A"),
+                int(pair["account_a_id"]),
+            ),
+            (
+                str(pair.get("account_b_name") or "Аккаунт B"),
+                int(pair["account_b_id"]),
+            ),
+        ]
+        account_name, account_selected = QInputDialog.getItem(
+            self,
+            "Аккаунт группы",
+            "Для какого аккаунта добавить группу:",
+            [name for name, _account_id in choices],
+            0,
+            False,
+        )
+        if not account_selected:
+            return
+        account_id = next(
+            account_id for name, account_id in choices if name == account_name
+        )
         value, accepted = QInputDialog.getText(
             self,
             "Добавить группу для прогрева",
             "Ссылка Telegram или @username:",
         )
         if accepted and str(value).strip():
-            self._run(lambda: self.adapter.add_warmup_group(str(value).strip()))
+            self._run(
+                lambda: self.adapter.add_warmup_group(
+                    str(value).strip(), account_id
+                )
+            )
 
-    def _remove_group(self, group_id: int) -> None:
+    def _remove_group(self, group_id: int, account_id: int) -> None:
         if QMessageBox.question(
             self,
             "Удалить группу",
-            "Удалить группу из списка прогрева?",
+            "Удалить группу только из списка этого аккаунта?",
         ) != QMessageBox.StandardButton.Yes:
             return
-        self._run(lambda: self.adapter.remove_warmup_group(group_id))
+        self._run(lambda: self.adapter.remove_warmup_group(group_id, account_id))
 
     def _pause_pair(self, pair_id: int) -> None:
         self._run(lambda: self.adapter.pause_warmup_pair(pair_id))
 
     def _resume_pair(self, pair_id: int) -> None:
-        self._run(lambda: self.adapter.resume_warmup_pair(pair_id))
+        def applied(changed: Any) -> None:
+            if not bool(changed):
+                QMessageBox.warning(
+                    self,
+                    "Прогрев",
+                    "Связку нельзя продолжить автоматически: проверьте шаг с неизвестным результатом.",
+                )
+
+        self._run(
+            lambda: self.adapter.resume_warmup_pair(pair_id),
+            success=applied,
+        )
 
     def _retry_pair(self, pair_id: int) -> None:
         self._run(lambda: self.adapter.retry_failed_warmup_pair(pair_id))
+
+    def _archive_pair(self, pair_id: int) -> None:
+        if QMessageBox.question(
+            self,
+            "Завершить связку",
+            "Архивировать приостановленную связку и освободить оба аккаунта? "
+            "Невыполненные шаги будут отменены; действия с неизвестным "
+            "результатом не будут повторены.",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self._run(lambda: self.adapter.archive_paused_warmup_pair(pair_id))
 
     def _extend_pair(self, pair_id: int) -> None:
         self._run(lambda: self.adapter.extend_warmup_pair(pair_id))
@@ -825,9 +1208,11 @@ class WarmupView(QWidget):
         self._page_active = bool(active)
         if active:
             self.refresh_timer.start()
+            self.journal_timer.start()
             self.refresh(force=True)
         else:
             self.refresh_timer.stop()
+            self.journal_timer.stop()
 
     def set_compact_mode(self, compact: bool) -> None:
         self._compact = bool(compact)
@@ -837,3 +1222,4 @@ class WarmupView(QWidget):
             layout.setContentsMargins(margin, 22, margin, 26)
     def shutdown(self) -> None:
         self.refresh_timer.stop()
+        self.journal_timer.stop()

@@ -93,6 +93,80 @@ class WarmupRepositoryMixin(_MixinHost):
         except Exception as exc:
             raise DatabaseError(f"Failed to read warmup pair: {exc}") from exc
 
+    def list_warmup_pair_activity(self) -> list[dict[str, Any]]:
+        """Return the last, current and following step for every visible pair."""
+
+        try:
+            with self.get_connection() as conn:
+                rows = conn.execute(
+                    """WITH unfinished AS (
+                           SELECT s.id AS step_id, s.pair_id,
+                                  ROW_NUMBER() OVER (
+                                      PARTITION BY s.pair_id
+                                      ORDER BY s.sequence_no
+                                  ) AS position
+                           FROM warmup_steps s
+                           JOIN warmup_pairs p
+                             ON p.id=s.pair_id AND p.week_number=s.week_number
+                           WHERE s.status IN ('pending','running','failed','uncertain')
+                       ),
+                       finished AS (
+                           SELECT s.id AS step_id, s.pair_id,
+                                  ROW_NUMBER() OVER (
+                                      PARTITION BY s.pair_id
+                                      ORDER BY s.sequence_no DESC
+                                  ) AS position
+                           FROM warmup_steps s
+                           JOIN warmup_pairs p
+                             ON p.id=s.pair_id AND p.week_number=s.week_number
+                           WHERE s.status IN ('done','skipped')
+                       ),
+                       snapshots AS (
+                           SELECT pair_id, step_id,
+                                  CASE position
+                                      WHEN 1 THEN 'focus'
+                                      ELSE 'upcoming'
+                                  END AS snapshot_kind
+                           FROM unfinished WHERE position<=2
+                           UNION ALL
+                           SELECT pair_id, step_id, 'last' AS snapshot_kind
+                           FROM finished WHERE position=1
+                       )
+                       SELECT snapshots.pair_id, snapshots.snapshot_kind,
+                              s.id AS step_id, s.sequence_no, s.day_number,
+                              s.scenario_key, s.action, s.actor_account_id,
+                              s.target_account_id, s.scheduled_at, s.status,
+                              s.message_text, s.typing_seconds,
+                              s.posts_to_read, s.should_react,
+                              s.result_text, s.started_at, s.completed_at,
+                              actor.display_name AS actor_name,
+                              actor.username AS actor_username,
+                              target.display_name AS target_name,
+                              target.username AS target_username,
+                              t.status AS task_status,
+                              t.status_text AS task_status_text,
+                              t.not_before AS task_not_before,
+                              t.error AS task_error
+                       FROM snapshots
+                       JOIN warmup_steps s ON s.id=snapshots.step_id
+                       JOIN telegram_accounts actor
+                         ON actor.telegram_account_id=s.actor_account_id
+                       LEFT JOIN telegram_accounts target
+                         ON target.telegram_account_id=s.target_account_id
+                       LEFT JOIN tasks t ON t.id=s.queue_task_id
+                       ORDER BY snapshots.pair_id,
+                                CASE snapshots.snapshot_kind
+                                    WHEN 'last' THEN 0
+                                    WHEN 'focus' THEN 1
+                                    ELSE 2
+                                END"""
+                ).fetchall()
+                return [dict(row) for row in rows]
+        except Exception as exc:
+            raise DatabaseError(
+                f"Failed to list warmup pair activity: {exc}"
+            ) from exc
+
     def list_active_warmup_pairs(self) -> list[dict[str, Any]]:
         try:
             with self.get_connection() as conn:
@@ -109,7 +183,8 @@ class WarmupRepositoryMixin(_MixinHost):
             with self.get_connection() as conn:
                 rows = conn.execute(
                     """SELECT g.*,
-                              COUNT(ga.account_id) AS account_count,
+                              COUNT(DISTINCT ga.account_id) AS account_count,
+                              GROUP_CONCAT(DISTINCT ga.account_id) AS assigned_account_ids,
                               COALESCE(SUM(CASE WHEN ga.membership_state='joined' THEN 1 ELSE 0 END),0)
                                   AS joined_count
                        FROM warmup_groups g
@@ -156,6 +231,64 @@ class WarmupRepositoryMixin(_MixinHost):
                 return int(cursor.rowcount or 0) == 1
         except Exception as exc:
             raise DatabaseError(f"Failed to remove warmup group: {exc}") from exc
+
+    def assign_warmup_group_to_account(
+        self,
+        group_id: object,
+        account_id: object,
+        *,
+        membership_state: str = "unknown",
+    ) -> None:
+        group_owner = _positive(group_id, "group_id")
+        account_owner = _positive(account_id, "account_id")
+        state = str(membership_state or "unknown")
+        if state not in {"unknown", "joined", "requested", "unavailable", "blocked"}:
+            state = "unknown"
+        try:
+            with self.get_connection() as conn:
+                conn.execute(
+                    """INSERT INTO warmup_group_accounts(
+                           group_id,account_id,membership_state,updated_at)
+                       VALUES(?,?,?,CURRENT_TIMESTAMP)
+                       ON CONFLICT(group_id,account_id) DO UPDATE SET
+                           membership_state=CASE
+                               WHEN excluded.membership_state='unknown'
+                               THEN warmup_group_accounts.membership_state
+                               WHEN warmup_group_accounts.membership_state IN ('blocked','unavailable')
+                               THEN warmup_group_accounts.membership_state
+                               ELSE excluded.membership_state
+                           END,
+                           updated_at=CURRENT_TIMESTAMP""",
+                    (group_owner, account_owner, state),
+                )
+        except Exception as exc:
+            raise DatabaseError(f"Failed to assign warmup group to account: {exc}") from exc
+
+    def remove_warmup_group_from_account(
+        self, group_id: object, account_id: object
+    ) -> bool:
+        group_owner = _positive(group_id, "group_id")
+        account_owner = _positive(account_id, "account_id")
+        try:
+            with self.get_connection() as conn:
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
+                removed = conn.execute(
+                    "DELETE FROM warmup_group_accounts WHERE group_id=? AND account_id=?",
+                    (group_owner, account_owner),
+                )
+                if int(removed.rowcount or 0) == 1:
+                    conn.execute(
+                        """DELETE FROM warmup_groups WHERE id=?
+                           AND NOT EXISTS(
+                               SELECT 1 FROM warmup_group_accounts WHERE group_id=?
+                           )""",
+                        (group_owner, group_owner),
+                    )
+                    return True
+                return False
+        except Exception as exc:
+            raise DatabaseError(f"Failed to remove account warmup group: {exc}") from exc
 
     def _ensure_pair_accounts_available(self, conn, account_ids: tuple[int, int]) -> None:
         placeholders = ",".join("?" for _ in account_ids)
@@ -908,6 +1041,69 @@ class WarmupRepositoryMixin(_MixinHost):
         except Exception as exc:
             raise DatabaseError(f"Failed to retry warmup step: {exc}") from exc
 
+    def archive_paused_warmup_pair(self, pair_id: object) -> dict[str, Any]:
+        """Archive a paused pair without replaying any Telegram operation."""
+        owner = _positive(pair_id, "pair_id")
+        try:
+            with self.get_connection() as conn:
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
+                pair = conn.execute(
+                    "SELECT * FROM warmup_pairs WHERE id=?", (owner,)
+                ).fetchone()
+                if pair is None or str(pair["status"] or "") != "paused":
+                    raise DatabaseError("Only a paused warmup pair can be archived")
+                reason = (
+                    "Archived by operator; unfinished steps cancelled without replay"
+                )
+                conn.execute(
+                    """UPDATE tasks SET status='cancelled', error=?, updated_at=CURRENT_TIMESTAMP
+                       WHERE id IN (SELECT queue_task_id FROM warmup_steps
+                                    WHERE pair_id=?
+                                      AND status IN ('pending','running','failed','uncertain')
+                                      AND queue_task_id IS NOT NULL)
+                          AND status IN ('pending','running')""",
+                    (reason, owner),
+                )
+                conn.execute(
+                    """UPDATE warmup_steps
+                       SET status='cancelled', queue_task_id=NULL, result_text=?,
+                            completed_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+                       WHERE pair_id=?
+                         AND status IN ('pending','running','failed','uncertain')""",
+                    (reason, owner),
+                )
+                changed = conn.execute(
+                    """UPDATE warmup_pairs SET status='archived', last_error=?,
+                              updated_at=CURRENT_TIMESTAMP
+                       WHERE id=? AND status='paused'""",
+                    (reason, owner),
+                )
+                if int(changed.rowcount or 0) != 1:
+                    raise DatabaseError("Warmup pair state changed while archiving")
+                account_ids = (
+                    int(pair["account_a_id"]),
+                    int(pair["account_b_id"]),
+                )
+                conn.execute(
+                    """UPDATE warmup_accounts
+                       SET status='available', active_pair_id=NULL,
+                           updated_at=CURRENT_TIMESTAMP
+                       WHERE active_pair_id=? AND account_id IN (?,?)""",
+                    (owner, *account_ids),
+                )
+                return {
+                    "pair_id": owner,
+                    "status": "archived",
+                    "account_ids": list(account_ids),
+                }
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError(
+                f"Failed to archive paused warmup pair: {exc}"
+            ) from exc
+
     def transfer_warmup_account(self, account_id: object) -> dict[str, Any]:
         owner = _positive(account_id, "account_id")
         try:
@@ -966,7 +1162,7 @@ class WarmupRepositoryMixin(_MixinHost):
                               ga.membership_state, ga.last_read_message_id,
                               ga.last_reacted_message_id, ga.last_visited_at
                        FROM warmup_groups g
-                       LEFT JOIN warmup_group_accounts ga
+                       JOIN warmup_group_accounts ga
                          ON ga.group_id=g.id AND ga.account_id=?
                        WHERE g.enabled=1
                          AND COALESCE(ga.membership_state,'unknown') NOT IN ('blocked','unavailable')
@@ -1088,4 +1284,3 @@ class WarmupRepositoryMixin(_MixinHost):
             raise
         except Exception as exc:
             raise DatabaseError(f"Failed to recover stale warmup steps: {exc}") from exc
-

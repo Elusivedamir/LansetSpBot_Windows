@@ -69,7 +69,13 @@ class AccountHealthCard(QFrame):
         self.diagnostic_result.setObjectName("mutedText")
         self.diagnostic_result.setWordWrap(True)
         layout.addWidget(self.diagnostic_result)
-        QTimer.singleShot(0, self.refresh)
+        # A static singleShot keeps the Python bound method alive even after
+        # Qt has deleted this card.  A child timer is destroyed with the card,
+        # so a queued first refresh cannot touch deleted widgets later.
+        self._initial_refresh_timer = QTimer(self)
+        self._initial_refresh_timer.setSingleShot(True)
+        self._initial_refresh_timer.timeout.connect(self.refresh)
+        self._initial_refresh_timer.start(0)
 
     def _account_id(self) -> int:
         for name in ("get_selected_account_id", "get_current_account_id"):
