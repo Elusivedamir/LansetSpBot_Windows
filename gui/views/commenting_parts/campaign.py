@@ -186,6 +186,48 @@ class CommentingCampaignMixin:
         )
         self.save_status.style().unpolish(self.save_status)
         self.save_status.style().polish(self.save_status)
+    @staticmethod
+    def _format_campaign_preview(preview: dict) -> str:
+        session_ready = preview.get("session_ready")
+        if session_ready is True:
+            session_text = "готова"
+        elif session_ready is False:
+            session_text = "требует повторной авторизации"
+        else:
+            session_text = "не проверена"
+        if not preview.get("proxy_enabled"):
+            proxy_text = "не используется"
+        elif preview.get("proxy_ready"):
+            endpoint = str(preview.get("proxy_endpoint") or "").strip()
+            proxy_text = f"{preview.get('proxy_type') or 'PROXY'} {endpoint}".strip()
+        else:
+            proxy_text = "включён, но адрес/порт заполнены не полностью"
+        source_text = (
+            "OpenAI"
+            if str(preview.get("comment_source") or "") == SOURCE_OPENAI
+            else "готовые тексты"
+        )
+        cycle_text = (
+            "автопродление включено"
+            if preview.get("continuous")
+            else "один цикл"
+        )
+        return (
+            "Предпросмотр кампании. Telegram-операции ещё не выполнялись.\n\n"
+            f"Аккаунт: {preview.get('account_display_name') or preview.get('account_id')} "
+            f"(ID {preview.get('account_id')})\n"
+            f"Сессия: {session_text} · state={preview.get('runtime_state') or 'unknown'}\n"
+            f"Прокси: {proxy_text}\n"
+            f"Готовых целей: {preview.get('linked_channel_count', 0)}\n"
+            f"Доступно после cooldown: {preview.get('eligible_channel_count', 0)}\n"
+            f"Слотов будет создано: {preview.get('planned_count', 0)}\n"
+            f"Максимум Telegram-отправок: {preview.get('telegram_mutation_count', 0)}\n"
+            f"JOIN в этой кампании: {preview.get('planned_join_count', 0)}\n"
+            f"Источник: {source_text} · вариантов: {preview.get('comment_variant_count', 0)}\n"
+            f"Период: {preview.get('duration_hours', 24)} ч · {cycle_text}\n\n"
+            "Запустить кампанию?"
+        )
+
     def start_campaign(self):
         self.limit_save_timer.stop()
         current = self.adapter.get_comment_campaign_state()
@@ -219,8 +261,6 @@ class CommentingCampaignMixin:
                 "Выберите количество комментариев в сутки от 1 до 1000",
             )
             return
-        if not self._save_daily_limit(account_id=account_id):
-            return
         source = self._current_comment_source()
         all_comments = self._all_comments()
         comments = [text for text in all_comments if text]
@@ -242,6 +282,27 @@ class CommentingCampaignMixin:
                 "Нет рабочих целей",
                 "Сначала получите каналы и группы, затем выполните проверку во вкладке «Связки»",
             )
+            return
+        try:
+            preview = self.adapter.preview_comment_campaign(
+                all_comments,
+                continuous=self.continuous.isChecked(),
+                daily_limit=daily_limit,
+                comment_source=source,
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, APP_NAME, str(exc))
+            return
+        answer = QMessageBox.question(
+            self,
+            "Предпросмотр кампании",
+            self._format_campaign_preview(dict(preview or {})),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if not self._save_daily_limit(account_id=account_id):
             return
         try:
             campaign = self.adapter.start_comment_campaign(
@@ -523,12 +584,13 @@ class CommentingCampaignMixin:
                 if channel_id is not None
                 else "—",
                 str(item.get("post_id") or "обычное сообщение"),
+                str(item.get("comment_message_id") or "—"),
                 str(item.get("comment_text") or "—"),
                 humanize_reason(item.get("status")),
             ]
             for column, value in enumerate(values):
                 widget_item = QTableWidgetItem(value)
-                if column == 1:
+                if column in {1, 2}:
                     widget_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(row, column, widget_item)
     def _set_buttons(self, status: str):

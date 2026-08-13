@@ -114,10 +114,18 @@ class CommentHistoryMixin(_MixinHost):
                 if campaign_id is not None:
                     campaign_key = int(campaign_id)
                     rows = conn.execute(
-                        """SELECT id, account_id, task_id, campaign_id, slot_id, channel_id, post_id,
-                                  comment_text, sent_at, status
-                           FROM comment_history
-                           WHERE account_id=? AND campaign_id=? ORDER BY id ASC LIMIT ?""",
+                        """SELECT h.id, h.account_id, h.task_id, h.campaign_id, h.slot_id,
+                                  h.channel_id, h.post_id, h.comment_text, h.sent_at, h.status,
+                                  d.comment_message_id
+                           FROM comment_history h
+                           LEFT JOIN comment_deliveries d
+                             ON d.account_id=h.account_id
+                            AND d.campaign_id=COALESCE(h.campaign_id, 0)
+                            AND d.channel_id=h.channel_id
+                            AND d.post_id=h.post_id
+                            AND d.status='sent'
+                           WHERE h.account_id=? AND h.campaign_id=?
+                           ORDER BY h.id ASC LIMIT ?""",
                         (owner_account_id, campaign_key, history_limit),
                     ).fetchall()
                     history = [dict(row) for row in rows]
@@ -135,9 +143,15 @@ class CommentHistoryMixin(_MixinHost):
                             """SELECT s.id AS slot_id, s.task_id, s.channel_id, s.post_id,
                                       s.selected_text AS comment_text,
                                       s.executed_at AS sent_at, s.result,
-                                      s.status AS slot_status
+                                      s.status AS slot_status, d.comment_message_id
                                FROM comment_schedule s
                                JOIN comment_campaigns c ON c.id=s.campaign_id
+                               LEFT JOIN comment_deliveries d
+                                 ON d.account_id=c.account_id
+                                AND d.campaign_id=s.campaign_id
+                                AND d.channel_id=s.channel_id
+                                AND d.post_id=s.post_id
+                                AND d.status='sent'
                                WHERE c.account_id=? AND s.campaign_id=?
                                  AND s.executed_at IS NOT NULL
                                  AND s.status IN (
@@ -161,6 +175,7 @@ class CommentHistoryMixin(_MixinHost):
                                     "slot_id": slot_id,
                                     "channel_id": row["channel_id"],
                                     "post_id": row["post_id"],
+                                    "comment_message_id": row["comment_message_id"],
                                     "comment_text": row["comment_text"],
                                     "sent_at": row["sent_at"],
                                     "status": str(

@@ -315,7 +315,7 @@ async def test_worker_defers_telegram_tasks_when_secret_store_is_unavailable(tmp
         assert raised.value.code == "secret_store_unavailable"
         assert raised.value.retry_after == 120
     finally:
-        cleanup()
+        await cleanup()
 
 
 def test_get_settings_does_not_mask_locked_secret_store(tmp_path):

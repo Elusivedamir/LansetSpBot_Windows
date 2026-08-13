@@ -401,9 +401,15 @@ class CommentingView(CommentingDailyLimitMixin, CommentingOpenAIMixin, Commentin
 
         history_title = QLabel("История текущей кампании")
         history_title.setObjectName("cardTitle")
-        self.table = QTableWidget(0, 4)
+        self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(
-            ["Канал / группа", "Пост / режим", "Текст", "Результат"]
+            [
+                "Канал / группа",
+                "Пост / режим",
+                "ID комментария",
+                "Текст",
+                "Результат",
+            ]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -415,10 +421,13 @@ class CommentingView(CommentingDailyLimitMixin, CommentingOpenAIMixin, Commentin
             1, QHeaderView.ResizeMode.ResizeToContents
         )
         self.table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.Stretch
+            2, QHeaderView.ResizeMode.ResizeToContents
         )
         self.table.horizontalHeader().setSectionResizeMode(
             3, QHeaderView.ResizeMode.Stretch
+        )
+        self.table.horizontalHeader().setSectionResizeMode(
+            4, QHeaderView.ResizeMode.Stretch
         )
         self.history_filter.currentIndexChanged.connect(self._rerender_history)
 

@@ -178,6 +178,16 @@ class GUIServiceAdapter:
             account_id=account_id,
         )
 
+    def preview_comment_campaign(
+        self, comments, continuous=True, daily_limit=None, comment_source="prepared"
+    ):
+        return self.api.preview_comment_campaign(
+            comments,
+            continuous=continuous,
+            daily_limit=daily_limit,
+            comment_source=comment_source,
+        )
+
     def start_comment_campaign(
         self, comments, continuous=True, daily_limit=None, comment_source="prepared"
     ):

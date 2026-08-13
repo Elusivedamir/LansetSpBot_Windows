@@ -54,6 +54,151 @@ class CommentCampaignAPIMixin(_MixinHost):
             "max_generation_attempts": settings.max_generation_attempts,
         }
 
+    @staticmethod
+    def _preview_setting_enabled(value: Any) -> bool:
+        return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    def preview_comment_campaign(
+        self,
+        comments: list[str],
+        *,
+        continuous: bool = True,
+        daily_limit: int | None = None,
+        comment_source: str = "prepared",
+    ) -> dict[str, Any]:
+        """Build a read-only launch plan without campaign/task/delivery writes."""
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in comments[:MAX_COMMENT_VARIANTS]:
+            text = str(raw).strip() if isinstance(raw, str) else ""
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        source = normalize_comment_source(comment_source)
+        if not normalized:
+            raise ValueError("Добавьте хотя бы один комментарий")
+
+        openai_public = dict(self.database.get_settings("openai."))
+        openai_prompt = str(
+            openai_public.get("openai.system_prompt")
+            or DEFAULT_OPENAI_SYSTEM_PROMPT
+        ).strip()
+        if source == SOURCE_OPENAI:
+            key_reader = getattr(self, "_strict_openai_key", None)
+            if not callable(key_reader) or not str(key_reader() or "").strip():
+                raise ValueError("Сначала сохраните API-ключ OpenAI")
+            if not openai_prompt:
+                raise ValueError("System-промпт OpenAI не задан")
+
+        restriction = get_account_restriction_state(self.database)
+        if restriction.get("active"):
+            raise ValueError(
+                "Отправки заблокированы после ограничения Telegram. "
+                "Проверьте состояние аккаунта вручную в Telegram."
+            )
+
+        raw_limit = self.get_comment_daily_limit() if daily_limit is None else daily_limit
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(
+                "Выберите количество комментариев в сутки от 1 до 1000"
+            ) from exc
+        if limit <= 0 or limit > 1000:
+            raise ValueError("Выберите количество комментариев в сутки от 1 до 1000")
+
+        account_id = int(self.database.get_setting("telegram.account_id", 0) or 0)
+        if account_id <= 0:
+            raise ValueError("Сначала авторизуйте Telegram-аккаунт")
+        if self.database.get_active_comment_campaign():
+            raise ValueError(
+                "Кампания уже запущена. Остановите её перед созданием новой"
+            )
+        if self.database.get_active_join_campaign():
+            raise ValueError("Сначала завершите кампанию вступлений")
+
+        linked_count = int(
+            self.database.count_channels_for_commenting(cooldown_hours=0) or 0
+        )
+        if linked_count <= 0:
+            raise ValueError(
+                "Нет готовых каналов или групп. Сначала получите список "
+                "и выполните вкладку «Связки»"
+            )
+        eligible_count = int(
+            self.database.count_channels_for_commenting(
+                cooldown_hours=self.COMMENT_CHANNEL_COOLDOWN_HOURS
+            )
+            or 0
+        )
+        if eligible_count <= 0:
+            raise ValueError(
+                "Все доступные каналы и группы уже проверялись за последние 24 часа. "
+                "Новые цели можно запустить отдельной кампанией."
+            )
+        planned_count = min(limit, eligible_count)
+
+        account: dict[str, Any] = {}
+        account_reader = getattr(self.database, "get_telegram_account", None)
+        if callable(account_reader):
+            account = dict(account_reader(account_id) or {})
+        session_ready: bool | None = None
+        if account:
+            session_ready = bool(account.get("authorized")) and not bool(
+                account.get("stopped")
+            )
+
+        account_settings: dict[str, Any] = {}
+        settings_reader = getattr(self.database, "get_account_settings", None)
+        if callable(settings_reader):
+            try:
+                account_settings = dict(settings_reader(account_id, "telegram.") or {})
+            except TypeError:
+                account_settings = dict(settings_reader(account_id) or {})
+        proxy_enabled = self._preview_setting_enabled(
+            account_settings.get("telegram.proxy_enabled")
+        )
+        proxy_host = str(account_settings.get("telegram.proxy_host") or "").strip()
+        proxy_port_raw = str(account_settings.get("telegram.proxy_port") or "").strip()
+        try:
+            proxy_port = int(proxy_port_raw) if proxy_port_raw else 0
+        except (TypeError, ValueError, OverflowError):
+            proxy_port = 0
+        proxy_ready = (not proxy_enabled) or bool(proxy_host and proxy_port > 0)
+        proxy_type = str(
+            account_settings.get("telegram.proxy_type") or "SOCKS5"
+        ).upper()
+
+        return {
+            "account_id": account_id,
+            "account_display_name": str(
+                account.get("display_name") or account.get("username") or account_id
+            ),
+            "session_ready": session_ready,
+            "runtime_state": str(account.get("runtime_state") or "unknown"),
+            "proxy_enabled": proxy_enabled,
+            "proxy_ready": proxy_ready,
+            "proxy_type": proxy_type,
+            "proxy_endpoint": (
+                f"{proxy_host}:{proxy_port}"
+                if proxy_enabled and proxy_host and proxy_port > 0
+                else ""
+            ),
+            "linked_channel_count": linked_count,
+            "eligible_channel_count": eligible_count,
+            "requested_daily_limit": limit,
+            "planned_count": planned_count,
+            "telegram_mutation_count": planned_count,
+            "planned_join_count": 0,
+            "comment_variant_count": len(normalized),
+            "comment_source": source,
+            "continuous": bool(continuous),
+            "duration_hours": int(self.campaign_hours),
+            "cooldown_hours": int(self.COMMENT_CHANNEL_COOLDOWN_HOURS),
+        }
+
     def start_comment_campaign(
         self,
         comments: list[str],

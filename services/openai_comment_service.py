@@ -286,6 +286,7 @@ class OpenAICommentService:
                 model=model,
                 instructions=trusted_instructions,
                 input=user_message,
+                store=False,
                 temperature=temperature,
                 max_output_tokens=self._output_token_budget(max_words),
             )

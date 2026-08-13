@@ -100,6 +100,7 @@ async def test_generate_comment_forwards_the_reference_to_the_request() -> None:
     )
     assert MINE in captured["input"]
     assert POST in captured["input"]
+    assert captured["store"] is False
 
 
 # --------------------------------------------------------------------------

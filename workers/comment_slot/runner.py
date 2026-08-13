@@ -40,6 +40,10 @@ from workers.comment_slot.decisions import (
 )
 from workers.comment_slot.finalization import finalize_comment_slot
 from workers.comment_slot.models import CommentSlotPhase
+from workers.comment_slot.policies import (
+    CommentDispatchPolicy,
+    evaluate_comment_dispatch_policies,
+)
 from workers.comment_slot.state import CommentSlotState
 from workers.flood_wait_guard import install_account_flood_wait
 from workers.rpc_boundary import dispatch_barrier_kwargs
@@ -322,21 +326,40 @@ class CommentSlotRunner:
 
     def target_allows_rpc(self, *peer_ids: int | None) -> bool:
         state = self.s
-        latest = self.worker_db.get_comment_campaign(state.campaign_id)
-        if not latest or str(latest.get("status") or "") != "running":
-            return False
-        if get_account_restriction_state(
-            self.worker_db, account_id=state.campaign_account_id
-        ).get("active"):
-            return False
-        checker = getattr(self.worker_db, "is_channel_locally_banned", None)
-        if callable(checker):
+
+        def campaign_is_running() -> bool:
+            latest = self.worker_db.get_comment_campaign(state.campaign_id)
+            return bool(latest) and str(latest.get("status") or "") == "running"
+
+        def account_is_unrestricted() -> bool:
+            return not bool(
+                get_account_restriction_state(
+                    self.worker_db, account_id=state.campaign_account_id
+                ).get("active")
+            )
+
+        def target_peers_are_allowed() -> bool:
+            checker = getattr(self.worker_db, "is_channel_locally_banned", None)
+            if not callable(checker):
+                return True
             for peer_id in peer_ids:
                 if peer_id is not None and checker(
                     int(peer_id), account_id=state.campaign_account_id
                 ) is True:
                     return False
-        return True
+            return True
+
+        return evaluate_comment_dispatch_policies(
+            (
+                CommentDispatchPolicy("campaign_running", campaign_is_running),
+                CommentDispatchPolicy(
+                    "account_unrestricted", account_is_unrestricted
+                ),
+                CommentDispatchPolicy(
+                    "target_peers_allowed", target_peers_are_allowed
+                ),
+            )
+        )
 
     def create_dispatch_barrier(
         self,

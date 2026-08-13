@@ -479,6 +479,7 @@ class TaskQueueAPIMixin(_MixinHost):
         self._campaign_timer.stop()
         self._delivery_recovery_timer.stop()
         self._maintenance_timer.stop()
+        self._warmup_lease_timer.stop()
         worker = self.queue_worker
         with self._queue_lock:
             self._shutdown_requested = True
@@ -533,9 +534,12 @@ class TaskQueueAPIMixin(_MixinHost):
             self._delivery_recovery_timer.start()
         if not self._maintenance_timer.isActive():
             self._maintenance_timer.start()
+        if not self._warmup_lease_timer.isActive():
+            self._warmup_lease_timer.start()
         QTimer.singleShot(0, self._campaign_tick)
         QTimer.singleShot(0, self._reconcile_stale_deliveries)
         QTimer.singleShot(0, self._run_daily_maintenance)
+        QTimer.singleShot(0, self._warmup_lease_tick)
 
     def get_task(self, task_id: int) -> dict[str, Any] | None:
         task = self.database.get_task(task_id)
