@@ -31,8 +31,15 @@ def test_windows_build_log_is_streamed_live_and_persisted() -> None:
 
 def test_cancelled_run_uploads_partial_failure_evidence() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
-    assert "if: ${{ failure() || cancelled() }}" in text
-    assert "dist/ci-proof/**" in text
+    section = text.split("- name: Upload failure evidence", 1)[1].split(
+        "- name: Fail after complete diagnostic pipeline", 1
+    )[0]
+    assert "if: ${{ always() && (" in section
+    assert "failure() || cancelled()" in section
+    assert "steps.runner_proof.outcome == 'failure'" in section
+    assert "steps.windows_build.outcome == 'failure'" in section
+    assert "steps.verify_release.outcome == 'failure'" in section
+    assert "dist/ci-proof/**" in section
 
 
 def test_release_build_announces_long_running_stages() -> None:

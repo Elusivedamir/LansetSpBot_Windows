@@ -131,36 +131,58 @@ class AnalyticsView(QWidget):
         accounts = list(data.get("accounts") or [])
         self.accounts.setRowCount(len(accounts))
         for r, value in enumerate(accounts):
-            row = dict(value or {})
-            values = (row.get("display_name") or row.get("account_id") or "—", row.get("status") or "—",
-                      str(row.get("safety_mode") or "normal").upper(), row.get("safety_recovery") or "—",
-                      row.get("sent_24h") or 0, row.get("errors_24h") or 0,
-                      row.get("flood_wait") or "—", row.get("proxy") or "—")
-            for c, item in enumerate(values):
+            account_row = dict(value or {})
+            account_values = (
+                account_row.get("display_name") or account_row.get("account_id") or "—",
+                account_row.get("status") or "—",
+                str(account_row.get("safety_mode") or "normal").upper(),
+                account_row.get("safety_recovery") or "—",
+                account_row.get("sent_24h") or 0,
+                account_row.get("errors_24h") or 0,
+                account_row.get("flood_wait") or "—",
+                account_row.get("proxy") or "—",
+            )
+            for c, item in enumerate(account_values):
                 self.accounts.setItem(r, c, QTableWidgetItem(str(item)))
         self.accounts.resizeColumnsToContents()
         matrix = list(data.get("heatmap") or [])
         for day in range(7):
-            row = list(matrix[day] if day < len(matrix) else [])
+            heatmap_row = list(matrix[day] if day < len(matrix) else [])
             for hour in range(24):
-                self.heatmap.setItem(day, hour, QTableWidgetItem(str(row[hour] if hour < len(row) else 0)))
+                self.heatmap.setItem(
+                    day,
+                    hour,
+                    QTableWidgetItem(
+                        str(heatmap_row[hour] if hour < len(heatmap_row) else 0)
+                    ),
+                )
         channels = list(data.get("top_channels") or [])
         self.channels.setRowCount(len(channels))
         for r, value in enumerate(channels):
-            row = dict(value or {})
-            for c, item in enumerate((row.get("title") or row.get("channel_id") or "—",
-                                      row.get("channel_id") or "—", row.get("sent") or 0)):
+            channel_row = dict(value or {})
+            for c, item in enumerate(
+                (
+                    channel_row.get("title")
+                    or channel_row.get("channel_id")
+                    or "—",
+                    channel_row.get("channel_id") or "—",
+                    channel_row.get("sent") or 0,
+                )
+            ):
                 self.channels.setItem(r, c, QTableWidgetItem(str(item)))
         self.channels.resizeColumnsToContents()
         events = list(data.get("safety_events") or [])
         self.safety_events.setRowCount(len(events))
         for r, value in enumerate(events):
-            row = dict(value or {})
-            values = (row.get("occurred_at") or "—", row.get("account_id") or "—",
-                      row.get("event_type") or "—",
-                      f"{row.get('from_level') or '—'} → {row.get('to_level') or '—'}",
-                      row.get("code") or "—")
-            for c, item in enumerate(values):
+            event_row = dict(value or {})
+            event_values = (
+                event_row.get("occurred_at") or "—",
+                event_row.get("account_id") or "—",
+                event_row.get("event_type") or "—",
+                f"{event_row.get('from_level') or '—'} → {event_row.get('to_level') or '—'}",
+                event_row.get("code") or "—",
+            )
+            for c, item in enumerate(event_values):
                 self.safety_events.setItem(r, c, QTableWidgetItem(str(item)))
         self.safety_events.resizeColumnsToContents()
 

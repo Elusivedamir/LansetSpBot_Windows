@@ -116,7 +116,7 @@ def _warmup_overview(*, status="running", focus_status="pending", groups=()):
     }
 
 
-def test_main_gui_has_eight_user_pages(monkeypatch, tmp_path):
+def test_main_gui_has_nine_user_pages(monkeypatch, tmp_path):
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "gui.db"))
     app = _app()
     config = Config()
@@ -130,9 +130,10 @@ def test_main_gui_has_eight_user_pages(monkeypatch, tmp_path):
         "    ↳  Комментирование",
         "Поиск ЦА",
         "Парсинг аудитории",
+        "Аналитика",
         "Инструкция",
     ]
-    assert window.stack.count() == 8
+    assert window.stack.count() == 9
     assert hasattr(window.account_view, "proxy_status_card")
     assert hasattr(window.account_view, "proxy_details_button")
     assert not hasattr(window.warmup_view, "account_onboarding")

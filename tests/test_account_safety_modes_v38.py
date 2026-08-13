@@ -77,3 +77,22 @@ def test_protective_recovery_is_stepwise_only(tmp_path: Path) -> None:
         assert recovered["recovery_remaining_seconds"] > 0
     finally:
         db.close_thread_connection()
+def test_missing_account_safety_reservation_does_not_create_orphan_state(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "missing-account.db")
+    try:
+        decision = db.reserve_account_safety_task(
+            account_id=999,
+            task_id=1,
+            task_type="link_channels",
+        )
+        assert decision["action"] == "block"
+        assert decision["reason_code"] == "account_missing"
+        with db.get_connection() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM account_safety_state WHERE account_id=999"
+            ).fetchone()[0]
+        assert count == 0
+    finally:
+        db.close_thread_connection()

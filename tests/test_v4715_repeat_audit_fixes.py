@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from core.campaign_schedule import to_db_time, utc_now
 from services.api import ServiceAPI
@@ -183,7 +183,7 @@ def test_successful_scheduler_tick_clears_previous_failure_counter(
     api.prepare_shutdown()
 
 
-def test_limit_timer_is_cancelled_before_campaign_becomes_active() -> None:
+def test_limit_timer_is_cancelled_before_campaign_becomes_active(monkeypatch) -> None:
     from gui.views.commenting_view import CommentingView
 
     _app()
@@ -218,6 +218,16 @@ def test_limit_timer_is_cancelled_before_campaign_becomes_active() -> None:
         def save_comment_template(self, _comments):
             return None
 
+        def preview_comment_campaign(self, _comments, **_kwargs):
+            return {
+                "planned_count": 1,
+                "eligible_channel_count": 1,
+                "linked_channel_count": 1,
+                "telegram_mutation_count": 1,
+                "comment_variant_count": 1,
+                "duration_hours": 24,
+            }
+
         def start_comment_campaign(self, _comments, **_kwargs):
             state["active"] = True
             return {"id": 1}
@@ -229,6 +239,11 @@ def test_limit_timer_is_cancelled_before_campaign_becomes_active() -> None:
     view.daily_limit_slider.setValue(41)
     assert view.limit_save_timer.isActive()
     view.refresh_campaign = lambda: None  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
 
     view.start_campaign()
     QTest.qWait(350)

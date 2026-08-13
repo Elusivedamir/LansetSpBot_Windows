@@ -816,10 +816,16 @@ class TelegramTransportMixin(_MixinHost):
                     code="security_time_sync",
                 ) from exc
             except UnauthorizedError as exc:
+                message = (
+                    "Telegram session is no longer authorized. Authorize it again."
+                )
                 self._connected = False
+                self._notify_terminal_account_error(
+                    "authorization_required", message
+                )
                 await self.disconnect()
                 raise NonRetryableTelegramError(
-                    "Telegram session is no longer authorized. Authorize it again.",
+                    message,
                     code="authorization_required",
                     details={
                         "rpc_error": type(exc).__name__,

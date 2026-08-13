@@ -38,7 +38,9 @@ class AccountSafetyRepositoryMixin(_MixinHost):
         conn.execute(
             """INSERT OR IGNORE INTO account_safety_state(
                    account_id, adaptive_level, flood_count_window, updated_at)
-               VALUES(?, 'normal', 0, CURRENT_TIMESTAMP)""",
+               SELECT telegram_account_id, 'normal', 0, CURRENT_TIMESTAMP
+               FROM telegram_accounts
+               WHERE telegram_account_id=?""",
             (int(account_id),),
         )
 
@@ -249,14 +251,16 @@ class AccountSafetyRepositoryMixin(_MixinHost):
                 self._recover_locked(conn, owner)
                 self._ensure(conn, owner)
                 hard, code, reason = self._hard_block(conn, owner)
+                if hard:
+                    return {"action": "block", "mode": "protective", "reason_code": code, "reason_text": reason}
                 row = conn.execute(
                     """SELECT adaptive_level, recovery_not_before, next_task_at,
                               last_reserved_task_id, last_reserved_task_at
                        FROM account_safety_state WHERE account_id=?""", (owner,)
                 ).fetchone()
+                if row is None:
+                    raise DatabaseError(f"Account safety state missing for {owner}")
                 adaptive = str(row["adaptive_level"] or "normal")
-                if hard:
-                    return {"action": "block", "mode": "protective", "reason_code": code, "reason_text": reason}
                 if adaptive == "soft_protective":
                     return {"action": "postpone", "mode": "protective",
                             "wait_seconds": max(30, self._wait_seconds(row["recovery_not_before"])),
@@ -298,13 +302,15 @@ class AccountSafetyRepositoryMixin(_MixinHost):
                 self._recover_locked(conn, owner)
                 self._ensure(conn, owner)
                 hard, code, reason = self._hard_block(conn, owner)
+                if hard:
+                    return {"action": "block", "mode": "protective", "reason_code": code, "reason_text": reason}
                 row = conn.execute(
                     "SELECT adaptive_level, recovery_not_before, next_mutation_at FROM account_safety_state WHERE account_id=?",
                     (owner,),
                 ).fetchone()
+                if row is None:
+                    raise DatabaseError(f"Account safety state missing for {owner}")
                 adaptive = str(row["adaptive_level"] or "normal")
-                if hard:
-                    return {"action": "block", "mode": "protective", "reason_code": code, "reason_text": reason}
                 if adaptive == "soft_protective":
                     return {"action": "postpone", "mode": "protective",
                             "wait_seconds": max(30, self._wait_seconds(row["recovery_not_before"])),

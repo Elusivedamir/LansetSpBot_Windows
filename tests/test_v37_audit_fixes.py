@@ -203,7 +203,7 @@ def test_v37_migration_backfills_direct_delivery_owner(tmp_path) -> None:
     db.close_thread_connection()
 
     migrated = Database(path)
-    assert migrated.get_version() == 37
+    assert migrated.get_version() == migrated.SCHEMA_VERSION
     delivery = migrated.get_direct_message_delivery(task_id)
     assert int(delivery["account_id"]) == 303
 

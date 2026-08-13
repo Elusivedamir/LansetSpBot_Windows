@@ -346,7 +346,7 @@ def build_operational_analytics(database: Any, *, now: datetime | None = None) -
     raw_accounts = [_mapping(row) for row in (_call(database, "list_telegram_accounts") or [])]
     accounts: list[dict[str, Any]] = []
     heatmap = [[0 for _hour in range(24)] for _day in range(7)]
-    top = Counter()
+    top: Counter[tuple[int, int]] = Counter()
     sent_total = errors_total = proxy_count = protective = conservative = 0
     cutoff = reference - timedelta(days=7)
     for raw in raw_accounts:

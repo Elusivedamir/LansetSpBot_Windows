@@ -50,7 +50,7 @@ class PacedTelegramClient(TelegramClient):
         flood_sleep_threshold: int | None,
     ) -> Any:
         depth = _request_gate_depth.get()
-        safety_gate = self._marlen_request_safety_gate
+        safety_gate = getattr(self, "_marlen_request_safety_gate", None)
         if safety_gate is not None:
             waiter = getattr(safety_gate, "wait_for_request", None)
             if callable(waiter):

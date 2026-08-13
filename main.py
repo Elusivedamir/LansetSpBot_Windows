@@ -181,8 +181,12 @@ def _run_self_test(app: QApplication) -> int:
         container.database.reconcile_comment_schedule()
         window = LansetSpBotApp(container.adapter, container.queue_worker, config)
 
-        if window.stack.count() != 8:
-            raise RuntimeError(f"unexpected GUI page count: {window.stack.count()}")
+        expected_pages = window.menu.count()
+        if expected_pages <= 0 or window.stack.count() != expected_pages:
+            raise RuntimeError(
+                "unexpected GUI page count: "
+                f"{window.stack.count()} (menu: {expected_pages})"
+            )
         if not config.paths.root.exists() or not config.database_path.parent.exists():
             raise RuntimeError("application data directory was not created")
 
