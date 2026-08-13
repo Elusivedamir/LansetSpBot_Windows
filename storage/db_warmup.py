@@ -569,11 +569,22 @@ class WarmupRepositoryMixin(_MixinHost):
                     return None
                 step = conn.execute(
                     """SELECT * FROM warmup_steps
-                       WHERE pair_id=? AND week_number=? AND status='pending'
+                       WHERE pair_id=? AND week_number=? AND status='running'
+                       ORDER BY sequence_no ASC LIMIT 1""",
+                    (owner, int(pair["week_number"])),
+                ).fetchone()
+                if step is not None:
+                    return dict(step)
+                step = conn.execute(
+                    """SELECT * FROM warmup_steps
+                       WHERE pair_id=? AND week_number=?
+                         AND status IN ('pending','failed','uncertain')
                        ORDER BY sequence_no ASC LIMIT 1""",
                     (owner, int(pair["week_number"])),
                 ).fetchone()
                 if step is None:
+                    return None
+                if str(step["status"] or "") != "pending":
                     return None
                 existing_task_id = step["queue_task_id"]
                 if existing_task_id is not None:
@@ -690,6 +701,26 @@ class WarmupRepositoryMixin(_MixinHost):
                     raise DatabaseError(
                         f"Шаг прогрева нельзя запустить из состояния {current_status}"
                     )
+                blocker = conn.execute(
+                    """SELECT 1 FROM warmup_steps
+                       WHERE pair_id=? AND week_number=? AND id<>?
+                         AND (
+                           status='running'
+                           OR (
+                             sequence_no<?
+                             AND status IN ('pending','failed','uncertain')
+                           )
+                         )
+                       LIMIT 1""",
+                    (
+                        int(data["pair_id"]),
+                        int(data["week_number"]),
+                        step_owner,
+                        int(data["sequence_no"]),
+                    ),
+                ).fetchone()
+                if blocker is not None:
+                    return None
                 cursor = conn.execute(
                     """UPDATE warmup_steps
                        SET status='running', started_at=CURRENT_TIMESTAMP,
@@ -776,9 +807,10 @@ class WarmupRepositoryMixin(_MixinHost):
                         (int(step["sequence_no"]), pair_id),
                     )
                 next_step = conn.execute(
-                    """SELECT id, actor_account_id, scheduled_at
+                    """SELECT id, actor_account_id, scheduled_at, status
                        FROM warmup_steps
-                       WHERE pair_id=? AND week_number=? AND status='pending'
+                       WHERE pair_id=? AND week_number=?
+                         AND status IN ('pending','running','failed','uncertain')
                        ORDER BY sequence_no ASC LIMIT 1""",
                     (pair_id, week_number),
                 ).fetchone()

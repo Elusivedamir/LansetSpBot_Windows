@@ -342,6 +342,78 @@ def _create_running_first_step(repository: _Repository, seed: str = "d" * 32):
     return pair, queued
 
 
+def test_enqueue_keeps_one_active_step_per_pair(tmp_path: Path) -> None:
+    path = tmp_path / "single-active-step.db"
+    _base_database(path)
+    migration = _load_migration()
+    migration.migrate_warmup_workflows_v36(
+        path, sqlite_timeout_seconds=5.0, busy_timeout_ms=5000
+    )
+    repository = _Repository(path)
+    pair, queued = _create_running_first_step(repository, "01" * 16)
+
+    with repository.get_connection() as conn:
+        task_count_before = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE type='warmup_step'"
+            ).fetchone()[0]
+        )
+
+    repeated = repository.enqueue_warmup_step(int(pair["id"]))
+
+    with repository.get_connection() as conn:
+        task_count_after = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE type='warmup_step'"
+            ).fetchone()[0]
+        )
+        running_steps = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM warmup_steps WHERE pair_id=? AND status='running'",
+                (int(pair["id"]),),
+            ).fetchone()[0]
+        )
+    assert repeated is not None
+    assert int(repeated["id"]) == int(queued["id"])
+    assert int(repeated["queue_task_id"]) == int(queued["queue_task_id"])
+    assert task_count_after == task_count_before
+    assert running_steps == 1
+
+
+def test_begin_rejects_later_step_while_previous_step_is_running(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "begin-order.db"
+    _base_database(path)
+    migration = _load_migration()
+    migration.migrate_warmup_workflows_v36(
+        path, sqlite_timeout_seconds=5.0, busy_timeout_ms=5000
+    )
+    repository = _Repository(path)
+    pair, queued = _create_running_first_step(repository, "02" * 16)
+
+    with repository.get_connection() as conn:
+        next_step = conn.execute(
+            """SELECT id, actor_account_id FROM warmup_steps
+               WHERE pair_id=? AND status='pending'
+               ORDER BY sequence_no ASC LIMIT 1""",
+            (int(pair["id"]),),
+        ).fetchone()
+    assert next_step is not None
+
+    begun = repository.begin_warmup_step(
+        int(next_step["id"]), account_id=int(next_step["actor_account_id"])
+    )
+
+    with repository.get_connection() as conn:
+        statuses = conn.execute(
+            "SELECT id,status FROM warmup_steps WHERE id IN (?,?) ORDER BY id",
+            (int(queued["id"]), int(next_step["id"])),
+        ).fetchall()
+    assert begun is None
+    assert sorted(str(row["status"]) for row in statuses) == ["pending", "running"]
+
+
 def test_unknown_result_is_rescheduled_after_five_minutes_without_pair_pause(
     tmp_path: Path,
 ) -> None:

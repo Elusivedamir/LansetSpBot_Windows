@@ -406,7 +406,11 @@ def create_warmup_step_handler(
                     step_id=step_id,
                 )
                 if catchup_delay > 0:
-                    set_runtime(task_id, f"Восстановление темпа связки #{pair_id}")
+                    set_runtime(
+                        task_id,
+                        f"Ожидание безопасного интервала связки #{pair_id}",
+                        wait_seconds=catchup_delay,
+                    )
                     completed_sleep = await queue_worker.safe_sleep(
                         catchup_delay,
                         cancel_scope=("warmup_pair", pair_id),

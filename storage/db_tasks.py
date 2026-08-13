@@ -1222,7 +1222,9 @@ class TaskRepositoryMixin:
             value = str(text or "").strip() or None
             with self.get_connection() as conn:
                 cursor = conn.execute(
-                    """UPDATE tasks SET status_text = ?, updated_at = CURRENT_TIMESTAMP
+                    """UPDATE tasks
+                       SET status_text = ?, not_before = NULL,
+                           updated_at = CURRENT_TIMESTAMP
                        WHERE id = ? AND status = 'running'""",
                     (value, int(task_id)),
                 )
@@ -1231,6 +1233,26 @@ class TaskRepositoryMixin:
             raise
         except Exception as exc:
             raise DatabaseError(f"Failed to update task status text: {exc}") from exc
+
+    def update_task_runtime_wait(self, task_id, text, *, wait_seconds):
+        """Publish a running task's durable wait deadline for live UI countdowns."""
+        try:
+            value = str(text or "").strip() or None
+            seconds = max(1, int(wait_seconds))
+            modifier = f"+{seconds} seconds"
+            with self.get_connection() as conn:
+                cursor = conn.execute(
+                    """UPDATE tasks
+                       SET status_text = ?, not_before = datetime('now', ?),
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE id = ? AND status = 'running'""",
+                    (value, modifier, int(task_id)),
+                )
+                return cursor.rowcount == 1
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError(f"Failed to update task runtime wait: {exc}") from exc
 
     def get_task(self, task_id):
         try:

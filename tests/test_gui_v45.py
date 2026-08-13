@@ -193,7 +193,7 @@ def test_warmup_live_journal_describes_timing_actions_and_safe_failure():
     journal = view._journal_views[1]
     assert journal["badge"].text() == "Ожидание"
     assert "Beta @beta" in journal["current"].text()
-    assert "печатает 7 сек" in journal["current"].text()
+    assert "печать перед отправкой 7 сек" in journal["current"].text()
     assert journal["countdown"].text().startswith(
         "До следующего действия через"
     )
@@ -207,6 +207,25 @@ def test_warmup_live_journal_describes_timing_actions_and_safe_failure():
     assert failed["badge"].text() == "Ошибка — безопасный повтор"
     assert "только после нажатия кнопки" in failed["countdown"].text()
     assert "Аккаунт не авторизован" in failed["reason"].text()
+
+    paused_running = _warmup_overview(status="paused", focus_status="running")
+    view._apply_overview(paused_running)
+    paused = view._journal_views[1]
+    assert paused["badge"].text() == "На паузе"
+    assert paused["countdown"].text() == "Таймер остановлен до продолжения связки"
+
+    safe_wait = _warmup_overview(status="running", focus_status="running")
+    safe_wait["pairs"][0]["activity"]["focus"].update(
+        {
+            "task_status_text": "Ожидание безопасного интервала связки #1",
+            "task_not_before": "2099-08-12 06:30:00",
+        }
+    )
+    view._apply_overview(safe_wait)
+    waiting = view._journal_views[1]
+    assert waiting["badge"].text() == "Безопасное ожидание"
+    assert waiting["current"].text().startswith("Следующее действие:")
+    assert waiting["countdown"].text().startswith("До начала действия через")
 
     view.close()
     view.deleteLater()

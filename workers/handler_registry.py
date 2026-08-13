@@ -245,12 +245,20 @@ def create_worker_handlers(
         activity: bool = False,
         level: str = "INFO",
         account_id: int | None = None,
+        wait_seconds: int | None = None,
     ) -> None:
         runtime["task_id"] = int(task_id)
         if account_id is not None:
             runtime["account_id"] = max(0, int(account_id or 0))
         runtime["prefix"] = str(prefix or "").strip()
-        publish_runtime_status("")
+        if wait_seconds is not None and int(wait_seconds) > 0:
+            worker_db.update_task_runtime_wait(
+                int(task_id),
+                runtime["prefix"],
+                wait_seconds=int(wait_seconds),
+            )
+        else:
+            publish_runtime_status("")
         if activity:
             publish_activity(prefix, level=level)
 

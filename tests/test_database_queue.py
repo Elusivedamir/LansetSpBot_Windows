@@ -228,6 +228,25 @@ def test_runtime_status_text_is_visible_and_cleared_on_completion(tmp_path):
     assert task["error"] is None
 
 
+def test_runtime_wait_exposes_deadline_and_active_status_clears_it(tmp_path):
+    database = Database(tmp_path / "runtime-wait.db")
+    task_id = database.insert_task("noop", {})
+    assert database.set_processing(task_id)
+    assert database.update_task_runtime_wait(
+        task_id,
+        "Ожидание безопасного интервала",
+        wait_seconds=90,
+    )
+    waiting = database.get_task(task_id)
+    assert waiting["status_text"] == "Ожидание безопасного интервала"
+    assert waiting["not_before"] is not None
+
+    assert database.update_task_status_text(task_id, "Отправка сообщения")
+    active = database.get_task(task_id)
+    assert active["status_text"] == "Отправка сообщения"
+    assert active["not_before"] is None
+
+
 def test_commenting_batch_rotates_and_excludes_unlinked_channels(tmp_path):
     database = Database(tmp_path / "rotation.db")
     for channel_id, title, linked_chat_id in (

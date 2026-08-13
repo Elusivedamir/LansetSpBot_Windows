@@ -535,6 +535,43 @@ def test_overdue_message_gets_human_scale_catchup_delay() -> None:
     )
 
 
+def test_overdue_message_publishes_safe_wait_deadline_before_typing() -> None:
+    async def run() -> None:
+        db = _DB(_step("message", scheduled_at="2000-01-01 00:00:00"))
+        db.pair["reply_min_seconds"] = 120
+        db.pair["reply_max_seconds"] = 120
+        telegram = _Telegram()
+        queue = _Queue()
+        activity: list[tuple[str, dict[str, Any]]] = []
+        runtime: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+        handler = create_warmup_step_handler(
+            queue_worker=queue,
+            worker_db=db,
+            telegram=telegram,
+            set_runtime=lambda *args, **kwargs: runtime.append(
+                (tuple(args), dict(kwargs))
+            ),
+            publish_activity=lambda message, **kwargs: activity.append(
+                (message, dict(kwargs))
+            ),
+            contact_phone_provider=lambda _account_id: None,
+        )
+
+        await handler(_task())
+
+        safe_wait = [
+            (args, kwargs)
+            for args, kwargs in runtime
+            if "Ожидание безопасного интервала" in str(args[1])
+        ]
+        assert len(safe_wait) == 1
+        assert safe_wait[0][1]["wait_seconds"] == 120
+        assert queue.sleeps[:2] == [120, 1]
+        assert db.finished and db.finished[0]["skipped"] is False
+
+    asyncio.run(run())
+
+
 def test_group_visit_without_group_and_pending_membership_are_safe_skips() -> None:
     async def run() -> None:
         queue = _Queue()

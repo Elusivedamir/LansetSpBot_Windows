@@ -885,7 +885,10 @@ class WarmupView(QWidget):
                 if message
                 else ""
             )
-            return f"{actor}: сообщение для {target} · печатает {typing} сек{preview}"
+            return (
+                f"{actor}: сообщение для {target} · "
+                f"печать перед отправкой {typing} сек{preview}"
+            )
         if action == "private_reaction":
             return f"{actor}: реакция на сообщение {target}"
         if action == "group_visit":
@@ -973,13 +976,15 @@ class WarmupView(QWidget):
         last = dict(view["last"])
         pair_status = str(pair.get("status") or "")
         step_status = str(focus.get("status") or "")
+        task_status_text = str(focus.get("task_status_text") or "").strip()
+        safe_wait = (
+            step_status == "running"
+            and task_status_text.startswith("Ожидание безопасного интервала")
+        )
 
         if pair_status == "completed":
             badge_text = "Завершено"
             current_text = "Сейчас: недельный сценарий завершён"
-        elif step_status == "running":
-            badge_text = "Выполняется сейчас"
-            current_text = "Сейчас: " + self._journal_action(focus)
         elif step_status == "failed":
             badge_text = "Ошибка — безопасный повтор"
             current_text = "Ошибочный шаг: " + self._journal_action(focus)
@@ -989,6 +994,12 @@ class WarmupView(QWidget):
         elif pair_status == "paused":
             badge_text = "На паузе"
             current_text = "Сейчас: связка ожидает продолжения"
+        elif safe_wait:
+            badge_text = "Безопасное ожидание"
+            current_text = "Следующее действие: " + self._journal_action(focus)
+        elif step_status == "running":
+            badge_text = "Выполняется сейчас"
+            current_text = "Сейчас: " + self._journal_action(focus)
         else:
             badge_text = "Ожидание"
             current_text = "Следующее действие: " + self._journal_action(focus)
@@ -996,14 +1007,22 @@ class WarmupView(QWidget):
         view["current"].setText(current_text)
 
         deadline = focus.get("task_not_before") or focus.get("scheduled_at")
-        if step_status == "running":
-            countdown_text = "Таймер: действие выполняется сейчас"
-        elif step_status == "failed":
+        if step_status == "failed":
             countdown_text = "Таймер: повтор начнётся только после нажатия кнопки"
         elif step_status == "uncertain":
             countdown_text = "Таймер: автоматический повтор отключён"
         elif pair_status == "paused":
             countdown_text = "Таймер остановлен до продолжения связки"
+        elif safe_wait:
+            countdown_text = countdown_label(
+                "До начала действия",
+                deadline,
+                include_deadline=True,
+                include_date=True,
+                due_text="готовится к запуску…",
+            )
+        elif step_status == "running":
+            countdown_text = "Таймер: действие выполняется сейчас"
         elif focus:
             countdown_text = countdown_label(
                 "До следующего действия",
