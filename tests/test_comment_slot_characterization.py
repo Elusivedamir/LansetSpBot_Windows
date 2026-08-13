@@ -139,7 +139,7 @@ async def test_confirmed_send_is_the_only_sent_outcome() -> None:
     ("code", "expected_status", "paused"),
     [
         ("delivery_result_unknown", "uncertain", True),
-        ("delivery_persist_failed", "failed", True),
+        ("delivery_persist_failed", "uncertain", True),
         ("comment_already_reserved", "skipped", False),
         ("chat_write_forbidden", "skipped", False),
     ],

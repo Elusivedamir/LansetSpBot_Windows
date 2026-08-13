@@ -1053,7 +1053,7 @@ async def test_comment_slot_deferred_and_network_errors_do_not_finish(monkeypatc
             False,
             False,
         ),
-        (TelegramOperationError("temporary"), None, False, True),
+        (TelegramOperationError("temporary"), "uncertain", True, False),
     ],
 )
 async def test_comment_slot_classifies_failures(
