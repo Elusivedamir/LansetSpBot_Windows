@@ -75,6 +75,8 @@ _UNCERTAIN_CODES = frozenset(
         "direct_message_result_unknown",
         "direct_message_duplicate_guard",
         "join_result_unknown",
+        "delivery_persist_failed",
+        "direct_message_persist_failed",
     }
 )
 

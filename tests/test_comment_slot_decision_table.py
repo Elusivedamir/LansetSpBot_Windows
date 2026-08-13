@@ -29,7 +29,8 @@ def test_deferred_comment_table(code: str, expected: DeferredCommentDisposition)
     [
         ("delivery_result_unknown", "uncertain", True, True),
         ("join_result_unknown", "uncertain", True, True),
-        ("delivery_persist_failed", "failed", True, True),
+        ("delivery_persist_failed", "uncertain", True, True),
+        ("direct_message_persist_failed", "uncertain", True, True),
         ("chat_write_forbidden", "skipped", True, False),
         ("channel_private", "skipped", True, False),
         ("account_state_mismatch", "failed", False, True),

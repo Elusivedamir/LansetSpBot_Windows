@@ -91,7 +91,7 @@ class GUIServiceAdapter:
             "local_secret_migration": (
                 "Завершается перенос локальных настроек. Повторите действие через минуту."
             ),
-            "account_state_pending": (
+            "account_transition_pending": (
                 "Не завершено сохранение состояния Telegram-аккаунта. "
                 "Перезапустите LansetSpBot; состояние будет восстановлено автоматически."
             ),

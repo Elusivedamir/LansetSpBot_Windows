@@ -1448,6 +1448,25 @@ class CommentSlotRunner:
             rpc_error=rpc_error,
             detail=str(exc),
         )
+        if state.phase >= CommentSlotPhase.SEND_STARTED:
+            # CommentService has already made the durable reservation fail-closed
+            # for an unexpected operation error.  Do not turn that uncertainty
+            # back into an automatic scheduler retry after SEND has started.
+            state.final_status = "uncertain"
+            state.final_message = (
+                "Кампания приостановлена: результат отправки после начала "
+                f"операции неизвестен | {diagnostic}"
+            )
+            state.slot_deferred = False
+            state.consume_channel = True
+            state.campaign_pause_reason = state.final_message
+            self._safe_log(
+                "ERROR",
+                state.final_message,
+                "uncertain Telegram operation after send start",
+            )
+            return
+
         state.final_message = (
             f"Временная ошибка Telegram; повтор отложен | {diagnostic}"
         )
