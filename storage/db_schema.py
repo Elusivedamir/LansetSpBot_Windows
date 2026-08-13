@@ -27,7 +27,7 @@ class DatabaseSchemaMixin(
 ):
     """Compatibility facade for schema bootstrap and forward migrations."""
 
-    SCHEMA_VERSION = 37
+    SCHEMA_VERSION = 38
     LEGACY_SCHEMA_VERSION = 13
 
     if TYPE_CHECKING:

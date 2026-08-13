@@ -75,6 +75,7 @@ _TERMINAL_ACCOUNT_AUTH_CODES = frozenset(
     {
         "authorization_required",
         "auth_key_invalid",
+        "auth_key_duplicated",
         "telegram_auth_key_rejected",
         "account_deactivated",
     }

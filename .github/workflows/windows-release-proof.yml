@@ -8,6 +8,16 @@ on:
         required: false
         type: boolean
         default: false
+      continue_after_failures:
+        description: Continue release diagnostics after an earlier failure
+        required: false
+        type: boolean
+        default: false
+      upstream_source_proof_passed:
+        description: Whether caller source proof was green
+        required: false
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       skip_source_tests:
@@ -63,6 +73,8 @@ jobs:
             requirements-dev-windows-x64.lock
 
       - name: Record runner and source proof
+        id: runner_proof
+        continue-on-error: ${{ inputs.continue_after_failures }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -123,6 +135,7 @@ jobs:
 
       - name: Run complete Windows release pipeline
         id: windows_build
+        continue-on-error: ${{ inputs.continue_after_failures }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
@@ -132,7 +145,12 @@ jobs:
           )
           if ("${{ inputs.skip_source_tests }}" -eq "true") {
             $buildArgs += "-SkipTests"
-            Write-Host "Reusing upstream Python 3.13/3.14 source/test proof."
+            if ("${{ inputs.upstream_source_proof_passed }}" -eq "true") {
+              Write-Host "Reusing passed upstream Python 3.13/3.14 source/test proof."
+            }
+            else {
+              Write-Host "Upstream source proof is red; continuing packaging diagnostics."
+            }
           }
           python tools/run_ci_subprocess.py `
             --label windows-release `
@@ -148,6 +166,8 @@ jobs:
           }
 
       - name: Verify release evidence
+        id: verify_release
+        continue-on-error: ${{ inputs.continue_after_failures }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -167,9 +187,11 @@ jobs:
           if ($null -eq $sbom) { throw "Release SBOM was not produced." }
           $reusedSourceProof = "${{ inputs.skip_source_tests }}" -eq "true"
           if ($reusedSourceProof) {
-            $coverageEvidence = "upstream: Python 3.13 + Python 3.14 source proofs"
+            $sourceProofPassed = "${{ inputs.upstream_source_proof_passed }}" -eq "true"
+            $coverageEvidence = if ($sourceProofPassed) { "upstream: passed Python 3.13 + Python 3.14 source proofs" } else { "upstream: source proof artifacts contain failures; packaging continued diagnostically" }
             @(
               "reused=true"
+              "passed=$sourceProofPassed"
               "commit=${{ github.sha }}"
               "source=calling Windows CI source-proof matrix"
             ) | Set-Content -LiteralPath "dist\ci-proof\upstream-source-proof.txt" -Encoding UTF8
@@ -221,7 +243,7 @@ jobs:
           "@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
 
       - name: Upload verified release
-        if: success()
+        if: ${{ steps.runner_proof.outcome == 'success' && steps.windows_build.outcome == 'success' && steps.verify_release.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: LansetSpBot-Windows-x64-${{ github.sha }}
@@ -236,7 +258,7 @@ jobs:
           compression-level: 0
 
       - name: Upload failure evidence
-        if: ${{ failure() || cancelled() }}
+        if: ${{ always() && (failure() || cancelled() || steps.runner_proof.outcome == 'failure' || steps.windows_build.outcome == 'failure' || steps.verify_release.outcome == 'failure') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: LansetSpBot-Windows-failure-${{ github.sha }}
@@ -248,6 +270,12 @@ jobs:
             SHA256SUMS.txt
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Fail after complete diagnostic pipeline
+        if: ${{ always() && inputs.continue_after_failures && (steps.runner_proof.outcome == 'failure' || steps.windows_build.outcome == 'failure' || steps.verify_release.outcome == 'failure') }}
+        shell: pwsh
+        run: |
+          throw "One or more release diagnostic stages failed. All configured stages were allowed to run; inspect uploaded evidence."
 
   prove-python-314-source:
     if: ${{ !inputs.skip_source_tests && (github.event_name != 'pull_request' || !startsWith(github.head_ref, 'dependabot/github_actions/')) }}

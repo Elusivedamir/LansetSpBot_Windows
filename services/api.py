@@ -11,7 +11,9 @@ from PySide6.QtCore import QObject, QThreadPool, QTimer, Slot
 from core.config import DEFAULT_MAX_CHANNELS_PER_RUN
 from core.secret_store import SecretStore
 from services.account_sessions import migrate_legacy_account_secrets
-from services.observability import build_account_health_snapshot
+from services.observability import (
+    build_account_health_snapshot, build_operational_analytics, export_operational_analytics,
+)
 from storage.audience_checkpoint import (
     discard_audience_task as discard_audience_task_repository,
     find_resumable_audience_task as find_resumable_audience_task_repository,
@@ -196,6 +198,12 @@ class ServiceAPI(
             else account_id
         )
         return build_account_health_snapshot(self.database, int(owner or 0))
+
+    def get_operational_analytics(self):
+        return build_operational_analytics(self.database)
+
+    def export_operational_analytics(self, format_name: str):
+        return export_operational_analytics(self.database, format_name)
 
     def find_resumable_audience_task(self, account_id=None):
         owner = (

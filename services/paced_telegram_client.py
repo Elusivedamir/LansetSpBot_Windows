@@ -33,11 +33,13 @@ class PacedTelegramClient(TelegramClient):
         self,
         *args: Any,
         request_limiter: RateLimiter | None = None,
+        request_safety_gate: Any | None = None,
         request_timeout: float = 30.0,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self._marlen_request_limiter = request_limiter or RateLimiter()
+        self._marlen_request_safety_gate = request_safety_gate
         self._marlen_request_timeout = max(1.0, float(request_timeout))
 
     async def _call_one(
@@ -48,6 +50,11 @@ class PacedTelegramClient(TelegramClient):
         flood_sleep_threshold: int | None,
     ) -> Any:
         depth = _request_gate_depth.get()
+        safety_gate = self._marlen_request_safety_gate
+        if safety_gate is not None:
+            waiter = getattr(safety_gate, "wait_for_request", None)
+            if callable(waiter):
+                await waiter(request)
         category = classify_rpc_request(request)
         slot_factory = (
             self._marlen_request_limiter.reentrant_request_slot

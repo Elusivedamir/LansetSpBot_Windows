@@ -238,6 +238,45 @@ def test_p08_terminal_transport_callback_fires() -> None:
     assert "terminal_account_error_callback=terminal_account_error" in wiring
 
 
+@pytest.mark.parametrize(
+    ("rpc_name", "expected_code"),
+    [
+        ("SessionRevokedError", "authorization_required"),
+        ("SessionExpiredError", "authorization_required"),
+        ("AuthKeyInvalidError", "auth_key_invalid"),
+        ("AuthKeyDuplicatedError", "auth_key_duplicated"),
+    ],
+)
+def test_p08_terminal_session_rpc_matrix_persists_account_state(
+    rpc_name: str, expected_code: str
+) -> None:
+    error_type = type(rpc_name, (Exception,), {})
+    rpc_error = error_type(rpc_name)
+    rpc_error.code = 401
+    rpc_error.seconds = 0
+
+    seen: list[tuple[str, str]] = []
+    transport = object.__new__(TelegramTransportMixin)
+    transport._connected = True
+    transport._terminal_account_error_callback = (
+        lambda code, message: seen.append((code, message))
+    )
+
+    with pytest.raises(NonRetryableTelegramError) as captured:
+        transport._raise_rpc_error(
+            rpc_error,
+            retry_network=False,
+            request_dispatched=False,
+            unknown_result_code="delivery_result_unknown",
+        )
+
+    assert captured.value.code == expected_code
+    assert transport._connected is False
+    assert len(seen) == 1
+    assert seen[0][0] == expected_code
+    assert seen[0][1]
+
+
 def test_p09_snapshot_is_atomic_and_scheduler_fails_closed(tmp_path: Path) -> None:
     db = Database(tmp_path / "campaign.db")
     _register(db, 303)

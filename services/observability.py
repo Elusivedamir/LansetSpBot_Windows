@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from collections import Counter
+import csv
 from datetime import datetime, timedelta, timezone
+import io
+import json
 from typing import Any, Iterable, Mapping
 
 _ACTIVE_TASK_STATUSES = {"pending", "running", "processing", "paused"}
@@ -305,6 +308,11 @@ def build_account_health_snapshot(
         or "—"
     )
 
+    safety = _mapping(_call(database, "get_account_safety_state", owner) or {})
+    safety_mode = str(safety.get("mode") or "normal")
+    safety_recovery_seconds = max(0, int(safety.get("recovery_remaining_seconds") or 0))
+    safety_recovery = f"{safety_recovery_seconds // 60} мин" if safety_recovery_seconds > 0 else "—"
+
     cooldown = _active_cooldown(database, owner, now=reference)
     if cooldown:
         deadline = cooldown.get("deadline")
@@ -325,7 +333,85 @@ def build_account_health_snapshot(
         "sent_24h": sent_24h,
         "errors_24h": errors_24h,
         "flood_wait": flood_wait,
+        "safety_mode": safety_mode,
+        "safety_recovery": safety_recovery,
+        "safety_reason": humanize_reason(safety.get("reason_text")),
         "last_success": last_success,
         "last_error": humanize_reason(last_error_value),
         "updated_at": reference.isoformat(timespec="seconds"),
     }
+
+def build_operational_analytics(database: Any, *, now: datetime | None = None) -> dict[str, Any]:
+    reference = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    raw_accounts = [_mapping(row) for row in (_call(database, "list_telegram_accounts") or [])]
+    accounts: list[dict[str, Any]] = []
+    heatmap = [[0 for _hour in range(24)] for _day in range(7)]
+    top = Counter()
+    sent_total = errors_total = proxy_count = protective = conservative = 0
+    cutoff = reference - timedelta(days=7)
+    for raw in raw_accounts:
+        try:
+            account_id = int(raw.get("telegram_account_id") or raw.get("id") or 0)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if account_id <= 0:
+            continue
+        item = build_account_health_snapshot(database, account_id, now=reference)
+        item["display_name"] = raw.get("display_name") or raw.get("username") or str(account_id)
+        accounts.append(item)
+        sent_total += int(item.get("sent_24h") or 0)
+        errors_total += int(item.get("errors_24h") or 0)
+        proxy_count += int(str(item.get("proxy") or "").startswith("Подключён"))
+        mode = str(item.get("safety_mode") or "normal")
+        protective += int(mode == "protective")
+        conservative += int(mode == "conservative")
+        history = [_mapping(row) for row in (_call(database, "get_comment_history", limit=3000, account_id=account_id) or [])]
+        for row in history:
+            if classify_result(row.get("status")) != "success":
+                continue
+            stamp = _history_timestamp(row)
+            if stamp is None or stamp < cutoff or stamp > reference:
+                continue
+            heatmap[stamp.weekday()][stamp.hour] += 1
+            try:
+                channel_id = int(row.get("channel_id") or 0)
+            except (TypeError, ValueError, OverflowError):
+                channel_id = 0
+            if channel_id:
+                top[(account_id, channel_id)] += 1
+    top_channels = []
+    for (account_id, channel_id), count in top.most_common(15):
+        row = _mapping(_call(database, "get_channel_by_id", channel_id, account_id=account_id) or {})
+        top_channels.append({"account_id": account_id, "channel_id": channel_id,
+                             "title": row.get("title") or row.get("username") or str(channel_id),
+                             "sent": int(count)})
+    count_accounts = len(accounts)
+    return {
+        "generated_at": reference.isoformat(timespec="seconds"),
+        "totals": {"accounts": count_accounts, "sent_24h": sent_total,
+                   "errors_24h": errors_total,
+                   "proxy_coverage_percent": round(proxy_count * 100 / count_accounts) if count_accounts else 0,
+                   "protective_accounts": protective, "conservative_accounts": conservative},
+        "accounts": accounts,
+        "heatmap": heatmap,
+        "top_channels": top_channels,
+        "safety_events": list(_call(database, "get_account_safety_events", account_id=None, limit=100) or []),
+    }
+
+
+def export_operational_analytics(database: Any, format_name: str, *, now: datetime | None = None) -> str:
+    data = build_operational_analytics(database, now=now)
+    normalized = str(format_name or "").strip().lower()
+    if normalized == "json":
+        return json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)
+    if normalized != "csv":
+        raise ValueError("Analytics export format must be json or csv")
+    stream = io.StringIO(newline="")
+    writer = csv.writer(stream)
+    writer.writerow(("account_id", "display_name", "status", "safety_mode", "safety_recovery",
+                     "sent_24h", "errors_24h", "flood_wait", "proxy"))
+    for row in data["accounts"]:
+        writer.writerow((row.get("account_id"), row.get("display_name"), row.get("status"),
+                         row.get("safety_mode"), row.get("safety_recovery"), row.get("sent_24h"),
+                         row.get("errors_24h"), row.get("flood_wait"), row.get("proxy")))
+    return stream.getvalue()

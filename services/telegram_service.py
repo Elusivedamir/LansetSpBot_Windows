@@ -45,6 +45,7 @@ class TelegramService(
         limiter,
         status_callback: Callable[[str], Any] | None = None,
         terminal_account_error_callback: Callable[[str, str], Any] | None = None,
+        request_safety_gate: Any | None = None,
     ):
         self.settings = settings
         self.limiter = limiter
@@ -77,6 +78,7 @@ class TelegramService(
             connection_retries=1,
             receive_updates=False,
             request_limiter=limiter,
+            request_safety_gate=request_safety_gate,
             request_timeout=30.0,
         )
         self._secure_session_file(telegram_session_base.with_suffix(".session"))

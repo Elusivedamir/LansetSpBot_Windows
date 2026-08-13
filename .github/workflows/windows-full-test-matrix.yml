@@ -23,7 +23,7 @@ jobs:
 
   source-proof:
     needs: contracts
-    if: ${{ github.event_name != 'pull_request' || !startsWith(github.head_ref, 'dependabot/github_actions/') }}
+    if: ${{ always() && (github.event_name != 'pull_request' || !startsWith(github.head_ref, 'dependabot/github_actions/')) }}
     name: Python ${{ matrix.python }} x64 full source proof
     runs-on: windows-2022
     timeout-minutes: 100
@@ -125,7 +125,9 @@ jobs:
     needs:
       - contracts
       - source-proof
-    if: ${{ github.event_name != 'pull_request' || !startsWith(github.head_ref, 'dependabot/github_actions/') }}
+    if: ${{ always() && (github.event_name != 'pull_request' || !startsWith(github.head_ref, 'dependabot/github_actions/')) }}
     uses: ./.github/workflows/windows-release-proof.yml
     with:
       skip_source_tests: true
+      continue_after_failures: true
+      upstream_source_proof_passed: ${{ needs.source-proof.result == 'success' }}

@@ -48,6 +48,7 @@ from storage.migrations.warmup_workflows_v36 import (
 from storage.migrations.direct_message_account_scope_v37 import (
     migrate_direct_message_account_scope_v37,
 )
+from storage.migrations.account_safety_v38 import migrate_account_safety_v38
 
 log = logging.getLogger(__name__)
 
@@ -298,6 +299,13 @@ class SchemaCoreMixin(_MixinHost):
             current_version = self.get_version()
         if current_version < 37:
             migrate_direct_message_account_scope_v37(
+                self.path,
+                sqlite_timeout_seconds=self.sqlite_timeout_seconds,
+                busy_timeout_ms=self.busy_timeout_ms,
+            )
+            current_version = self.get_version()
+        if current_version < 38:
+            migrate_account_safety_v38(
                 self.path,
                 sqlite_timeout_seconds=self.sqlite_timeout_seconds,
                 busy_timeout_ms=self.busy_timeout_ms,

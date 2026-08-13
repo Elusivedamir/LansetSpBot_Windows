@@ -33,6 +33,7 @@ from .views.channels_view import ChannelsView
 from .views.commenting_view import CommentingView
 from .views.links_view import LinksView
 from .views.audience_parser_view import AudienceParserView
+from .views.analytics_view import AnalyticsView
 from .views.instructions_view import InstructionsView
 from .views.target_audience_view import TargetAudienceView
 
@@ -46,6 +47,7 @@ class MainWindow(QMainWindow):
         "comments.svg",
         "target.svg",
         "audience.svg",
+        "target.svg",
         "instructions.svg",
     )
     SIDEBAR_MAX_WIDTH = 360
@@ -148,6 +150,7 @@ class MainWindow(QMainWindow):
             "Комментирование",
             "Поиск ЦА",
             "Парсинг аудитории",
+            "Аналитика",
             "Инструкция",
         ]
         self._menu_compact = [
@@ -158,6 +161,7 @@ class MainWindow(QMainWindow):
             "Комменты",
             "Поиск ЦА",
             "Парсинг",
+            "Аналитика",
             "Инструкция",
         ]
         for index, (label, icon_name) in enumerate(
@@ -202,6 +206,7 @@ class MainWindow(QMainWindow):
         self.commenting_view = CommentingView(adapter)
         self.target_audience_view = TargetAudienceView()
         self.audience_parser_view = AudienceParserView(adapter)
+        self.analytics_view = AnalyticsView(adapter)
         self.instructions_view = InstructionsView(adapter)
         self._configure_theme_selector()
         self.account_view.account_changed.connect(
@@ -218,6 +223,7 @@ class MainWindow(QMainWindow):
             self.commenting_view,
             self.target_audience_view,
             self.audience_parser_view,
+            self.analytics_view,
             self.instructions_view,
         ):
             scroll = QScrollArea()
@@ -245,6 +251,9 @@ class MainWindow(QMainWindow):
         self.account_view.account_changed.connect(
             self.activity_panel.handle_account_changed
         )
+        self.account_view.account_changed.connect(
+            self.analytics_view.handle_account_changed
+        )
         self.vertical_splitter = QSplitter(Qt.Orientation.Vertical)
         self.vertical_splitter.setObjectName("contentSplitter")
         self.vertical_splitter.setChildrenCollapsible(False)
@@ -269,6 +278,7 @@ class MainWindow(QMainWindow):
             self.commenting_view,
             self.target_audience_view,
             self.audience_parser_view,
+            self.analytics_view,
             self.instructions_view,
         )
         self._active_page_index = -1
@@ -393,6 +403,7 @@ class MainWindow(QMainWindow):
             self.commenting_view.countdown_timer,
             self.commenting_view.limit_save_timer,
             self.audience_parser_view.watcher.timer,
+            self.analytics_view.timer,
         )
 
     def suspend_runtime_updates(self) -> None:
@@ -485,6 +496,7 @@ class MainWindow(QMainWindow):
             self.commenting_view,
             self.target_audience_view,
             self.audience_parser_view,
+            self.analytics_view,
             self.instructions_view,
         ):
             setter = getattr(view, "set_compact_mode", None)

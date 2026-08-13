@@ -214,6 +214,36 @@ def test_disconnected_registered_account_can_be_selected_for_relogin(tmp_path):
     assert int(selected["telegram_account_id"]) == 101
 
 
+def test_terminal_authorization_failure_does_not_mutate_other_account(tmp_path):
+    db = Database(tmp_path / "terminal-auth-isolation.db")
+    try:
+        for account_id in (101, 202):
+            db.register_telegram_account(
+                telegram_account_id=account_id,
+                session_name=f"account_{account_id}",
+                display_name=f"Account {account_id}",
+                username=f"user_{account_id}",
+                authorized=True,
+            )
+
+        before_other = db.get_telegram_account(202)
+        assert before_other is not None
+
+        changed = db.mark_account_authorization_required(
+            101, error="auth_key_invalid: revoked"
+        )
+        after_other = db.get_telegram_account(202)
+
+        assert changed["authorized"] is False
+        assert changed["stopped"] is True
+        assert changed["runtime_state"] == "authorization_required"
+        assert after_other is not None
+        for field in ("authorized", "stopped", "runtime_state", "last_error"):
+            assert after_other[field] == before_other[field]
+    finally:
+        db.close_thread_connection()
+
+
 def test_operator_requested_ui_ux_contracts_are_wired():
     from core.config import (
         DEFAULT_LINK_CHECK_DELAY_MAX_SECONDS,

@@ -20,6 +20,7 @@ from core.paths import APP_PATHS
 from core.performance import log_if_slow, wal_size_bytes
 from storage.db_account_activity import AccountActivityRepositoryMixin
 from storage.db_account_restrictions import AccountRestrictionRepositoryMixin
+from storage.db_account_safety import AccountSafetyRepositoryMixin
 from storage.db_accounts import AccountRepositoryMixin
 from storage.db_channels import ChannelRepositoryMixin
 from storage.db_comment_variants import CommentVariantRepositoryMixin
@@ -51,6 +52,7 @@ class Database(
     AccountActivityRepositoryMixin,
     WarmupRepositoryMixin,
     AccountRestrictionRepositoryMixin,
+    AccountSafetyRepositoryMixin,
     AccountRepositoryMixin,
     TaskRepositoryMixin,
     ChannelRepositoryMixin,

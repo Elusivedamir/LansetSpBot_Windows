@@ -29,6 +29,7 @@ from workers.handlers import (
     create_warmup_step_handler,
 )
 from workers.handlers.link_channels import create_link_channels_handler
+from workers.account_safety_gate import AccountSafetyRequestGate
 
 log = logging.getLogger(__name__)
 
@@ -281,11 +282,15 @@ def create_worker_handlers(
             # Account state is authoritative; incident journaling is best-effort.
             log.exception("Could not persist terminal Telegram account incident")
 
+    request_safety_gate = AccountSafetyRequestGate(
+        worker_db, account_id=int(getattr(settings, "expected_account_id", 0) or getattr(settings, "account_id", 0) or 0)
+    )
     telegram = TelegramService(
         settings,
         limiter,
         status_callback=publish_runtime_status,
         terminal_account_error_callback=terminal_account_error,
+        request_safety_gate=request_safety_gate,
     )
     linked = LinkedChatService(telegram)
     class _DatabaseActivitySchedule:

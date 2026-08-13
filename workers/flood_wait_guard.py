@@ -168,6 +168,12 @@ def install_account_flood_wait(
         source_task_id=source_task_id,
         wait_seconds=wait,
     )
+    safety_writer = getattr(worker_db, "record_account_flood_wait_safety", None)
+    if callable(safety_writer):
+        try:
+            safety_writer(account_id=owner, code=code, wait_seconds=wait, source_task_id=source_task_id)
+        except Exception:
+            pass  # authoritative Telegram cooldown above must never be rolled back
     if callable(remember):
         remember(owner, wait, str(cooldown.get("next_allowed_at") or ""))
     return cooldown

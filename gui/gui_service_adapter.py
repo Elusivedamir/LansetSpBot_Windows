@@ -36,6 +36,12 @@ class GUIServiceAdapter:
     def get_account_observability(self, account_id=None):
         return self.api.get_account_observability(account_id)
 
+    def get_operational_analytics(self):
+        return self.api.get_operational_analytics()
+
+    def export_operational_analytics(self, format_name):
+        return self.api.export_operational_analytics(format_name)
+
     def find_resumable_audience_task(self, account_id=None):
         return self.api.find_resumable_audience_task(account_id)
 

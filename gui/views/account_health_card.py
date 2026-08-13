@@ -47,6 +47,8 @@ class AccountHealthCard(QFrame):
             ("sent_24h", "Успешно за 24 часа"),
             ("errors_24h", "Ошибок за 24 часа"),
             ("flood_wait", "FloodWait"),
+            ("safety_mode", "Режим безопасности"),
+            ("safety_recovery", "До следующего снижения защиты"),
             ("last_success", "Последняя успешная операция"),
             ("last_error", "Последняя ошибка"),
         )

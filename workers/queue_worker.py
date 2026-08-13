@@ -777,12 +777,14 @@ class QueueWorker(QueueWorkerStateMixin, QueueWorkerCooldownMixin, QThread):
     ) -> bool:
         if self._account_cooldown_blocks(context):
             return False
+        if self._account_safety_blocks(context):
+            return False
         if self._pause_due_link_task(context):
             return False
         if self._account_runtime_blocks(context):
             return False
-        # A cooldown may be installed while the task waits behind local work.
-        return not self._account_cooldown_blocks(context)
+        # Cooldown/safety can change while this task waits behind local work.
+        return not self._account_cooldown_blocks(context) and not self._account_safety_blocks(context)
 
 
     def _pause_due_link_task(self, context: TaskExecutionContext) -> bool:

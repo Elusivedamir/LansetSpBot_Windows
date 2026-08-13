@@ -242,3 +242,24 @@ class QueueWorkerCooldownMixin:
                 account_id=context.account_id,
             )
         )
+
+    def _account_safety_blocks(self, context: TaskExecutionContext) -> bool:
+        if context.task_type not in self.ACCOUNT_RPC_TASK_TYPES or context.account_id <= 0:
+            return False
+        reserver = getattr(self.get_db(), "reserve_account_safety_task", None)
+        if not callable(reserver):
+            return False
+        decision = dict(reserver(account_id=context.account_id, task_id=context.task_id, task_type=context.task_type) or {})
+        action = str(decision.get("action") or "allow")
+        if action in {"allow", "block"}:
+            return False
+        if action != "postpone":
+            raise RuntimeError(f"Unknown account safety task action: {action}")
+        wait = max(1, int(decision.get("wait_seconds") or 1))
+        changed = self.get_db().postpone_running_task_for_account_cooldown(
+            context.task_id, retry_at=utc_now() + timedelta(seconds=wait),
+            code=str(decision.get("reason_code") or "account_safety_pacing"),
+        )
+        if not changed:
+            raise RuntimeError(f"Could not postpone task {context.task_id} for adaptive safety")
+        return True

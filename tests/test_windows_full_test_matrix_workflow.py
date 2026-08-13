@@ -100,3 +100,14 @@ def test_release_reuses_source_proof_only_when_called_from_main_ci() -> None:
     assert "upstream-source-proof.txt" in text
     assert '$coverageEvidence = "dist/ci-proof/coverage.json"' in text
     assert "source_proof_reused=$reusedSourceProof" in text
+
+def test_main_ci_collects_release_failures_after_red_source_proof() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "continue_after_failures: true" in text
+    assert "upstream_source_proof_passed:" in text
+    assert "needs.source-proof.result == 'success'" in text
+    release = (WORKFLOW.parent / "windows-release-proof.yml").read_text(encoding="utf-8")
+    assert "continue_after_failures:" in release
+    assert "continue-on-error: ${{ inputs.continue_after_failures }}" in release
+    assert "Fail after complete diagnostic pipeline" in release
+    assert "steps.windows_build.outcome == 'failure'" in release

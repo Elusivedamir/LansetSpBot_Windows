@@ -79,6 +79,39 @@ def test_encrypted_telethon_session_rejects_wrong_profile_key(tmp_path: Path):
         EncryptedSQLiteSession(base, codec=_codec(6))
 
 
+def test_encrypted_session_rejects_ciphertext_tampering_without_overwrite(
+    tmp_path: Path,
+):
+    base = tmp_path / "main"
+    codec = _codec(23)
+    session = EncryptedSQLiteSession(base, codec=codec)
+    session.auth_key = AuthKey(b"T" * 256)
+    session.save()
+    session.close()
+
+    path = base.with_suffix(".session")
+    with sqlite3.connect(path) as connection:
+        row = connection.execute("SELECT auth_key FROM sessions").fetchone()
+        assert row is not None
+        stored = bytes(row[0] or b"")
+        assert stored.startswith(EncryptedBlobCodec.MAGIC)
+        tampered = bytearray(stored)
+        tampered[-1] ^= 0x01
+        connection.execute("UPDATE sessions SET auth_key=?", (bytes(tampered),))
+        connection.commit()
+
+    with pytest.raises(
+        TelegramSessionEncryptionError,
+        match="corrupted|another OS profile",
+    ):
+        EncryptedSQLiteSession(base, codec=codec)
+
+    with sqlite3.connect(path) as connection:
+        row = connection.execute("SELECT auth_key FROM sessions").fetchone()
+        assert row is not None
+        assert bytes(row[0] or b"") == bytes(tampered)
+
+
 def test_invalid_legacy_key_is_not_silently_replaced(tmp_path: Path):
     base = tmp_path / "main"
     legacy = SQLiteSession(str(base))
