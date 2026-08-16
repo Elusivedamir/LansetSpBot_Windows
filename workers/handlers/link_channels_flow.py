@@ -29,6 +29,11 @@ from workers.rpc_boundary import dispatch_barrier_kwargs
 
 log = logging.getLogger(__name__)
 
+LINK_DELAY_MIN_SETTING_KEY = "automation.link_check_delay_min_seconds"
+LINK_DELAY_MAX_SETTING_KEY = "automation.link_check_delay_max_seconds"
+LINK_DELAY_HARD_MIN_SECONDS = 10
+LINK_DELAY_HARD_MAX_SECONDS = 200
+
 
 class ChannelStepResult(StrEnum):
     COMPLETE = "complete"
@@ -414,10 +419,48 @@ class LinkChannelsRunner:
         )
         raise TaskPausedError("Остановлено пользователем; прогресс связок сохранён")
 
+    def _current_check_delay_range(self) -> tuple[float, float]:
+        fallback = (self.check_delay_min, self.check_delay_max)
+        if self.account_id <= 0:
+            return fallback
+        getter = getattr(self.worker_db, "get_account_settings", None)
+        if not callable(getter):
+            return fallback
+        try:
+            values = getter(self.account_id)
+        except Exception:
+            log.debug(
+                "Could not refresh live link delay for account %s",
+                self.account_id,
+                exc_info=True,
+            )
+            return fallback
+        if not isinstance(values, dict):
+            return fallback
+        if (
+            LINK_DELAY_MIN_SETTING_KEY not in values
+            or LINK_DELAY_MAX_SETTING_KEY not in values
+        ):
+            return fallback
+        try:
+            low = float(values[LINK_DELAY_MIN_SETTING_KEY])
+            high = float(values[LINK_DELAY_MAX_SETTING_KEY])
+        except (TypeError, ValueError, OverflowError):
+            return fallback
+        if not (
+            LINK_DELAY_HARD_MIN_SECONDS
+            <= low
+            <= high
+            <= LINK_DELAY_HARD_MAX_SECONDS
+        ):
+            return fallback
+        return low, high
+
     async def wait_between_checks(self, label: str, *, phase: str) -> None:
-        if self.completed_count() <= 0 or self.check_delay_max <= 0:
+        check_delay_min, check_delay_max = self._current_check_delay_range()
+        if self.completed_count() <= 0 or check_delay_max <= 0:
             return
-        delay = random.uniform(self.check_delay_min, self.check_delay_max)
+        delay = random.uniform(check_delay_min, check_delay_max)
         self.set_runtime(
             self.task_id,
             f"Пауза между проверками: {round(delay)} сек · {label}",

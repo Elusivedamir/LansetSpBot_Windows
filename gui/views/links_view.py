@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSlider,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -29,6 +30,26 @@ from core.campaign_schedule import from_db_time, utc_now
 from core.version import APP_NAME
 from gui.background import BackgroundCall, connect_lifecycle_safe
 from gui.views.common import TaskWatcher
+
+
+LINK_DELAY_MIN_SECONDS = 10
+LINK_DELAY_MAX_SECONDS = 200
+LINK_DELAY_DEFAULT_SECONDS = 135
+LINK_DELAY_SETTING_PREFIX = "automation.link_check_delay_"
+LINK_DELAY_TARGET_KEY = f"{LINK_DELAY_SETTING_PREFIX}target_seconds"
+LINK_DELAY_MIN_KEY = f"{LINK_DELAY_SETTING_PREFIX}min_seconds"
+LINK_DELAY_MAX_KEY = f"{LINK_DELAY_SETTING_PREFIX}max_seconds"
+
+
+def _link_delay_bounds(selected_seconds: int) -> tuple[int, int]:
+    target = max(
+        LINK_DELAY_MIN_SECONDS,
+        min(LINK_DELAY_MAX_SECONDS, int(selected_seconds)),
+    )
+    if target <= LINK_DELAY_MIN_SECONDS + 5:
+        return LINK_DELAY_MIN_SECONDS, LINK_DELAY_MIN_SECONDS + 5
+    spread = max(5, math.ceil(target * 0.11))
+    return max(LINK_DELAY_MIN_SECONDS, target - spread), target
 
 
 class LinkTableModel(QAbstractTableModel):
@@ -122,10 +143,13 @@ class LinksView(QWidget):
             "Для канала программа получает ID обсуждения через Telegram API, один раз "
             "проверяет участие и при необходимости вступает. Обычная группа не требует "
             "поста или связанного обсуждения: она сохраняется как отдельный маршрут для "
-            "прямого сообщения. Между проверками выдерживается случайная пауза 3–7 секунд, "
-            "между новыми вступлениями — 45–70 секунд. Каждый объект проверяется один раз. "
-            "Кнопка «Стоп» не сокращает FloodWait: задача дождётся Telegram-таймера и "
-            "защитного буфера, затем продолжит или останется на паузе до продолжения."
+            "прямого сообщения. Между проверками выдерживается случайная пауза из "
+            "диапазона, выбранного ползунком рядом со «Стоп». Ползунок можно менять во "
+            "время работы: новое значение применяется к следующей паузе между связками, "
+            "но не обрывает уже начатое ожидание. Между новыми вступлениями — 45–70 "
+            "секунд. Каждый объект проверяется один раз. Кнопка «Стоп» не сокращает "
+            "FloodWait: задача дождётся Telegram-таймера и защитного буфера, затем "
+            "продолжит или останется на паузе до продолжения."
         )
         info.setWordWrap(True)
         info.setObjectName("mutedText")
@@ -139,13 +163,66 @@ class LinksView(QWidget):
         self.stop_button.setObjectName("dangerButton")
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop_linking)
+
+        self._pending_link_delay_account_id = 0
+        self._pending_link_delay_payload: dict[str, int] | None = None
+        self._link_delay_restoring = False
+        self._link_delay_save_timer = QTimer(self)
+        self._link_delay_save_timer.setSingleShot(True)
+        self._link_delay_save_timer.setInterval(300)
+        self._link_delay_save_timer.timeout.connect(self._persist_link_delay_setting)
+
+        self.link_delay_slider = QSlider(Qt.Orientation.Horizontal)
+        self.link_delay_slider.setObjectName("linkDelaySlider")
+        self.link_delay_slider.setRange(LINK_DELAY_MIN_SECONDS, LINK_DELAY_MAX_SECONDS)
+        self.link_delay_slider.setSingleStep(1)
+        self.link_delay_slider.setPageStep(10)
+        self.link_delay_slider.setValue(LINK_DELAY_DEFAULT_SECONDS)
+        self.link_delay_slider.setFixedWidth(150)
+        self.link_delay_slider.setAccessibleName("Пауза между связками")
+        self.link_delay_slider.setStyleSheet(
+            """
+            QSlider#linkDelaySlider::groove:horizontal {
+                height: 4px;
+                background: #30343C;
+                border-radius: 2px;
+            }
+            QSlider#linkDelaySlider::sub-page:horizontal {
+                background: #7F93B8;
+                border-radius: 2px;
+            }
+            QSlider#linkDelaySlider::add-page:horizontal {
+                background: #242832;
+                border-radius: 2px;
+            }
+            QSlider#linkDelaySlider::handle:horizontal {
+                width: 14px;
+                margin: -5px 0;
+                border-radius: 7px;
+                background: #F7FAFD;
+                border: 1px solid #6E84AD;
+            }
+            QSlider#linkDelaySlider:disabled::handle:horizontal {
+                background: #656B75;
+                border-color: #3A3F49;
+            }
+            """
+        )
+        self.link_delay_value = QLabel()
+        self.link_delay_value.setObjectName("mutedText")
+        self.link_delay_value.setMinimumWidth(82)
+        self.link_delay_slider.valueChanged.connect(self._link_delay_changed)
+
         self.status = QLabel("Готово к проверке")
         self.status.setObjectName("statusTitle")
         self.buttons_layout = QGridLayout()
         self.buttons_layout.addWidget(self.link_button, 0, 0)
         self.buttons_layout.addWidget(self.stop_button, 0, 1)
-        self.buttons_layout.setColumnStretch(2, 1)
-        self.buttons_layout.addWidget(self.status, 0, 3)
+        self.buttons_layout.addWidget(self.link_delay_slider, 0, 2)
+        self.buttons_layout.addWidget(self.link_delay_value, 0, 3)
+        self.buttons_layout.setColumnStretch(4, 1)
+        self.buttons_layout.addWidget(self.status, 0, 5)
+        self._load_link_delay_setting()
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -182,6 +259,100 @@ class LinksView(QWidget):
         self.load_channels()
         QTimer.singleShot(0, self._restore_active_task)
 
+    def _configured_link_delay_range(self) -> tuple[int, int]:
+        config = getattr(getattr(self.adapter, "api", None), "config", None)
+        try:
+            low = int(round(float(getattr(config, "link_check_delay_min_seconds", 105))))
+            high = int(round(float(getattr(config, "link_check_delay_max_seconds", 135))))
+        except (TypeError, ValueError, OverflowError):
+            return 105, 135
+        low = max(0, low)
+        return low, max(low, high)
+
+    def _set_link_delay_display(self, low: int, high: int) -> None:
+        self.link_delay_value.setText(f"{low}–{high} сек")
+        self.link_delay_slider.setToolTip(
+            "Случайная пауза между проверками связок: "
+            f"{low}–{high} секунд. Изменение применяется к следующей паузе; "
+            "FloodWait и задержки вступления не меняются."
+        )
+
+    def _link_delay_changed(self, selected_seconds: int) -> None:
+        low, high = _link_delay_bounds(selected_seconds)
+        self._set_link_delay_display(low, high)
+        if self._link_delay_restoring:
+            return
+        account_id = self._current_account_id()
+        if account_id <= 0:
+            return
+        self._pending_link_delay_account_id = account_id
+        self._pending_link_delay_payload = {
+            LINK_DELAY_TARGET_KEY: int(selected_seconds),
+            LINK_DELAY_MIN_KEY: low,
+            LINK_DELAY_MAX_KEY: high,
+        }
+        self._link_delay_save_timer.start()
+
+    @staticmethod
+    def _valid_saved_link_delay(values: dict) -> tuple[int, int, int] | None:
+        try:
+            target = int(values[LINK_DELAY_TARGET_KEY])
+            low = int(values[LINK_DELAY_MIN_KEY])
+            high = int(values[LINK_DELAY_MAX_KEY])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return None
+        if not (
+            LINK_DELAY_MIN_SECONDS <= target <= LINK_DELAY_MAX_SECONDS
+            and LINK_DELAY_MIN_SECONDS <= low <= high <= LINK_DELAY_MAX_SECONDS
+        ):
+            return None
+        return target, low, high
+
+    def _load_link_delay_setting(self) -> None:
+        account_id = self._current_account_id()
+        self.link_delay_slider.setEnabled(account_id > 0)
+        if account_id <= 0:
+            low, high = self._configured_link_delay_range()
+            self._set_link_delay_display(low, high)
+            return
+        try:
+            values = self.adapter.get_settings(LINK_DELAY_SETTING_PREFIX) or {}
+        except Exception:
+            values = {}
+        saved = self._valid_saved_link_delay(values) if isinstance(values, dict) else None
+        self._link_delay_restoring = True
+        self.link_delay_slider.blockSignals(True)
+        try:
+            if saved is None:
+                target = LINK_DELAY_DEFAULT_SECONDS
+                low, high = self._configured_link_delay_range()
+            else:
+                target, low, high = saved
+            self.link_delay_slider.setValue(target)
+            self._set_link_delay_display(low, high)
+        finally:
+            self.link_delay_slider.blockSignals(False)
+            self._link_delay_restoring = False
+
+    def _persist_link_delay_setting(self) -> None:
+        account_id = int(self._pending_link_delay_account_id or 0)
+        payload = self._pending_link_delay_payload
+        self._pending_link_delay_account_id = 0
+        self._pending_link_delay_payload = None
+        if account_id <= 0 or not payload:
+            return
+        try:
+            self.adapter.save_account_settings(payload, account_id=account_id)
+        except Exception as exc:
+            if account_id == self._current_account_id():
+                low = int(payload[LINK_DELAY_MIN_KEY])
+                high = int(payload[LINK_DELAY_MAX_KEY])
+                self.link_delay_value.setText(f"{low}–{high} сек ⚠")
+                self.link_delay_slider.setToolTip(
+                    f"Не удалось сохранить паузу: {exc}. "
+                    "До успешного сохранения worker использует предыдущее значение."
+                )
+
     def _current_account_id(self) -> int:
         getter = getattr(self.adapter, "get_current_account_id", None)
         if not callable(getter):
@@ -217,6 +388,7 @@ class LinksView(QWidget):
         self.link_button.setEnabled(self._account_id > 0)
         self.link_button.setText("Проверить новые каналы")
         self.stop_button.setEnabled(False)
+        self._load_link_delay_setting()
         self.status.setText(
             "Готово к проверке"
             if self._account_id > 0
@@ -242,16 +414,23 @@ class LinksView(QWidget):
     def set_compact_mode(self, compact: bool) -> None:
         self.buttons_layout.removeWidget(self.link_button)
         self.buttons_layout.removeWidget(self.stop_button)
+        self.buttons_layout.removeWidget(self.link_delay_slider)
+        self.buttons_layout.removeWidget(self.link_delay_value)
         self.buttons_layout.removeWidget(self.status)
+        self.buttons_layout.setColumnStretch(4, 0 if compact else 1)
         if compact:
             self.buttons_layout.addWidget(self.link_button, 0, 0)
             self.buttons_layout.addWidget(self.stop_button, 0, 1)
-            self.buttons_layout.addWidget(self.status, 1, 0, 1, 2)
+            self.buttons_layout.addWidget(self.link_delay_slider, 1, 0)
+            self.buttons_layout.addWidget(self.link_delay_value, 1, 1)
+            self.buttons_layout.addWidget(self.status, 2, 0, 1, 2)
             self.table.setColumnHidden(1, True)
         else:
             self.buttons_layout.addWidget(self.link_button, 0, 0)
             self.buttons_layout.addWidget(self.stop_button, 0, 1)
-            self.buttons_layout.addWidget(self.status, 0, 3)
+            self.buttons_layout.addWidget(self.link_delay_slider, 0, 2)
+            self.buttons_layout.addWidget(self.link_delay_value, 0, 3)
+            self.buttons_layout.addWidget(self.status, 0, 5)
             self.table.setColumnHidden(1, False)
 
     @staticmethod
