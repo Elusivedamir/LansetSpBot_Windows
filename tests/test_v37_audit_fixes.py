@@ -91,7 +91,12 @@ def test_account_health_rejects_stale_results_and_replays_refresh() -> None:
     assert "self._refresh_pending = False" in source
     assert "self._refresh_pending = True" in source
     assert source.count("if account_id != card._account_id():") >= 3
-    assert "QTimer.singleShot(0, card.refresh)" in source
+    # Deferred refreshes must use a card-owned child timer so they cannot fire
+    # after Qt deleted the card; a static singleShot keeps the bound method
+    # alive and crashed with "Internal C++ object already deleted".
+    assert "QTimer.singleShot(0, card.refresh)" not in source
+    assert "card._deferred_refresh_timer.start(0)" in source
+    assert "self._deferred_refresh_timer = QTimer(self)" in source
 
 
 def test_incremental_sync_is_classified_like_full_sync() -> None:

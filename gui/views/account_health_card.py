@@ -78,6 +78,11 @@ class AccountHealthCard(QFrame):
         self._initial_refresh_timer.setSingleShot(True)
         self._initial_refresh_timer.timeout.connect(self.refresh)
         self._initial_refresh_timer.start(0)
+        # Deferred re-refreshes queued by finished/succeeded callbacks must not
+        # outlive the card either, so they use the same child-timer contract.
+        self._deferred_refresh_timer = QTimer(self)
+        self._deferred_refresh_timer.setSingleShot(True)
+        self._deferred_refresh_timer.timeout.connect(self.refresh)
 
     def _account_id(self) -> int:
         for name in ("get_selected_account_id", "get_current_account_id"):
@@ -130,7 +135,7 @@ class AccountHealthCard(QFrame):
             card._set_busy(False)
             if card._refresh_pending:
                 card._refresh_pending = False
-                QTimer.singleShot(0, card.refresh)
+                card._deferred_refresh_timer.start(0)
 
         connect_lifecycle_safe(job, self, succeeded=succeeded, failed=failed, finished=finished)
         QThreadPool.globalInstance().start(job)
@@ -166,7 +171,7 @@ class AccountHealthCard(QFrame):
                 parts.append(humanize_reason(detail))
             parts.append("Отправка и вступление не выполнялись")
             card.diagnostic_result.setText(" · ".join(parts))
-            QTimer.singleShot(0, card.refresh)
+            card._deferred_refresh_timer.start(0)
 
         def failed(card: AccountHealthCard, message: str) -> None:
             if account_id != card._account_id():
@@ -181,7 +186,7 @@ class AccountHealthCard(QFrame):
             card._set_busy(False)
             if card._refresh_pending:
                 card._refresh_pending = False
-                QTimer.singleShot(0, card.refresh)
+                card._deferred_refresh_timer.start(0)
 
         connect_lifecycle_safe(job, self, succeeded=succeeded, failed=failed, finished=finished)
         QThreadPool.globalInstance().start(job)
