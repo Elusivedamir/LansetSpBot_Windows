@@ -1,6 +1,9 @@
 # Fully hash-pinned test/static-analysis environment for CPython 3.13/3.14 x64 on Windows.
 ast-serialize==0.6.0 \
     --hash=sha256:113b58346f9ceb664352032770caca817d4a3c86f611c6088e6ef65ddaa70f0e
+colorama==0.4.6 \
+    --hash=sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44 \
+    --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6
 coverage==7.15.0 \
     --hash=sha256:2c57a275078ee3fa185f83e400f765bc764a549de66d99b47881645cbd4ea629 \
     --hash=sha256:3bb3040e9f4bbe26fcb0cd7cc85ac63e630d3f3a9c74f027abf4caa27e706663

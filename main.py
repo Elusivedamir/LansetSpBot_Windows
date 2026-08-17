@@ -19,6 +19,11 @@ _SELF_TEST_ROOT: Path | None = None
 if _SELF_TEST:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     _SELF_TEST_ROOT = Path(tempfile.mkdtemp(prefix="marlen-self-test-"))
+    # Pin both override variables to the throwaway root. The self-test deletes
+    # this tree at the end, so it must never inherit a real profile through a
+    # pre-set LANSETSPBOT_DATA_DIR; and leaving only the legacy variable set
+    # would make profile bootstrap fail on the documented-override conflict.
+    os.environ["LANSETSPBOT_DATA_DIR"] = str(_SELF_TEST_ROOT)
     os.environ["MARLEN_DATA_DIR"] = str(_SELF_TEST_ROOT)
 
 if "--factory-reset-helper" in sys.argv:

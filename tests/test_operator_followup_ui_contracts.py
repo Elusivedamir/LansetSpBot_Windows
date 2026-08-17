@@ -43,7 +43,7 @@ def test_instruction_capture_targets_current_sidebar_indices() -> None:
         (2, "02_channels.png"),
         (3, "03_links.png"),
         (4, "04_comments.png"),
-        (7, "05_instructions.png"),
+        (8, "05_instructions.png"),
     )
 
 

@@ -81,10 +81,20 @@ class PacedTelegramClient(TelegramClient):
                         flood_sleep_threshold=flood_sleep_threshold,
                     )
                     task = asyncio.ensure_future(operation)
-                    # Let the Telethon coroutine enter its send path while the
-                    # Stop/dispatch barrier is still held. The lock is released
-                    # after one event-loop turn, not for the network round-trip.
-                    await asyncio.sleep(0)
+                    try:
+                        # Let the Telethon coroutine enter its send path while the
+                        # Stop/dispatch barrier is still held. The lock is released
+                        # after one event-loop turn, not for the network round-trip.
+                        await asyncio.sleep(0)
+                    except asyncio.CancelledError:
+                        # A cancellation arriving between ``ensure_future`` and
+                        # the wait used to leave the MTProto request running
+                        # unmanaged after the pacing slot was already released.
+                        # ``wait_for`` cancels its own inner task; this window
+                        # before it needed the same treatment.
+                        if not task.done():
+                            task.cancel()
+                        raise
                 return await asyncio.wait_for(
                     task, timeout=self._marlen_request_timeout
                 )

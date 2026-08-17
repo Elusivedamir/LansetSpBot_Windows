@@ -91,13 +91,6 @@ class JoinScheduleMixin(_MixinHost):
             conn.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("BEGIN IMMEDIATE")
-            active = conn.execute(
-                """SELECT 1 FROM join_schedule s JOIN tasks t ON t.id=s.task_id
-                   WHERE s.status IN ('queued','running') AND t.status IN ('pending','running') LIMIT 1"""
-            ).fetchone()
-            if active:
-                conn.commit()
-                return None
             row = conn.execute(
                 """SELECT s.id AS slot_id, s.campaign_id, c.account_id FROM join_schedule s
                    JOIN join_campaigns c ON c.id=s.campaign_id
@@ -106,6 +99,16 @@ class JoinScheduleMixin(_MixinHost):
                      AND NOT EXISTS(
                          SELECT 1 FROM local_ban_targets b
                          WHERE b.account_id=c.account_id AND b.peer_id=d.peer_id
+                     )
+                     AND NOT EXISTS(
+                         SELECT 1
+                         FROM join_schedule active_s
+                         JOIN join_campaigns active_c
+                           ON active_c.id=active_s.campaign_id
+                         JOIN tasks active_t ON active_t.id=active_s.task_id
+                         WHERE active_c.account_id=c.account_id
+                           AND active_s.status IN ('queued','running')
+                           AND active_t.status IN ('pending','running')
                      )
                    ORDER BY s.scheduled_at, s.id LIMIT 1""",
                 (now_text,),

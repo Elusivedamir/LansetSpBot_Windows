@@ -42,13 +42,13 @@ DESTINATION = PROJECT_ROOT / "dist" / "instruction-assets"
 # Page index in LansetSpBotApp.stack -> screenshot name used by InstructionsView.
 # Current MainWindow order:
 # 0 Account, 1 Warmup, 2 Channels, 3 Links, 4 Commenting,
-# 5 Target audience, 6 Audience parser, 7 Instructions.
+# 5 Target audience, 6 Audience parser, 7 Analytics, 8 Instructions.
 PAGES = (
     (0, "01_account.png"),
     (2, "02_channels.png"),
     (3, "03_links.png"),
     (4, "04_comments.png"),
-    (7, "05_instructions.png"),
+    (8, "05_instructions.png"),
 )
 
 

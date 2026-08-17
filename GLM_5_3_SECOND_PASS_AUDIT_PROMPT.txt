@@ -1,0 +1,125 @@
+LansetSpBot_Windows — SECOND-PASS DEEP AUDIT PROMPT FOR GLM 5.3
+===============================================================
+
+ROLE
+----
+You are the principal engineer performing a SECOND, deeper verification pass
+over `Elusivedamir/LansetSpBot_Windows` on the current `main`.
+
+Act simultaneously as senior Python developer, PySide6/Qt desktop engineer,
+asyncio/concurrency reviewer, Telethon integration reviewer, SQLite/SQLCipher
+reviewer, Windows application engineer, security reviewer, QA engineer and
+software architect.
+
+CONTEXT FROM PASS 1 (must be re-verified, not trusted blindly)
+-------------------------------------------------------------
+Pass 1 (audit of 9ef16d1) confirmed exactly two defects, both fixed:
+- H-1: static QTimer.singleShot in gui/views/account_health_card.py fired after
+  Qt deleted the card. Fixed with a card-owned child timer in 6d8dd43.
+- H-2: cryptography 48.0.1 OSV advisories (PYSEC-2026-3552/3553/3554) failed
+  the scheduled dependency audit. Bumped to 50.0.0 in 1bc7114.
+Final state after pass 1: main = 1bc7114, CI green (Windows CI + Dependency
+Audit), local suite 1441 passed.
+
+PRIMARY OBJECTIVE
+-----------------
+Pass 1 mapped the architecture and audited the cross-cutting seams. Pass 2
+goes DEEP into the large subsystems that pass 1 only sampled, adversarially
+re-checks pass-1 fixes, and hunts for demonstrable defects with concrete
+execution paths. This is NOT a re-do of pass 1 and NOT a stylistic review.
+
+ZERO-HALLUCINATION RULE (unchanged, absolute)
+---------------------------------------------
+DO NOT INVENT BUGS. Every candidate finding must show: exact code location,
+caller/callee chain, concrete trigger precondition, observable incorrect
+result, and an explanation of why existing guards/tests do not prevent it.
+Attempt to DISPROVE every hypothesis before confirming it.
+Verdicts: CONFIRMED / PARTIALLY CONFIRMED / NOT CONFIRMED / CANNOT VERIFY.
+If an audited area is clean, state: "Проверено. Подтверждённой проблемы не
+обнаружено." Zero confirmed defects is a valid outcome.
+
+MANDATORY SECOND-PASS DOMAINS
+-----------------------------
+A. ADVERSARIAL SELF-CHECK OF PASS-1 FIXES
+   - gui/views/account_health_card.py: prove the child timer cannot fire
+     after deletion in ANY path (initial timer, deferred timer, diagnostics);
+     prove no signal path bypasses connect_lifecycle_safe.
+   - requirements-runtime.lock @ cryptography 50.0.0: hashes match PyPI
+     artifacts; no other package was silently changed; all four shipped
+     locks still audit clean.
+
+B. SEND PATH IN FULL — workers/comment_slot/runner.py (~1620 LOC) plus
+   workers/comment_slot/{decisions,finalization,state,policies,models}.py
+   - eligibility → reservation → dispatch barrier → Telethon send →
+     classification → durable finalization;
+   - every `except` branch: which statuses can it produce, can success and
+     failure both be applied, can a terminal state resurrect;
+   - cancellation and account-switch mid-send;
+   - retries: prove an uncertain dispatch can never be blindly re-sent.
+
+C. TASK STATE MACHINE — storage/db_tasks.py (~1300 LOC)
+   - claim/defer/pause/requeue/set_done/set_failed transitions and their
+     guards; compare-and-set correctness; not_before semantics;
+   - concurrency between GUI thread, worker thread and utility jobs on the
+     same logical task.
+
+D. WARMUP — storage/db_warmup.py (~1300 LOC), core/warmup_planner.py,
+   core/warmup_scenarios.py, workers/handlers/warmup_step.py
+   - step sequencing, lease/locking, pause/resume, account binding,
+     uncertain steps, recovery after crash.
+
+E. SESSION LIFECYCLE — services/account_sessions.py (~940 LOC),
+   services/telegram_session.py, EncryptedSQLiteSession
+   - interrupted move recovery, residue recovery, lifecycle recovery,
+     legacy migration; prove no path can attach account A's session to
+     account B; prove no plaintext session leak.
+
+F. LINK/JOIN HANDLERS — workers/handlers/link_channels.py,
+   link_channels_flow.py (rest), link_channel_decisions.py, join_slot*.py
+   - checkpoint persistence and resume position; already-member vs
+     join-request semantics; join pacing separate from check pacing;
+     FloodWait stop path (`_link_pause_requested`).
+
+G. SCHEDULING CORE — services/multiaccount_scheduler.py,
+   core/campaign_schedule.py, core/rate_limiter.py, core/boot_clock.py
+   - clock changes (wall vs monotonic vs boot identity), UTC/DB time round
+     trips, per-process rate limiter correctness.
+
+H. GUI SHELL — gui/main_window.py, gui/auth_worker.py, gui/app.py (rest)
+   - page switching and set_page_active gating; auth worker thread/QThread
+     lifetime; tray/quit paths; no blocking I/O on the GUI thread.
+
+I. TOOLS/BUILD — tools/generate_manifest.py, tools/collect_diagnostics.py,
+   tools/run_ci_subprocess.py, build/build_windows_x64.ps1 (read-level)
+   - manifest generation determinism and scope; diagnostics redaction;
+     subprocess argument quoting.
+
+METHOD
+------
+For each domain: entry points → persistent state → thread/loop context →
+external I/O → exceptions → retries → cancellation → terminal states →
+tests → adversarial edge cases. Prefer direct evidence over volume. Use
+targeted greps and focused reads of the named files; do not skim randomly.
+
+FIX POLICY (unchanged)
+----------------------
+Smallest safe patch per confirmed defect; preserve behavior, account
+isolation, SQLCipher/DPAPI guarantees, fail-closed Telegram semantics;
+no refactors for cleanliness; no test removal/weakening; no force-push;
+regenerate SHA256SUMS.txt after any tracked-source change; run targeted
+tests first, then the broadest affordable verification; push normally and
+inspect exact-commit CI.
+
+FINAL REPORT (Russian)
+----------------------
+1. БАЗОВЫЙ УРОВЕНЬ — audited SHA, environment.
+2. ПОДТВЕРЖДЁННЫЕ НАХОДКИ — evidence-backed only, ordered by severity,
+   in the pass-1 finding format; or an explicit "no confirmed defects".
+3. ОТКЛОНЁННЫЕ ГИПОТЕЗЫ — checked and NOT CONFIRMED, with the disproving
+   evidence.
+4. ВНЕСЁННЫЕ ИСПРАВЛЕНИЯ — exact files/behavior (if any).
+5. ТЕСТЫ/ВЕРИФИКАЦИЯ — commands and outcomes, CI conclusion.
+6. ОСТАЮЩИЕСЯ CANNOT VERIFY.
+7. ВЕРДИКТ: READY / READY WITH NON-BLOCKING LIMITATIONS / NOT READY.
+
+BEGIN NOW. Record the current main SHA, then audit domains A–I in order.

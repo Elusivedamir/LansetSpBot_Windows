@@ -19,11 +19,51 @@ _MAINTENANCE_OWNER = f"{os.getpid()}:{uuid.uuid4().hex}"
 _MAINTENANCE_CLAIM_LEASE_SECONDS = 15 * 60
 
 
+def _windows_process_alive(pid: int) -> bool:
+    """Probe one Windows PID through a query handle, never ``os.kill``.
+
+    On Windows ``os.kill(pid, 0)`` maps to ``TerminateProcess`` and would kill
+    whatever process currently owns the id, including an innocent one after
+    PID reuse.  Opening a query handle only observes the process; a closed or
+    foreign-session pid simply fails to open and is reported as not alive.
+    """
+
+    import ctypes
+
+    process_query_limited_information = 0x1000
+    still_active = 259
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        open_process = kernel32.OpenProcess
+        open_process.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+        open_process.restype = ctypes.c_void_p
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [ctypes.c_void_p]
+        close_handle.restype = ctypes.c_int
+    except (OSError, AttributeError):
+        return False
+    handle = open_process(process_query_limited_information, 0, int(pid))
+    if not handle:
+        return False
+    try:
+        exit_code = ctypes.c_ulong()
+        get_exit_code = kernel32.GetExitCodeProcess
+        get_exit_code.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        get_exit_code.restype = ctypes.c_int
+        if get_exit_code(handle, ctypes.byref(exit_code)) == 0:
+            return False
+        return int(exit_code.value) == still_active
+    finally:
+        close_handle(ctypes.c_void_p(handle))
+
+
 def _maintenance_process_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     if pid == os.getpid():
         return True
+    if os.name == "nt":
+        return _windows_process_alive(pid)
     try:
         os.kill(pid, 0)
     except (ProcessLookupError, OSError):

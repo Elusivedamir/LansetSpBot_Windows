@@ -32,9 +32,11 @@ def _activity_is_recent(user: Any, days: int, *, now: datetime | None = None) ->
     if "online" in status_name or "recently" in status_name:
         return True
     if "lastweek" in status_name:
-        return days >= 30
+        # Telegram's "last week" status means the user was online within the
+        # last seven days, so any 7-day-or-wider window must accept them.
+        return days >= 7
     if "lastmonth" in status_name:
-        return days >= 90
+        return days >= 30
     was_online = getattr(status, "was_online", None)
     if isinstance(was_online, datetime):
         reference = now or datetime.now(timezone.utc)
