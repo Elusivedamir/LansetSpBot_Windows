@@ -4,7 +4,7 @@
 # The OpenAI SDK has its own complete hash-locked Windows graph in
 # requirements-openai.lock. requirements-openai.txt is a maintainer-only input
 # for tools/generate_openai_lock.py and must never be installed directly.
-cryptography==48.0.1
+cryptography==50.0.0
 sqlcipher3==0.6.2
 PySide6==6.11.1
 Telethon==1.44.0

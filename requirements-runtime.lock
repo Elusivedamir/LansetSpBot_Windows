@@ -4,11 +4,10 @@
 # sqlcipher3 and cffi ship one wheel per CPython version, so this file must
 # carry a hash for every interpreter the launcher accepts (3.13 and 3.14 x64).
 # tools/check_lock_coverage.py verifies that and runs in the release build.
-cryptography==48.0.1 \
-    --hash=sha256:3e4a1a3232eef2e6c732827d5722db29a0cc8b27af2a4d865b094cf954be9ca1 \
-    --hash=sha256:3752f2dbc8f07a30aad2932c986cea495b03bb554887828225da104f732852b6 \
-    --hash=sha256:0ee6ea481db1ab889cba043ec1eda17bb9c1ea79db6722f779c3667f9f70322f \
-    --hash=sha256:39489bfca54c7a1f6b297efcd8bc608ab92d16c4ca631b0cad4da46724588b24
+cryptography==50.0.0 \
+    --hash=sha256:b42a28c1844fd9de8f3f7d540e36b66f3a9c83fceac7170ebc7a6a19edd9dcae \
+    --hash=sha256:82148ec5bddac30b51a5b3c1945075f896fa022cb93f8e4a01e9f6ee95292c5f \
+    --hash=sha256:bd1c592e4d5974f0d08d4888e432157adba757c66da0246918e43677fafa2d30
 sqlcipher3==0.6.2 \
     --hash=sha256:8e1ff6079603dfd955d57c26dad5eab14f6baacdc643d8753dd651913ba789cf \
     --hash=sha256:9dc959ff792228c6df836cfd3667c713ae13e6e18dc2905c9d5666558606e832 \
