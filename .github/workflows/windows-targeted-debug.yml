@@ -1,4 +1,4 @@
-name: Windows Targeted Debug
+name: Windows v517 Auth Session Proof
 
 on:
   workflow_dispatch:
@@ -7,9 +7,15 @@ permissions:
   contents: read
 
 jobs:
-  targeted-tests:
+  auth-session-v517:
+    name: Python ${{ matrix.python }} x64 — v517 only
     runs-on: windows-2022
     timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.13", "3.14"]
 
     env:
       PYTHONUTF8: "1"
@@ -17,15 +23,17 @@ jobs:
       QT_QPA_PLATFORM: "offscreen"
 
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout exact audit ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Set up Python ${{ matrix.python }} x64
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python }}
           architecture: "x64"
           cache: "pip"
 
-      - name: Install test dependencies
+      - name: Install hash-locked test environment
         shell: pwsh
         run: |
           python -m ensurepip --upgrade
@@ -33,34 +41,34 @@ jobs:
           python -m pip install --require-hashes --no-build-isolation -r requirements-runtime.lock
           python -m pip install --require-hashes --no-build-isolation -r requirements-openai.lock
           python -m pip install --require-hashes -r requirements-dev-windows-x64.lock
+          python -m pip check
 
-      - name: Run final seven tests
+      - name: Compile v517 only
+        shell: pwsh
+        run: |
+          python -m py_compile tests/test_v517_auth_session_fault_injection.py
+
+      - name: Run v517 auth/session scenarios only
         shell: pwsh
         run: |
           python -m pytest `
-            tests/test_encrypted_telethon_session.py::test_runtime_clients_receive_encrypted_session_instance `
-            tests/test_v27_local_ban_runtime_fix.py::test_ambiguous_join_bans_only_target_and_batch_continues `
-            tests/test_v27_local_ban_runtime_fix.py::test_resumed_checkpoint_skips_already_banned_channel_without_rpc `
-            tests/test_v4715_repeat_audit_fixes.py::test_successful_scheduler_tick_clears_previous_failure_counter `
-            tests/test_v4718_state_consistency_fixes.py::test_account_actions_remain_locked_until_identity_is_persisted `
-            tests/test_v4721_business_logic_audit3.py::test_comment_task_never_runs_through_another_account_session `
-            tests/test_v4721_business_logic_audit3.py::test_join_task_never_runs_through_another_account_session `
+            tests/test_v517_auth_session_fault_injection.py `
             -vv -s `
             -o addopts="" `
             --tb=long `
             --showlocals `
             --maxfail=0 `
-            --junitxml=targeted-results.xml `
-            2>&1 | Tee-Object -FilePath targeted-tests.log
+            --junitxml=v517-results-${{ matrix.python }}.xml `
+            2>&1 | Tee-Object -FilePath v517-${{ matrix.python }}.log
 
           exit $LASTEXITCODE
 
-      - name: Upload diagnostics
+      - name: Upload v517 diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: windows-targeted-debug-${{ github.sha }}
+          name: v517-auth-session-python-${{ matrix.python }}-${{ github.sha }}
           path: |
-            targeted-tests.log
-            targeted-results.xml
+            v517-${{ matrix.python }}.log
+            v517-results-${{ matrix.python }}.xml
           if-no-files-found: error
