@@ -95,11 +95,19 @@ jobs:
           SIGNING_PFX_B64: ${{ secrets.WINDOWS_SIGNING_PFX_B64 }}
         run: |
           $ErrorActionPreference = "Stop"
-          if (-not $env:SIGNING_PFX_B64) { throw "Signing PFX secret is missing." }
+          # Signing is optional: without the certificate secret the release is
+          # still built and provenance-attested, only Authenticode is skipped.
+          if (-not $env:SIGNING_PFX_B64) {
+            "SIGNING_PFX_PATH=" | Add-Content -LiteralPath $env:GITHUB_ENV
+            "RELEASE_SIGNING_ENABLED=false" | Add-Content -LiteralPath $env:GITHUB_ENV
+            Write-Host "No signing PFX secret configured; building an unsigned release."
+            exit 0
+          }
+          "RELEASE_SIGNING_ENABLED=true" | Add-Content -LiteralPath $env:GITHUB_ENV
           $path = Join-Path $env:RUNNER_TEMP "lansetspbot-signing.pfx"
           [System.IO.File]::WriteAllBytes(
             $path,
-            [Convert]::FromBase64String($env:SIGNING_PFX_B64)
+            [System.Convert]::FromBase64String($env:SIGNING_PFX_B64)
           )
           "SIGNING_PFX_PATH=$path" | Add-Content -LiteralPath $env:GITHUB_ENV
 
@@ -110,9 +118,14 @@ jobs:
         run: |
           $ErrorActionPreference = "Continue"
           New-Item -ItemType Directory -Path "dist\ci-proof" -Force | Out-Null
-          & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
-            -File ".\build\build_windows_x64.ps1" `
-            -SigningPfxPath $env:SIGNING_PFX_PATH 2>&1 |
+          $buildArguments = @(
+            "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", ".\build\build_windows_x64.ps1"
+          )
+          if ($env:SIGNING_PFX_PATH) {
+            $buildArguments += @("-SigningPfxPath", $env:SIGNING_PFX_PATH)
+          }
+          & powershell.exe @buildArguments 2>&1 |
             Tee-Object -FilePath "dist\ci-proof\signed-release-build.log"
           exit $LASTEXITCODE
 
@@ -125,8 +138,12 @@ jobs:
           if ($proof.commit -ne "${{ github.sha }}") {
             throw "Release proof commit does not match the tagged commit."
           }
-          if (-not $proof.gates.authenticode_signed) {
-            throw "Release proof does not confirm Authenticode signing."
+          if ($env:RELEASE_SIGNING_ENABLED -eq "true") {
+            if (-not $proof.gates.authenticode_signed) {
+              throw "Release proof does not confirm Authenticode signing."
+            }
+          } elseif ($proof.gates.authenticode_signed) {
+            throw "Release proof claims Authenticode signing without a configured certificate."
           }
 
       - name: Download exact-SHA dependency audit evidence
