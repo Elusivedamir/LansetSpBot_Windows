@@ -244,7 +244,7 @@ jobs:
 
       - name: Upload verified release
         if: ${{ steps.runner_proof.outcome == 'success' && steps.windows_build.outcome == 'success' && steps.verify_release.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: LansetSpBot-Windows-x64-${{ github.sha }}
           path: |
@@ -259,7 +259,7 @@ jobs:
 
       - name: Upload failure evidence
         if: ${{ always() && (failure() || cancelled() || steps.runner_proof.outcome == 'failure' || steps.windows_build.outcome == 'failure' || steps.verify_release.outcome == 'failure') }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: LansetSpBot-Windows-failure-${{ github.sha }}
           path: |
@@ -336,7 +336,7 @@ jobs:
 
       - name: Upload Python 3.14 source proof
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: LansetSpBot-Python-3.14-source-${{ github.sha }}
           path: dist/ci-proof-314/**
